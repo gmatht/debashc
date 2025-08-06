@@ -18,7 +18,6 @@ impl PerlGenerator {
 
         for command in commands {
             output.push_str(&self.generate_command(command));
-            output.push('\n');
         }
 
         output
