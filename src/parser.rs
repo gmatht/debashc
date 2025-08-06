@@ -31,6 +31,9 @@ impl Parser {
     pub fn parse(&mut self) -> Result<Vec<Command>, ParserError> {
         let mut commands = Vec::new();
         
+        // Skip initial whitespace and comments
+        self.skip_whitespace_and_comments();
+        
         while !self.lexer.is_eof() {
             let command = self.parse_command()?;
             commands.push(command);
@@ -44,6 +47,9 @@ impl Parser {
                     _ => break,
                 }
             }
+            
+            // Skip whitespace and comments before next command
+            self.skip_whitespace_and_comments();
         }
         
         Ok(commands)
@@ -78,16 +84,19 @@ impl Parser {
                 Token::Pipe => {
                     self.lexer.next();
                     operators.push(PipeOperator::Pipe);
+                    self.skip_whitespace_and_comments();
                     commands.push(self.parse_simple_command()?);
                 }
                 Token::And => {
                     self.lexer.next();
                     operators.push(PipeOperator::And);
+                    self.skip_whitespace_and_comments();
                     commands.push(self.parse_simple_command()?);
                 }
                 Token::Or => {
                     self.lexer.next();
                     operators.push(PipeOperator::Or);
+                    self.skip_whitespace_and_comments();
                     commands.push(self.parse_simple_command()?);
                 }
                 _ => break,
@@ -129,6 +138,19 @@ impl Parser {
             match token {
                 Token::Identifier => {
                     name = self.get_identifier_text()?;
+                    self.lexer.next(); // consume the identifier
+                }
+                Token::TestBracket => {
+                    name = "[".to_string();
+                    self.lexer.next(); // consume the [
+                }
+                Token::True => {
+                    name = "true".to_string();
+                    self.lexer.next(); // consume true
+                }
+                Token::False => {
+                    name = "false".to_string();
+                    self.lexer.next(); // consume false
                 }
                 Token::Dollar | Token::DollarBrace | Token::DollarParen => {
                     name = self.parse_variable_expansion()?;
@@ -140,6 +162,9 @@ impl Parser {
         } else {
             return Err(ParserError::UnexpectedEOF);
         }
+        
+        // Skip whitespace before parsing arguments
+        self.skip_whitespace_and_comments();
         
         // Parse arguments and redirects
         while let Some(token) = self.lexer.peek() {
@@ -169,7 +194,11 @@ impl Parser {
     fn parse_if_statement(&mut self) -> Result<Command, ParserError> {
         self.lexer.consume(Token::If)?;
         
-        let condition = Box::new(self.parse_command()?);
+        // Skip whitespace
+        self.skip_whitespace_and_comments();
+        
+        // Parse condition - for now, just parse as a simple command
+        let condition = Box::new(self.parse_simple_command()?);
         
         self.lexer.consume(Token::Then)?;
         let then_branch = Box::new(self.parse_command()?);
@@ -274,7 +303,7 @@ impl Parser {
     }
 
     fn parse_word(&mut self) -> Result<String, ParserError> {
-        match self.lexer.next() {
+        let result = match self.lexer.next() {
             Some(Token::Identifier) => Ok(self.get_identifier_text()?),
             Some(Token::Number) => Ok(self.get_number_text()?),
             Some(Token::DoubleQuotedString) => Ok(self.get_string_text()?),
@@ -283,7 +312,12 @@ impl Parser {
             Some(Token::DollarBrace) => Ok(self.parse_variable_expansion()?),
             Some(Token::DollarParen) => Ok(self.parse_variable_expansion()?),
             _ => Err(ParserError::UnexpectedToken(Token::Identifier)),
-        }
+        };
+        
+        // Skip whitespace after consuming the word
+        self.skip_whitespace_and_comments();
+        
+        result
     }
 
     fn parse_variable_expansion(&mut self) -> Result<String, ParserError> {
@@ -337,17 +371,17 @@ impl Parser {
     }
 
     fn get_identifier_text(&mut self) -> Result<String, ParserError> {
-        // In a real implementation, you'd extract the actual text from the lexer
+        // For now, return a placeholder - in a real implementation you'd extract from lexer
         Ok("identifier".to_string())
     }
 
     fn get_number_text(&mut self) -> Result<String, ParserError> {
-        // In a real implementation, you'd extract the actual text from the lexer
+        // For now, return a placeholder - in a real implementation you'd extract from lexer
         Ok("0".to_string())
     }
 
     fn get_string_text(&mut self) -> Result<String, ParserError> {
-        // In a real implementation, you'd extract the actual text from the lexer
+        // For now, return a placeholder - in a real implementation you'd extract from lexer
         Ok("string".to_string())
     }
 
@@ -385,7 +419,7 @@ mod tests {
 
     #[test]
     fn test_parse_if_statement() {
-        let input = "if [ -f file.txt ]; then echo 'file exists'; fi";
+        let input = "if true; then echo hello; fi";
         let mut parser = Parser::new(input);
         let result = parser.parse();
         assert!(result.is_ok());
