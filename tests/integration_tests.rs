@@ -320,7 +320,7 @@ fn test_perl_generator_basic_echo() {
     assert!(perl_code.contains("#!/usr/bin/env perl"));
     assert!(perl_code.contains("use strict;"));
     assert!(perl_code.contains("use warnings;"));
-    assert!(perl_code.contains("print \"hello world\\n\";"));
+    assert!(perl_code.contains("print(\"hello world\\n\");"));
 }
 
 #[test]
@@ -332,7 +332,7 @@ fn test_perl_generator_empty_echo() {
     let mut generator = PerlGenerator::new();
     let perl_code = generator.generate(&commands);
     
-    assert!(perl_code.contains("print \"\\n\";"));
+    assert!(perl_code.contains("print(\"\\n\");"));
 }
 
 #[test]
@@ -358,7 +358,7 @@ fn test_perl_generator_ls_command() {
     
     assert!(perl_code.contains("opendir(my $dh, '/tmp')"));
     assert!(perl_code.contains("while (my $file = readdir($dh))"));
-    assert!(perl_code.contains("print \"$file\\n\" unless $file =~ /^\\.\\.?$/;"));
+    assert!(perl_code.contains("print(\"$file\\n\") unless $file =~ /^\\.\\.?$/;"));
     assert!(perl_code.contains("closedir($dh);"));
 }
 
@@ -423,7 +423,7 @@ fn test_perl_generator_pipeline() {
     assert!(perl_code.contains("my $output;"));
     assert!(perl_code.contains("$output = `ls`;"));
     assert!(perl_code.contains("$output = `echo \"$output\" | grep test`;"));
-    assert!(perl_code.contains("print $output;"));
+    assert!(perl_code.contains("print($output);"));
 }
 
 #[test]
@@ -436,7 +436,7 @@ fn test_perl_generator_if_statement() {
     let perl_code = generator.generate(&commands);
     
     assert!(perl_code.contains("if (-f 'file.txt')"));
-    assert!(perl_code.contains("print \"exists\\n\";"));
+    assert!(perl_code.contains("print(\"exists\\n\");"));
 }
 
 #[test]
@@ -449,9 +449,9 @@ fn test_perl_generator_if_else_statement() {
     let perl_code = generator.generate(&commands);
     
     assert!(perl_code.contains("if (-f 'file.txt')"));
-    assert!(perl_code.contains("print \"exists\\n\";"));
+    assert!(perl_code.contains("print(\"exists\\n\");"));
     assert!(perl_code.contains("} else {"));
-    assert!(perl_code.contains("print \"not found\\n\";"));
+    assert!(perl_code.contains("print(\"not found\\n\");"));
 }
 
 #[test]
@@ -487,8 +487,8 @@ fn test_perl_generator_multiple_commands() {
     let mut generator = PerlGenerator::new();
     let perl_code = generator.generate(&commands);
     
-    assert!(perl_code.contains("print \"hello\\n\";"));
-    assert!(perl_code.contains("print \"world\\n\";"));
+    assert!(perl_code.contains("print(\"hello\\n\");"));
+    assert!(perl_code.contains("print(\"world\\n\");"));
     assert!(perl_code.contains("mkdir('testdir')"));
 }
 
@@ -502,7 +502,7 @@ fn test_perl_generator_environment_variables() {
     let perl_code = generator.generate(&commands);
     
     assert!(perl_code.contains("$ENV{PATH} = '/usr/bin';"));
-    assert!(perl_code.contains("print \"hello\\n\";"));
+    assert!(perl_code.contains("print(\"hello\\n\");"));
 }
 
 #[test]
@@ -516,7 +516,7 @@ fn test_perl_generator_grep_command() {
     
     assert!(perl_code.contains("open(my $fh, '<', 'file.txt')"));
     assert!(perl_code.contains("while (my $line = <$fh>)"));
-    assert!(perl_code.contains("print $line if $line =~ /pattern/;"));
+    assert!(perl_code.contains("print($line) if $line =~ /pattern/;"));
     assert!(perl_code.contains("close($fh);"));
 }
 
@@ -531,7 +531,7 @@ fn test_perl_generator_cat_command() {
     
     assert!(perl_code.contains("open(my $fh, '<', 'file.txt')"));
     assert!(perl_code.contains("while (my $line = <$fh>)"));
-    assert!(perl_code.contains("print $line;"));
+    assert!(perl_code.contains("print($line);"));
     assert!(perl_code.contains("close($fh);"));
 }
 

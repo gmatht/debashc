@@ -26,7 +26,21 @@ fn main() {
                 return;
             }
             let input = &args[2];
-            lex_input(input);
+            // Check if input looks like a filename (contains .sh or doesn't contain spaces)
+            if input.contains(".sh") || !input.contains(' ') {
+                // Try to read as file first
+                match fs::read_to_string(input) {
+                    Ok(content) => {
+                        lex_input(&content);
+                    }
+                    Err(_) => {
+                        // If file read fails, treat as direct input
+                        lex_input(input);
+                    }
+                }
+            } else {
+                lex_input(input);
+            }
         }
         "parse" => {
             if args.len() < 3 {

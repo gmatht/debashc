@@ -177,6 +177,10 @@ impl Parser {
                 Token::RedirectInOut | Token::Heredoc | Token::HeredocTabs => {
                     redirects.push(self.parse_redirect()?);
                 }
+                Token::Newline | Token::Semicolon => {
+                    // Stop parsing arguments when we hit a command separator
+                    break;
+                }
                 _ => break,
             }
         }
@@ -422,7 +426,7 @@ impl Parser {
     fn skip_whitespace_and_comments(&mut self) {
         while let Some(token) = self.lexer.peek() {
             match token {
-                Token::Space | Token::Tab | Token::Newline | Token::Comment => {
+                Token::Space | Token::Tab | Token::Comment => {
                     self.lexer.next();
                 }
                 _ => break,

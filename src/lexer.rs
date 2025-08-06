@@ -64,7 +64,7 @@ pub enum Token {
     Exec,
     #[token("source")]
     Source,
-    #[token(".", priority = 2)]
+    #[token(".", priority = 0)]
     SourceDot,
     #[token("trap")]
     Trap,
@@ -258,7 +258,7 @@ pub enum Token {
     DollarDoubleQuotedString,
 
     // Identifiers and words
-    #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", priority = 1)]
+    #[regex(r"[a-zA-Z_][a-zA-Z0-9_.]*|/[a-zA-Z0-9_.]*", priority = 1)]
     Identifier,
 
     #[regex(r"[0-9]+")]
@@ -287,7 +287,7 @@ pub enum Token {
     Minus,
     #[token("*")]
     Star,
-    #[token("/")]
+    #[token("/", priority = 0)]
     Slash,
     #[token("\\", priority = 1)]
     Backslash,
@@ -305,7 +305,7 @@ pub enum Token {
     DoubleQuote,
     #[token("\\", priority = 2)]
     Escape,
-    #[token("\n")]
+    #[regex(r"\n", priority = 3)]
     Newline,
     #[token("\r")]
     CarriageReturn,
