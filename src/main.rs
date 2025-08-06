@@ -1,4 +1,4 @@
-use sh2perl::{Lexer, Parser, Token};
+use sh2perl::{Lexer, Parser, PerlGenerator};
 use std::env;
 use std::fs;
 use std::io::{self, Write};
@@ -11,7 +11,9 @@ fn main() {
         println!("Commands:");
         println!("  lex <input>     - Tokenize shell script");
         println!("  parse <input>   - Parse shell script to AST");
+        println!("  parse --perl <input> - Convert shell script to Perl");
         println!("  file <filename> - Parse shell script from file");
+        println!("  file --perl <filename> - Convert shell script file to Perl");
         return;
     }
     
@@ -31,16 +33,34 @@ fn main() {
                 println!("Error: parse command requires input");
                 return;
             }
-            let input = &args[2];
-            parse_input(input);
+            if args.len() >= 3 && args[2] == "--perl" {
+                if args.len() < 4 {
+                    println!("Error: parse --perl command requires input");
+                    return;
+                }
+                let input = &args[3];
+                parse_to_perl(input);
+            } else {
+                let input = &args[2];
+                parse_input(input);
+            }
         }
         "file" => {
             if args.len() < 3 {
                 println!("Error: file command requires filename");
                 return;
             }
-            let filename = &args[2];
-            parse_file(filename);
+            if args.len() >= 3 && args[2] == "--perl" {
+                if args.len() < 4 {
+                    println!("Error: file --perl command requires filename");
+                    return;
+                }
+                let filename = &args[3];
+                parse_file_to_perl(filename);
+            } else {
+                let filename = &args[2];
+                parse_file(filename);
+            }
         }
         "interactive" => {
             interactive_mode();
@@ -100,6 +120,38 @@ fn parse_file(filename: &str) {
     }
 }
 
+fn parse_to_perl(input: &str) {
+    println!("Converting to Perl: {}", input);
+    println!("Perl Code:");
+    println!("{}", "=".repeat(50));
+    
+    match Parser::new(input).parse() {
+        Ok(commands) => {
+            let mut generator = PerlGenerator::new();
+            let perl_code = generator.generate(&commands);
+            println!("{}", perl_code);
+        }
+        Err(e) => {
+            println!("Parse error: {}", e);
+        }
+    }
+    
+    println!("{}", "=".repeat(50));
+}
+
+fn parse_file_to_perl(filename: &str) {
+    println!("Converting file to Perl: {}", filename);
+    
+    match fs::read_to_string(filename) {
+        Ok(content) => {
+            parse_to_perl(&content);
+        }
+        Err(e) => {
+            println!("Error reading file: {}", e);
+        }
+    }
+}
+
 fn interactive_mode() {
     println!("Interactive Shell Script Parser");
     println!("Type 'quit' to exit, 'help' for commands");
@@ -144,6 +196,7 @@ fn interactive_mode() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sh2perl::Token;
 
     #[test]
     fn test_lexer_basic() {

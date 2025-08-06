@@ -332,6 +332,7 @@ pub enum LexerError {
 pub struct Lexer {
     tokens: Vec<(Token, usize, usize)>,
     current: usize,
+    input: String,
 }
 
 impl Lexer {
@@ -353,6 +354,7 @@ impl Lexer {
         Self {
             tokens,
             current: 0,
+            input: input.to_string(),
         }
     }
 
@@ -392,6 +394,16 @@ impl Lexer {
 
     pub fn get_span(&self) -> Option<(usize, usize)> {
         self.tokens.get(self.current).map(|(_, start, end)| (*start, *end))
+    }
+    
+    pub fn get_text(&self, start: usize, end: usize) -> String {
+        self.input[start..end].to_string()
+    }
+    
+    pub fn get_current_text(&self) -> Option<String> {
+        self.tokens.get(self.current).map(|(_, start, end)| {
+            self.input[*start..*end].to_string()
+        })
     }
 }
 

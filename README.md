@@ -40,6 +40,12 @@ sh2perl parse "ls | grep test"
 # Parse a shell script from file
 sh2perl file examples/simple.sh
 
+# Convert shell script to Perl
+sh2perl parse --perl "ls | grep test"
+
+# Convert shell script file to Perl
+sh2perl file --perl examples/simple.sh
+
 # Interactive mode
 sh2perl interactive
 ```
@@ -99,6 +105,116 @@ function greet() {
 }
 ```
 Parses to a `Function` with name and body.
+
+## Shell to Perl Conversion
+
+The `--perl` flag allows you to convert shell scripts to equivalent Perl code:
+
+### Basic Command Conversion
+```bash
+# Shell script
+echo "Hello, World!"
+
+# Convert to Perl
+sh2perl parse --perl 'echo "Hello, World!"'
+```
+
+Output:
+```perl
+print "Hello, World!\n";
+```
+
+### Pipeline Conversion
+```bash
+# Shell script
+ls | grep "\.txt$" | wc -l
+
+# Convert to Perl
+sh2perl parse --perl 'ls | grep "\.txt$" | wc -l'
+```
+
+Output:
+```perl
+my $output;
+$output = `ls`;
+$output = `echo "$output" | grep "\.txt$"`;
+print $output;
+```
+
+### Control Flow Conversion
+```bash
+# Shell script
+if [ -f file.txt ]; then
+    echo "File exists"
+else
+    echo "File does not exist"
+fi
+
+# Convert to Perl
+sh2perl parse --perl 'if [ -f file.txt ]; then echo "File exists"; else echo "File does not exist"; fi'
+```
+
+Output:
+```perl
+if (-f 'file.txt') {
+    print "File exists\n";
+} else {
+    print "File does not exist\n";
+}
+```
+
+### File Operations
+```bash
+# Shell script
+mkdir newdir
+cp file.txt newdir/
+rm oldfile.txt
+
+# Convert to Perl
+sh2perl parse --perl 'mkdir newdir; cp file.txt newdir/; rm oldfile.txt'
+```
+
+Output:
+```perl
+mkdir('newdir') or die "Cannot create directory: $!\n";
+use File::Copy;
+copy('file.txt', 'newdir/') or die "Cannot copy file: $!\n";
+unlink('oldfile.txt') or die "Cannot remove file: $!\n";
+```
+
+### Converting Shell Script Files
+
+You can also convert entire shell script files to Perl:
+
+```bash
+# Create a shell script file
+cat > example.sh << 'EOF'
+#!/bin/bash
+if [ -d /tmp ]; then
+    echo "Directory exists"
+    ls /tmp | head -5
+else
+    echo "Directory does not exist"
+fi
+EOF
+
+# Convert the file to Perl
+sh2perl file --perl example.sh
+```
+
+Output:
+```perl
+if (-d '/tmp') {
+    print "Directory exists\n";
+    opendir(my $dh, '/tmp') or die "Cannot open directory: $!\n";
+    while (my $file = readdir($dh)) {
+        print "$file\n" unless $file =~ /^\.\.?$/;
+    }
+    closedir($dh);
+} else {
+    print "Directory does not exist\n";
+}
+```
 
 ## Project Structure
 

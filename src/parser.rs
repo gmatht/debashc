@@ -111,7 +111,6 @@ impl Parser {
     }
 
     fn parse_simple_command(&mut self) -> Result<Command, ParserError> {
-        let mut name = String::new();
         let mut args = Vec::new();
         let mut redirects = Vec::new();
         let mut env_vars = HashMap::new();
@@ -134,26 +133,25 @@ impl Parser {
         }
         
         // Parse command name
-        if let Some(token) = self.lexer.peek() {
+        let name = if let Some(token) = self.lexer.peek() {
             match token {
                 Token::Identifier => {
-                    name = self.get_identifier_text()?;
-                    self.lexer.next(); // consume the identifier
+                    self.get_identifier_text()?
                 }
                 Token::TestBracket => {
-                    name = "[".to_string();
                     self.lexer.next(); // consume the [
+                    "[".to_string()
                 }
                 Token::True => {
-                    name = "true".to_string();
                     self.lexer.next(); // consume true
+                    "true".to_string()
                 }
                 Token::False => {
-                    name = "false".to_string();
                     self.lexer.next(); // consume false
+                    "false".to_string()
                 }
                 Token::Dollar | Token::DollarBrace | Token::DollarParen => {
-                    name = self.parse_variable_expansion()?;
+                    self.parse_variable_expansion()?
                 }
                 _ => {
                     return Err(ParserError::UnexpectedToken(token.clone()));
@@ -161,7 +159,7 @@ impl Parser {
             }
         } else {
             return Err(ParserError::UnexpectedEOF);
-        }
+        };
         
         // Skip whitespace before parsing arguments
         self.skip_whitespace_and_comments();
@@ -200,8 +198,21 @@ impl Parser {
         // Parse condition - for now, just parse as a simple command
         let condition = Box::new(self.parse_simple_command()?);
         
+        // Consume semicolon if present (optional in some shell syntax)
+        if let Some(Token::Semicolon) = self.lexer.peek() {
+            self.lexer.next();
+        }
+        
+        // Skip whitespace before then
+        self.skip_whitespace_and_comments();
+        
         self.lexer.consume(Token::Then)?;
         let then_branch = Box::new(self.parse_command()?);
+        
+        // Consume semicolon if present after then branch
+        if let Some(Token::Semicolon) = self.lexer.peek() {
+            self.lexer.next();
+        }
         
         let else_branch = if let Some(Token::Else) = self.lexer.peek() {
             self.lexer.next();
@@ -209,6 +220,9 @@ impl Parser {
         } else {
             None
         };
+        
+        // Skip whitespace before fi
+        self.skip_whitespace_and_comments();
         
         self.lexer.consume(Token::Fi)?;
         
@@ -303,7 +317,7 @@ impl Parser {
     }
 
     fn parse_word(&mut self) -> Result<String, ParserError> {
-        let result = match self.lexer.next() {
+        let result = match self.lexer.peek() {
             Some(Token::Identifier) => Ok(self.get_identifier_text()?),
             Some(Token::Number) => Ok(self.get_number_text()?),
             Some(Token::DoubleQuotedString) => Ok(self.get_string_text()?),
@@ -371,18 +385,33 @@ impl Parser {
     }
 
     fn get_identifier_text(&mut self) -> Result<String, ParserError> {
-        // For now, return a placeholder - in a real implementation you'd extract from lexer
-        Ok("identifier".to_string())
+        if let Some(span) = self.lexer.get_span() {
+            let text = self.lexer.get_text(span.0, span.1);
+            self.lexer.next(); // consume the identifier
+            Ok(text)
+        } else {
+            Err(ParserError::UnexpectedEOF)
+        }
     }
 
     fn get_number_text(&mut self) -> Result<String, ParserError> {
-        // For now, return a placeholder - in a real implementation you'd extract from lexer
-        Ok("0".to_string())
+        if let Some(span) = self.lexer.get_span() {
+            let text = self.lexer.get_text(span.0, span.1);
+            self.lexer.next(); // consume the number
+            Ok(text)
+        } else {
+            Err(ParserError::UnexpectedEOF)
+        }
     }
 
     fn get_string_text(&mut self) -> Result<String, ParserError> {
-        // For now, return a placeholder - in a real implementation you'd extract from lexer
-        Ok("string".to_string())
+        if let Some(span) = self.lexer.get_span() {
+            let text = self.lexer.get_text(span.0, span.1);
+            self.lexer.next(); // consume the string
+            Ok(text)
+        } else {
+            Err(ParserError::UnexpectedEOF)
+        }
     }
 
     fn skip_whitespace_and_comments(&mut self) {

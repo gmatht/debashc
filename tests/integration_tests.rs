@@ -1,4 +1,4 @@
-use sh2perl::{Lexer, Parser, Token};
+use sh2perl::{Lexer, Parser, PerlGenerator, Token};
 
 #[test]
 fn test_simple_command_lexing() {
@@ -304,4 +304,245 @@ fn test_lexer_with_whitespace() {
     assert_eq!(lexer.next(), Some(&Token::Space));
     assert_eq!(lexer.next(), Some(&Token::Space));
     assert_eq!(lexer.next(), None);
-} 
+}
+
+// Perl Generator Tests
+
+#[test]
+fn test_perl_generator_basic_echo() {
+    let input = "echo hello world";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("#!/usr/bin/env perl"));
+    assert!(perl_code.contains("use strict;"));
+    assert!(perl_code.contains("use warnings;"));
+    assert!(perl_code.contains("print \"hello world\\n\";"));
+}
+
+#[test]
+fn test_perl_generator_empty_echo() {
+    let input = "echo";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("print \"\\n\";"));
+}
+
+#[test]
+fn test_perl_generator_cd_command() {
+    let input = "cd /tmp";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("chdir('/tmp') or die \"Cannot change to directory: $!\\n\";"));
+}
+
+#[test]
+fn test_perl_generator_ls_command() {
+    let input = "ls /tmp";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("opendir(my $dh, '/tmp')"));
+    assert!(perl_code.contains("while (my $file = readdir($dh))"));
+    assert!(perl_code.contains("print \"$file\\n\" unless $file =~ /^\\.\\.?$/;"));
+    assert!(perl_code.contains("closedir($dh);"));
+}
+
+#[test]
+fn test_perl_generator_mkdir_command() {
+    let input = "mkdir newdir";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("mkdir('newdir') or die \"Cannot create directory: $!\\n\";"));
+}
+
+#[test]
+fn test_perl_generator_rm_command() {
+    let input = "rm oldfile.txt";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("unlink('oldfile.txt') or die \"Cannot remove file: $!\\n\";"));
+}
+
+#[test]
+fn test_perl_generator_cp_command() {
+    let input = "cp source.txt dest.txt";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("use File::Copy;"));
+    assert!(perl_code.contains("copy('source.txt', 'dest.txt') or die \"Cannot copy file: $!\\n\";"));
+}
+
+#[test]
+fn test_perl_generator_mv_command() {
+    let input = "mv old.txt new.txt";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("rename('old.txt', 'new.txt') or die \"Cannot move file: $!\\n\";"));
+}
+
+#[test]
+fn test_perl_generator_pipeline() {
+    let input = "ls | grep test";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("my $output;"));
+    assert!(perl_code.contains("$output = `ls`;"));
+    assert!(perl_code.contains("$output = `echo \"$output\" | grep test`;"));
+    assert!(perl_code.contains("print $output;"));
+}
+
+#[test]
+fn test_perl_generator_if_statement() {
+    let input = "if [ -f file.txt ]; then echo exists; fi";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("if (-f 'file.txt')"));
+    assert!(perl_code.contains("print \"exists\\n\";"));
+}
+
+#[test]
+fn test_perl_generator_if_else_statement() {
+    let input = "if [ -f file.txt ]; then echo exists; else echo not found; fi";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("if (-f 'file.txt')"));
+    assert!(perl_code.contains("print \"exists\\n\";"));
+    assert!(perl_code.contains("} else {"));
+    assert!(perl_code.contains("print \"not found\\n\";"));
+}
+
+#[test]
+fn test_perl_generator_file_test_operators() {
+    let test_cases = vec![
+        ("[ -d /tmp ]", "-d '/tmp'"),
+        ("[ -e file.txt ]", "-e 'file.txt'"),
+        ("[ -r file.txt ]", "-r 'file.txt'"),
+        ("[ -w file.txt ]", "-w 'file.txt'"),
+        ("[ -x file.txt ]", "-x 'file.txt'"),
+    ];
+    
+    for (shell_test, expected_perl) in test_cases {
+        let input = format!("if {}; then echo yes; fi", shell_test);
+        let mut parser = Parser::new(&input);
+        let commands = parser.parse().unwrap();
+        
+        let mut generator = PerlGenerator::new();
+        let perl_code = generator.generate(&commands);
+        
+        assert!(perl_code.contains(expected_perl), 
+                "Expected '{}' in Perl code for shell test '{}', got: {}", 
+                expected_perl, shell_test, perl_code);
+    }
+}
+
+#[test]
+fn test_perl_generator_multiple_commands() {
+    let input = "echo hello; echo world; mkdir testdir";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("print \"hello\\n\";"));
+    assert!(perl_code.contains("print \"world\\n\";"));
+    assert!(perl_code.contains("mkdir('testdir')"));
+}
+
+#[test]
+fn test_perl_generator_environment_variables() {
+    let input = "PATH=/usr/bin echo hello";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("$ENV{PATH} = '/usr/bin';"));
+    assert!(perl_code.contains("print \"hello\\n\";"));
+}
+
+#[test]
+fn test_perl_generator_grep_command() {
+    let input = "grep pattern file.txt";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("open(my $fh, '<', 'file.txt')"));
+    assert!(perl_code.contains("while (my $line = <$fh>)"));
+    assert!(perl_code.contains("print $line if $line =~ /pattern/;"));
+    assert!(perl_code.contains("close($fh);"));
+}
+
+#[test]
+fn test_perl_generator_cat_command() {
+    let input = "cat file.txt";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("open(my $fh, '<', 'file.txt')"));
+    assert!(perl_code.contains("while (my $line = <$fh>)"));
+    assert!(perl_code.contains("print $line;"));
+    assert!(perl_code.contains("close($fh);"));
+}
+
+#[test]
+fn test_perl_generator_generic_command() {
+    let input = "python script.py arg1 arg2";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("system('python', 'script.py', 'arg1', 'arg2');"));
+}
