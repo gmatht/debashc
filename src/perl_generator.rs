@@ -302,10 +302,13 @@ impl PerlGenerator {
     }
     
     fn escape_perl_string(&self, s: &str) -> String {
-        s.replace("\\", "\\\\")
-         .replace("\"", "\\\"")
-         .replace("\n", "\\n")
-         .replace("\r", "\\r")
-         .replace("\t", "\\t")
+        // First, unescape any \" sequences to " to avoid double-escaping
+        let unescaped = s.replace("\\\"", "\"");
+        // Then escape quotes and other characters for Perl
+        unescaped.replace("\\", "\\\\")
+                 .replace("\"", "\\\"")
+                 .replace("\n", "\\n")
+                 .replace("\r", "\\r")
+                 .replace("\t", "\\t")
     }
 } 

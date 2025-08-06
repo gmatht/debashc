@@ -577,9 +577,7 @@ fn test_perl_generator_quoted_strings() {
     let mut generator = PerlGenerator::new();
     let perl_code = generator.generate(&commands);
     
-    assert!(perl_code.contains("print("));
-    assert!(perl_code.contains("escaped"));
-    assert!(perl_code.contains("quotes"));
+    assert!(perl_code.contains("print(\"String with \\\"escaped\\\" quotes\\n\");"));
     
     // Test strings with spaces and punctuation
     let input = r#"echo "String with spaces and punctuation!""#;
