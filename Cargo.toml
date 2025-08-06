@@ -1,0 +1,12 @@
+[package]
+name = "sh2perl"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "sh2perl"
+path = "src/main.rs"
+
+[dependencies]
+logos = "0.13"
+thiserror = "1.0" 
