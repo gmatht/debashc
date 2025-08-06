@@ -546,3 +546,58 @@ fn test_perl_generator_generic_command() {
     
     assert!(perl_code.contains("system('python', 'script.py', 'arg1', 'arg2');"));
 }
+
+#[test]
+fn test_perl_generator_quoted_strings() {
+    // Test double quoted strings
+    let input = r#"echo "Hello, World!""#;
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("print(\"Hello, World!\\n\");"));
+    
+    // Test single quoted strings
+    let input = "echo 'Single quoted string'";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("print(\"Single quoted string\\n\");"));
+    
+    // Test strings with escaped quotes
+    let input = r#"echo "String with \"escaped\" quotes""#;
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("print("));
+    assert!(perl_code.contains("escaped"));
+    assert!(perl_code.contains("quotes"));
+    
+    // Test strings with spaces and punctuation
+    let input = r#"echo "String with spaces and punctuation!""#;
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("print(\"String with spaces and punctuation!\\n\");"));
+    
+    // Test multiple quoted strings in one command
+    let input = r#"echo "First" "Second" 'Third'"#;
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    
+    let mut generator = PerlGenerator::new();
+    let perl_code = generator.generate(&commands);
+    
+    assert!(perl_code.contains("print(\"First Second Third\\n\");"));
+}

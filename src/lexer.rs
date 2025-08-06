@@ -246,15 +246,15 @@ pub enum Token {
     SameFile,
 
     // Strings and literals
-    #[regex(r#""([^"\\]|\\.)*""#)]
+    #[regex(r#""([^"\\]|\\.)*""#, priority = 3)]
     DoubleQuotedString,
-    #[regex(r"'([^'\\]|\\.)*'")]
+    #[regex(r"'([^'\\]|\\[^'])*'", priority = 3)]
     SingleQuotedString,
-    #[regex(r"`([^`\\]|\\.)*`")]
+    #[regex(r"`([^`\\]|\\.)*`", priority = 3)]
     BacktickString,
-    #[regex(r"\$'([^'\\]|\\.)*'")]
+    #[regex(r"\$'([^'\\]|\\.)*'", priority = 3)]
     DollarSingleQuotedString,
-    #[regex(r#"\$"([^"\\]|\\.)*""#)]
+    #[regex(r#"\$"([^"\\]|\\.)*""#, priority = 3)]
     DollarDoubleQuotedString,
 
     // Identifiers and words

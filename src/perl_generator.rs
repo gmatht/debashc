@@ -48,10 +48,11 @@ impl PerlGenerator {
         if cmd.name == "echo" {
             // Special handling for echo
             if cmd.args.is_empty() {
-                output.push_str("print \"\\n\";\n");
+                output.push_str("print(\"\\n\");\n");
             } else {
                 let args = cmd.args.join(" ");
-                output.push_str(&format!("print \"{}\\n\";\n", args));
+                let escaped_args = self.escape_perl_string(&args);
+                output.push_str(&format!("print(\"{}\\n\");\n", escaped_args));
             }
         } else if cmd.name == "cd" {
             // Special handling for cd
@@ -63,7 +64,7 @@ impl PerlGenerator {
             let args = if cmd.args.is_empty() { "." } else { &cmd.args[0] };
             output.push_str(&format!("opendir(my $dh, '{}') or die \"Cannot open directory: $!\\n\";\n", args));
             output.push_str("while (my $file = readdir($dh)) {\n");
-            output.push_str("    print \"$file\\n\" unless $file =~ /^\\.\\.?$/;\n");
+            output.push_str("    print(\"$file\\n\") unless $file =~ /^\\.\\.?$/;\n");
             output.push_str("}\n");
             output.push_str("closedir($dh);\n");
         } else if cmd.name == "grep" {
@@ -73,7 +74,7 @@ impl PerlGenerator {
                 let file = &cmd.args[1];
                 output.push_str(&format!("open(my $fh, '<', '{}') or die \"Cannot open file: $!\\n\";\n", file));
                 output.push_str(&format!("while (my $line = <$fh>) {{\n"));
-                output.push_str(&format!("    print $line if $line =~ /{}/;\n", pattern));
+                output.push_str(&format!("    print($line) if $line =~ /{}/;\n", pattern));
                 output.push_str("}\n");
                 output.push_str("close($fh);\n");
             }
@@ -82,7 +83,7 @@ impl PerlGenerator {
             for arg in &cmd.args {
                 output.push_str(&format!("open(my $fh, '<', '{}') or die \"Cannot open file: $!\\n\";\n", arg));
                 output.push_str("while (my $line = <$fh>) {\n");
-                output.push_str("    print $line;\n");
+                output.push_str("    print($line);\n");
                 output.push_str("}\n");
                 output.push_str("close($fh);\n");
             }
@@ -176,7 +177,7 @@ impl PerlGenerator {
                     output.push_str(&format!("$output = `echo \"$output\" | {}`;\n", self.command_to_string(command)));
                 }
             }
-            output.push_str("print $output;\n");
+            output.push_str("print($output);\n");
         }
         
         output
@@ -298,5 +299,13 @@ impl PerlGenerator {
 
     fn indent(&self) -> String {
         "    ".repeat(self.indent_level)
+    }
+    
+    fn escape_perl_string(&self, s: &str) -> String {
+        s.replace("\\", "\\\\")
+         .replace("\"", "\\\"")
+         .replace("\n", "\\n")
+         .replace("\r", "\\r")
+         .replace("\t", "\\t")
     }
 } 

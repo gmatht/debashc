@@ -408,7 +408,12 @@ impl Parser {
         if let Some(span) = self.lexer.get_span() {
             let text = self.lexer.get_text(span.0, span.1);
             self.lexer.next(); // consume the string
-            Ok(text)
+            // Strip the quotes from the string
+            if text.len() >= 2 {
+                Ok(text[1..text.len()-1].to_string())
+            } else {
+                Ok(text)
+            }
         } else {
             Err(ParserError::UnexpectedEOF)
         }
