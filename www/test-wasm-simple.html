@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WASM Test</title>
+</head>
+<body>
+    <h1>WASM Test</h1>
+    <div id="output"></div>
+
+    <script type="module">
+        import init, { Debashc, init_panic_hook } from './www/pkg/debashc.js';
+
+        async function testWasm() {
+            try {
+                console.log('Starting WASM test...');
+                
+                console.log('Initializing WASM...');
+                await init();
+                console.log('WASM initialized successfully');
+                
+                console.log('Setting up panic hook...');
+                init_panic_hook();
+                console.log('Panic hook set up');
+                
+                console.log('Creating Debashc instance...');
+                const debashc = new Debashc();
+                console.log('Debashc instance created');
+                
+                console.log('Testing lex function...');
+                const testInput = 'echo hello';
+                const result = debashc.lex(testInput);
+                console.log('Lex result:', result);
+                
+                document.getElementById('output').innerHTML = `
+                    <h2>Test Results:</h2>
+                    <p><strong>Input:</strong> ${testInput}</p>
+                    <p><strong>Result:</strong> ${result.ok ? 'Success' : 'Failed'}</p>
+                    <p><strong>Output:</strong></p>
+                    <pre>${result.ok ? result.val : result.val}</pre>
+                `;
+                
+            } catch (error) {
+                console.error('WASM test failed:', error);
+                document.getElementById('output').innerHTML = `<p style="color: red;">Error: ${error}</p>`;
+            }
+        }
+
+        testWasm();
+    </script>
+</body>
+</html>

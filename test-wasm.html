@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debashc WASM Test</title>
+</head>
+<body>
+    <h1>Debashc WASM Test</h1>
+    <div id="output"></div>
+
+    <script type="module">
+        import init, { Debashc, init_panic_hook } from './www/pkg/debashc.js';
+
+        async function testWasm() {
+            try {
+                await init();
+                init_panic_hook();
+                
+                const debashc = new Debashc();
+                
+                // Test basic functionality
+                const testInput = 'echo "Hello, World!"';
+                
+                // Test lexing
+                const lexResult = debashc.lex(testInput);
+                console.log('Lex result:', lexResult);
+                
+                // Test parsing
+                const parseResult = debashc.parse(testInput);
+                console.log('Parse result:', parseResult);
+                
+                // Test Perl conversion
+                const perlResult = debashc.to_perl(testInput);
+                console.log('Perl result:', perlResult);
+                
+                document.getElementById('output').innerHTML = `
+                    <h2>Test Results:</h2>
+                    <p><strong>Input:</strong> ${testInput}</p>
+                    <p><strong>Lex:</strong> ${lexResult.ok ? 'Success' : 'Failed'}</p>
+                    <p><strong>Parse:</strong> ${parseResult.ok ? 'Success' : 'Failed'}</p>
+                    <p><strong>Perl:</strong> ${perlResult.ok ? 'Success' : 'Failed'}</p>
+                    <p><strong>Perl Code:</strong></p>
+                    <pre>${perlResult.ok ? perlResult.val : 'Error'}</pre>
+                `;
+                
+            } catch (error) {
+                console.error('WASM test failed:', error);
+                document.getElementById('output').innerHTML = `<p style="color: red;">Error: ${error}</p>`;
+            }
+        }
+
+        testWasm();
+    </script>
+</body>
+</html>
