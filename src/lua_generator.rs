@@ -14,7 +14,32 @@ impl LuaGenerator {
         lua_code.push_str("-- Generated Lua code from shell script\n");
         lua_code.push_str("local os = require('os')\n");
         lua_code.push_str("local io = require('io')\n");
-        lua_code.push_str("local lfs = require('lfs')\n\n");
+        lua_code.push_str("-- Try to load lfs, fall back to os.execute if not available\n");
+        lua_code.push_str("local lfs_ok, lfs = pcall(require, 'lfs')\n");
+        lua_code.push_str("if not lfs_ok then\n");
+        lua_code.push_str("    lfs = {}\n");
+        lua_code.push_str("    function lfs.dir(path)\n");
+        lua_code.push_str("        local handle = io.popen('ls ' .. path)\n");
+        lua_code.push_str("        local result = {}\n");
+        lua_code.push_str("        for file in handle:lines() do\n");
+        lua_code.push_str("            table.insert(result, file)\n");
+        lua_code.push_str("        end\n");
+        lua_code.push_str("        handle:close()\n");
+        lua_code.push_str("        return result\n");
+        lua_code.push_str("    end\n");
+        lua_code.push_str("    function lfs.mkdir(path)\n");
+        lua_code.push_str("        return os.execute('mkdir ' .. path) == 0\n");
+        lua_code.push_str("    end\n");
+        lua_code.push_str("    function lfs.attributes(path)\n");
+        lua_code.push_str("        local handle = io.popen('test -e ' .. path .. ' && echo exists')\n");
+        lua_code.push_str("        local result = handle:read('*all')\n");
+        lua_code.push_str("        handle:close()\n");
+        lua_code.push_str("        if result:match('exists') then\n");
+        lua_code.push_str("            return { mode = 'file' }\n");
+        lua_code.push_str("        end\n");
+        lua_code.push_str("        return nil\n");
+        lua_code.push_str("    end\n");
+        lua_code.push_str("end\n\n");
         
         for command in commands {
             let command_code = self.generate_command(command);
@@ -71,14 +96,15 @@ impl LuaGenerator {
             }
             "ls" => {
                 if cmd.args.is_empty() {
-                    lua_code.push_str("for file in lfs.dir('.') do\n");
+                    lua_code.push_str("local files = lfs.dir('.')\n");
+                    lua_code.push_str("for _, file in ipairs(files) do\n");
                     lua_code.push_str("    if file ~= '.' and file ~= '..' then\n");
                     lua_code.push_str("        print(file)\n");
                     lua_code.push_str("    end\n");
                     lua_code.push_str("end\n");
                 } else {
                     let args = cmd.args.iter()
-                        .map(|arg| self.escape_lua_string(arg))
+                        .map(|arg| arg.replace("'", "\\'"))
                         .collect::<Vec<_>>()
                         .join(" ");
                     lua_code.push_str(&format!("os.execute('ls {}')\n", args));
@@ -86,12 +112,12 @@ impl LuaGenerator {
             }
             "grep" => {
                 if cmd.args.len() >= 2 {
-                    let pattern = self.escape_lua_string(&cmd.args[0]);
-                    let file = self.escape_lua_string(&cmd.args[1]);
+                    let pattern = cmd.args[0].replace("'", "\\'");
+                    let file = cmd.args[1].replace("'", "\\'");
                     lua_code.push_str(&format!("os.execute('grep {} {}')\n", pattern, file));
                 } else {
                     let args = cmd.args.iter()
-                        .map(|arg| self.escape_lua_string(arg))
+                        .map(|arg| arg.replace("'", "\\'"))
                         .collect::<Vec<_>>()
                         .join(" ");
                     lua_code.push_str(&format!("os.execute('grep {}')\n", args));
@@ -137,9 +163,9 @@ impl LuaGenerator {
             _ => {
                 // Generic command
                 let args = cmd.args.iter()
-                    .map(|arg| self.escape_lua_string(arg))
+                    .map(|arg| arg.replace("'", "\\'"))
                     .collect::<Vec<_>>()
-                    .join(", ");
+                    .join(" ");
                 lua_code.push_str(&format!("os.execute('{} {}')\n", cmd.name, args));
             }
         }
