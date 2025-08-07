@@ -64,10 +64,8 @@ pub enum Token {
     Exec,
     #[token("source")]
     Source,
-    #[token("source .", priority = 2)]
+    #[token(".", priority = 0)]
     SourceDot,
-    #[token(".", priority = 1)]
-    CurrentDir,
     #[token("trap")]
     Trap,
     #[token("wait")]
@@ -102,8 +100,6 @@ pub enum Token {
     BraceOpen,
     #[token("}")]
     BraceClose,
-    #[regex(r"\{[^}]*\}", priority = 2)]
-    BraceExpansion,
     #[token("=")]
     Assign,
     #[token("+=")]
