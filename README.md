@@ -1,11 +1,13 @@
-# sh2perl - Shell Script Parser in Rust
+# Debashc - Shell Script Converter
 
-A comprehensive Rust library and command-line tool for parsing and lexing shell/bash scripts. This project provides a robust foundation for analyzing shell scripts, converting them to other formats, or building shell script analysis tools.
+A comprehensive Rust library and command-line tool for parsing and converting shell/bash scripts to other programming languages. This project provides a robust foundation for analyzing shell scripts, converting them to Perl, Rust, Python, and more, or building shell script analysis tools.
 
 ## Features
 
 - **Complete Lexer**: Tokenizes shell/bash scripts with support for all major shell constructs
 - **AST Parser**: Converts tokens into a structured Abstract Syntax Tree
+- **Multi-language Code Generation**: Convert shell scripts to Perl, Rust, and Python
+- **Web Assembly Support**: Run in the browser with a beautiful web interface
 - **Shell Constructs Support**:
   - Simple commands and arguments
   - Pipelines and redirections
@@ -19,8 +21,8 @@ A comprehensive Rust library and command-line tool for parsing and lexing shell/
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/sh2perl.git
-cd sh2perl
+git clone https://github.com/yourusername/debashc.git
+cd debashc
 cargo build --release
 ```
 
@@ -28,32 +30,38 @@ cargo build --release
 
 ### Command Line Interface
 
-The `sh2perl` binary provides several commands for analyzing shell scripts:
+The `debashc` binary provides several commands for analyzing and converting shell scripts:
 
 ```bash
 # Tokenize a shell script
-sh2perl lex "echo hello world"
+debashc lex "echo hello world"
 
 # Parse a shell script to AST
-sh2perl parse "ls | grep test"
+debashc parse "ls | grep test"
 
 # Parse a shell script from file
-sh2perl file examples/simple.sh
+debashc file examples/simple.sh
 
 # Convert shell script to Perl
-sh2perl parse --perl "ls | grep test"
+debashc parse --perl "ls | grep test"
+
+# Convert shell script to Rust
+debashc parse --rust "ls | grep test"
+
+# Convert shell script to Python
+debashc parse --python "ls | grep test"
 
 # Convert shell script file to Perl
-sh2perl file --perl examples/simple.sh
+debashc file --perl examples/simple.sh
 
 # Interactive mode
-sh2perl interactive
+debashc interactive
 ```
 
 ### Library Usage
 
 ```rust
-use sh2perl::{Lexer, Parser};
+use debashc::{Lexer, Parser, PerlGenerator, RustGenerator, PythonGenerator};
 
 // Tokenize a shell script
 let input = "echo hello world";
@@ -72,7 +80,39 @@ match parser.parse() {
     }
     Err(e) => eprintln!("Parse error: {}", e),
 }
+
+// Convert to Perl
+let mut generator = PerlGenerator::new();
+let perl_code = generator.generate(&commands);
+println!("Perl code: {}", perl_code);
 ```
+
+## Web Interface
+
+Debashc includes a beautiful web interface powered by WebAssembly. You can run shell script conversions directly in your browser!
+
+### Building and Running the Web Demo
+
+```bash
+# Build the WASM target
+./build-wasm.sh
+
+# Or manually:
+cargo install wasm-pack
+wasm-pack build --target web --out-dir www/pkg
+
+# Serve the web interface
+cd www
+python3 -m http.server 8000
+# Then open http://localhost:8000 in your browser
+```
+
+The web interface provides:
+- Real-time shell script tokenization
+- AST visualization
+- Conversion to Perl, Rust, and Python
+- Interactive examples
+- Responsive design for mobile and desktop
 
 ## Examples
 

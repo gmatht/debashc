@@ -1,4 +1,4 @@
-use sh2perl::{Lexer, Parser, PerlGenerator, RustGenerator, PythonGenerator};
+use debashc::{Lexer, Parser, PerlGenerator, RustGenerator, PythonGenerator};
 use std::env;
 use std::fs;
 use std::io::{self, Write};

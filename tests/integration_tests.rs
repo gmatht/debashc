@@ -1,4 +1,4 @@
-use sh2perl::{Lexer, Parser, PerlGenerator, RustGenerator, PythonGenerator, Token};
+use debashc::{Lexer, Parser, PerlGenerator, RustGenerator, PythonGenerator, Token};
 use std::fs;
 use std::process::Command;
 use std::path::Path;
