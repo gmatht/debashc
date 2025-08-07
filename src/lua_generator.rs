@@ -17,8 +17,12 @@ impl LuaGenerator {
         lua_code.push_str("local lfs = require('lfs')\n\n");
         
         for command in commands {
-            lua_code.push_str(&self.generate_command(command));
-            lua_code.push('\n');
+            let command_code = self.generate_command(command);
+            lua_code.push_str(&command_code);
+            // Only add newline if the command doesn't already end with one
+            if !command_code.ends_with('\n') {
+                lua_code.push('\n');
+            }
         }
         
         lua_code
