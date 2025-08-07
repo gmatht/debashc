@@ -1,4 +1,4 @@
-use sh2perl::{Lexer, Parser, PerlGenerator, RustGenerator};
+use sh2perl::{Lexer, Parser, PerlGenerator, RustGenerator, PythonGenerator};
 use std::env;
 use std::fs;
 use std::io::{self, Write};
@@ -63,6 +63,13 @@ fn main() {
                 }
                 let input = &args[3];
                 parse_to_rust(input);
+            } else if args.len() >= 3 && args[2] == "--python" {
+                if args.len() < 4 {
+                    println!("Error: parse --python command requires input");
+                    return;
+                }
+                let input = &args[3];
+                parse_to_python(input);
             } else {
                 let input = &args[2];
                 parse_input(input);
@@ -87,6 +94,13 @@ fn main() {
                 }
                 let filename = &args[3];
                 parse_file_to_rust(filename);
+            } else if args.len() >= 3 && args[2] == "--python" {
+                if args.len() < 4 {
+                    println!("Error: file --python command requires filename");
+                    return;
+                }
+                let filename = &args[3];
+                parse_file_to_python(filename);
             } else {
                 let filename = &args[2];
                 parse_file(filename);
@@ -207,6 +221,49 @@ fn parse_file_to_rust(filename: &str) {
     match fs::read_to_string(filename) {
         Ok(content) => {
             parse_to_rust(&content);
+        }
+        Err(e) => {
+            println!("Error reading file: {}", e);
+        }
+    }
+}
+
+fn parse_to_python(input: &str) {
+    println!("Converting to Python: {}", input);
+    println!("Python Code:");
+    println!("{}", "=".repeat(50));
+    
+    let mut parser = Parser::new(input);
+    match parser.parse() {
+        Ok(commands) => {
+            let mut generator = PythonGenerator::new();
+            let python_code = generator.generate(&commands);
+            println!("{}", python_code);
+        }
+        Err(e) => {
+            println!("Parse error: {:?}", e);
+        }
+    }
+}
+
+fn parse_file_to_python(filename: &str) {
+    match fs::read_to_string(filename) {
+        Ok(content) => {
+            println!("Converting file to Python: {}", filename);
+            println!("Python Code:");
+            println!("{}", "=".repeat(50));
+            
+            let mut parser = Parser::new(&content);
+            match parser.parse() {
+                Ok(commands) => {
+                    let mut generator = PythonGenerator::new();
+                    let python_code = generator.generate(&commands);
+                    println!("{}", python_code);
+                }
+                Err(e) => {
+                    println!("Parse error: {:?}", e);
+                }
+            }
         }
         Err(e) => {
             println!("Error reading file: {}", e);

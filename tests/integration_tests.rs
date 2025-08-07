@@ -1,4 +1,4 @@
-use sh2perl::{Lexer, Parser, PerlGenerator, RustGenerator, Token};
+use sh2perl::{Lexer, Parser, PerlGenerator, RustGenerator, PythonGenerator, Token};
 use std::fs;
 use std::process::Command;
 use std::path::Path;
@@ -1064,5 +1064,235 @@ fn test_examples_rust_generation() {
         
         // Clean up Rust source file
         fs::remove_file(&rust_file).ok();
+    }
+}
+
+#[test]
+fn test_examples_python_generation() {
+    use std::fs;
+    use std::path::Path;
+    
+    let examples_dir = Path::new("examples");
+    if !examples_dir.exists() {
+        println!("Examples directory not found, skipping test");
+        return;
+    }
+    
+    let entries = match fs::read_dir(examples_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            eprintln!("Failed to read examples directory: {}", e);
+            return;
+        }
+    };
+    
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                eprintln!("Failed to read directory entry: {}", e);
+                continue;
+            }
+        };
+        
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("sh") {
+            continue;
+        }
+        
+        let file_name = path.file_name().unwrap().to_str().unwrap();
+        println!("Testing Python generation for: {}", file_name);
+        
+        // Read the shell script
+        let shell_content = match fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(e) => {
+                eprintln!("Failed to read {}: {}", file_name, e);
+                continue;
+            }
+        };
+        
+        // Parse and generate Python code
+        let mut parser = Parser::new(&shell_content);
+        let commands = match parser.parse() {
+            Ok(commands) => commands,
+            Err(e) => {
+                eprintln!("Failed to parse {}: {:?}", file_name, e);
+                continue;
+            }
+        };
+        
+        let mut generator = PythonGenerator::new();
+        let python_code = generator.generate(&commands);
+        
+        // Write Python code to temporary file
+        let python_file = format!("test_output_{}.py", file_name.replace(".sh", ""));
+        if let Err(e) = fs::write(&python_file, python_code) {
+            eprintln!("Failed to write Python file for {}: {}", file_name, e);
+            continue;
+        }
+        
+        // Try to run the Python code with syntax check
+        let syntax_check = Command::new("python3")
+            .arg("-m")
+            .arg("py_compile")
+            .arg(&python_file)
+            .output();
+        
+        match syntax_check {
+            Ok(output) => {
+                if output.status.success() {
+                    println!("  ✓ Python code syntax is valid");
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    eprintln!("  ✗ Python syntax error: {}", stderr);
+                }
+            }
+            Err(e) => {
+                eprintln!("  ✗ Failed to run Python syntax check for {}: {}", file_name, e);
+            }
+        }
+        
+        // Clean up Python source file
+        fs::remove_file(&python_file).ok();
+    }
+}
+
+#[test]
+fn test_examples_python_output_equivalence() {
+    use std::fs;
+    use std::path::Path;
+    
+    let examples_dir = Path::new("examples");
+    if !examples_dir.exists() {
+        println!("Examples directory not found, skipping test");
+        return;
+    }
+    
+    let entries = match fs::read_dir(examples_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            eprintln!("Failed to read examples directory: {}", e);
+            return;
+        }
+    };
+    
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                eprintln!("Failed to read directory entry: {}", e);
+                continue;
+            }
+        };
+        
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("sh") {
+            continue;
+        }
+        
+        let file_name = path.file_name().unwrap().to_str().unwrap();
+        println!("Testing Python output equivalence for: {}", file_name);
+        
+        // Read the shell script
+        let shell_content = match fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(e) => {
+                eprintln!("Failed to read {}: {}", file_name, e);
+                continue;
+            }
+        };
+        
+        // Parse and generate Python code
+        let mut parser = Parser::new(&shell_content);
+        let commands = match parser.parse() {
+            Ok(commands) => commands,
+            Err(e) => {
+                eprintln!("Failed to parse {}: {:?}", file_name, e);
+                continue;
+            }
+        };
+        
+        let mut generator = PythonGenerator::new();
+        let python_code = generator.generate(&commands);
+        
+        // Write Python code to temporary file
+        let python_file = format!("test_output_{}.py", file_name.replace(".sh", ""));
+        if let Err(e) = fs::write(&python_file, python_code) {
+            eprintln!("Failed to write Python file for {}: {}", file_name, e);
+            continue;
+        }
+        
+        // Run the shell script
+        let shell_output = Command::new("sh")
+            .arg(&path)
+            .output();
+        
+        let shell_output = match shell_output {
+            Ok(output) => output,
+            Err(e) => {
+                eprintln!("Failed to run shell script {}: {}", file_name, e);
+                fs::remove_file(&python_file).ok();
+                continue;
+            }
+        };
+        
+        // Run the Python script
+        let python_output = Command::new("python3")
+            .arg(&python_file)
+            .output();
+        
+        let python_output = match python_output {
+            Ok(output) => output,
+            Err(e) => {
+                eprintln!("Failed to run Python script for {}: {}", file_name, e);
+                fs::remove_file(&python_file).ok();
+                continue;
+            }
+        };
+        
+        // Clean up Python file
+        fs::remove_file(&python_file).ok();
+        
+        // Compare outputs
+        let shell_stdout = String::from_utf8_lossy(&shell_output.stdout);
+        let shell_stderr = String::from_utf8_lossy(&shell_output.stderr);
+        let python_stdout = String::from_utf8_lossy(&python_output.stdout);
+        let python_stderr = String::from_utf8_lossy(&python_output.stderr);
+        
+        // Check exit status
+        let shell_success = shell_output.status.success();
+        let python_success = python_output.status.success();
+        
+        assert_eq!(
+            shell_success, python_success,
+            "Exit status mismatch for {}: shell={}, python={}",
+            file_name, shell_success, python_success
+        );
+        
+        // For some commands, we expect different output formats
+        // but the core functionality should be equivalent
+        let should_compare_output = !file_name.contains("simple.sh"); // simple.sh has ls -la which differs
+        
+        if should_compare_output {
+            // Normalize outputs for comparison (remove trailing whitespace, normalize line endings)
+            let normalized_shell_stdout = shell_stdout.trim().replace("\r\n", "\n");
+            let normalized_python_stdout = python_stdout.trim().replace("\r\n", "\n");
+            
+            assert_eq!(
+                normalized_shell_stdout, normalized_python_stdout,
+                "Output mismatch for {}:\nShell: {:?}\nPython: {:?}",
+                file_name, normalized_shell_stdout, normalized_python_stdout
+            );
+        }
+        
+        // Log the outputs for debugging
+        println!("  Shell stdout: {:?}", shell_stdout);
+        println!("  Shell stderr: {:?}", shell_stderr);
+        println!("  Python stdout: {:?}", python_stdout);
+        println!("  Python stderr: {:?}", python_stderr);
+        println!("  Shell exit: {}, Python exit: {}", 
+                 shell_output.status, python_output.status);
+        println!("  Output comparison: {}", if should_compare_output { "enabled" } else { "skipped (known differences)" });
     }
 }
