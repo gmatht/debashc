@@ -1,4 +1,4 @@
-use sh2perl::{Lexer, Parser, PerlGenerator, RustGenerator, PythonGenerator};
+use sh2perl::{Lexer, Parser, PerlGenerator, RustGenerator, PythonGenerator, LuaGenerator};
 use std::env;
 use std::fs;
 use std::io::{self, Write};
@@ -13,9 +13,13 @@ fn main() {
         println!("  parse <input>   - Parse shell script to AST");
         println!("  parse --perl <input> - Convert shell script to Perl");
         println!("  parse --rust <input> - Convert shell script to Rust");
+        println!("  parse --python <input> - Convert shell script to Python");
+        println!("  parse --lua <input> - Convert shell script to Lua");
         println!("  file <filename> - Parse shell script from file");
         println!("  file --perl <filename> - Convert shell script file to Perl");
         println!("  file --rust <filename> - Convert shell script file to Rust");
+        println!("  file --python <filename> - Convert shell script file to Python");
+        println!("  file --lua <filename> - Convert shell script file to Lua");
         return;
     }
     
@@ -70,6 +74,13 @@ fn main() {
                 }
                 let input = &args[3];
                 parse_to_python(input);
+            } else if args.len() >= 3 && args[2] == "--lua" {
+                if args.len() < 4 {
+                    println!("Error: parse --lua command requires input");
+                    return;
+                }
+                let input = &args[3];
+                parse_to_lua(input);
             } else {
                 let input = &args[2];
                 parse_input(input);
@@ -101,6 +112,13 @@ fn main() {
                 }
                 let filename = &args[3];
                 parse_file_to_python(filename);
+            } else if args.len() >= 3 && args[2] == "--lua" {
+                if args.len() < 4 {
+                    println!("Error: file --lua command requires filename");
+                    return;
+                }
+                let filename = &args[3];
+                parse_file_to_lua(filename);
             } else {
                 let filename = &args[2];
                 parse_file(filename);
@@ -259,6 +277,46 @@ fn parse_file_to_python(filename: &str) {
                     let mut generator = PythonGenerator::new();
                     let python_code = generator.generate(&commands);
                     println!("{}", python_code);
+                }
+                Err(e) => {
+                    println!("Parse error: {:?}", e);
+                }
+            }
+        }
+        Err(e) => {
+            println!("Error reading file: {}", e);
+        }
+    }
+}
+
+fn parse_to_lua(input: &str) {
+    println!("Converting to Lua:");
+    let mut parser = Parser::new(input);
+    match parser.parse() {
+        Ok(commands) => {
+            let generator = LuaGenerator::new();
+            let lua_code = generator.generate(&commands);
+            println!("{}", lua_code);
+        }
+        Err(e) => {
+            eprintln!("Parse error: {}", e);
+        }
+    }
+}
+
+fn parse_file_to_lua(filename: &str) {
+    match fs::read_to_string(filename) {
+        Ok(content) => {
+            println!("Converting file to Lua: {}", filename);
+            println!("Lua Code:");
+            println!("{}", "=".repeat(50));
+            
+            let mut parser = Parser::new(&content);
+            match parser.parse() {
+                Ok(commands) => {
+                    let generator = LuaGenerator::new();
+                    let lua_code = generator.generate(&commands);
+                    println!("{}", lua_code);
                 }
                 Err(e) => {
                     println!("Parse error: {:?}", e);

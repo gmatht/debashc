@@ -234,7 +234,7 @@ impl Parser {
         // Parse arguments and redirects
         while let Some(token) = self.lexer.peek() {
             match token {
-                Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString => {
+                Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString | Token::CurrentDir => {
                     args.push(self.parse_word()?);
                 }
                 Token::Dollar | Token::DollarBrace | Token::DollarParen => {
@@ -611,6 +611,7 @@ impl Parser {
             Some(Token::DollarBrace) => Ok(self.parse_variable_expansion()?),
             Some(Token::DollarParen) => Ok(self.parse_variable_expansion()?),
             Some(Token::BraceExpansion) => Ok(self.get_brace_expansion_text()?),
+            Some(Token::CurrentDir) => Ok(self.get_current_dir_text()?),
             _ => Err(ParserError::UnexpectedToken(Token::Identifier)),
         };
         
@@ -755,6 +756,16 @@ impl Parser {
         if let Some(span) = self.lexer.get_span() {
             let text = self.lexer.get_text(span.0, span.1);
             self.lexer.next(); // consume the brace expansion
+            Ok(text)
+        } else {
+            Err(ParserError::UnexpectedEOF)
+        }
+    }
+
+    fn get_current_dir_text(&mut self) -> Result<String, ParserError> {
+        if let Some(span) = self.lexer.get_span() {
+            let text = self.lexer.get_text(span.0, span.1);
+            self.lexer.next(); // consume the current dir
             Ok(text)
         } else {
             Err(ParserError::UnexpectedEOF)

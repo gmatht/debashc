@@ -64,8 +64,10 @@ pub enum Token {
     Exec,
     #[token("source")]
     Source,
-    #[token(".", priority = 0)]
+    #[token("source .", priority = 2)]
     SourceDot,
+    #[token(".", priority = 1)]
+    CurrentDir,
     #[token("trap")]
     Trap,
     #[token("wait")]

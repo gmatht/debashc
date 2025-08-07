@@ -1,4 +1,4 @@
-use sh2perl::{Lexer, Parser, PerlGenerator, RustGenerator, PythonGenerator, Token};
+use sh2perl::{Lexer, Parser, PerlGenerator, RustGenerator, PythonGenerator, LuaGenerator, Token};
 use std::fs;
 use std::process::Command;
 use std::path::Path;
@@ -601,6 +601,20 @@ fn test_perl_generator_quoted_strings() {
     let perl_code = generator.generate(&commands);
     
     assert!(perl_code.contains("print(\"First Second Third\\n\");"));
+}
+
+#[test]
+fn test_lua_generator_basic_echo() {
+    let input = "echo 'Hello, World!'";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    let generator = LuaGenerator::new();
+    let lua_code = generator.generate(&commands);
+    
+    assert!(lua_code.contains("print('Hello, World!')"));
+    assert!(lua_code.contains("local os = require('os')"));
+    assert!(lua_code.contains("local io = require('io')"));
+    assert!(lua_code.contains("local lfs = require('lfs')"));
 }
 
 // ============================================================================
