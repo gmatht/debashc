@@ -1,4 +1,4 @@
-use sh2perl::{Lexer, Parser, PerlGenerator};
+use sh2perl::{Lexer, Parser, PerlGenerator, RustGenerator};
 use std::env;
 use std::fs;
 use std::io::{self, Write};
@@ -12,8 +12,10 @@ fn main() {
         println!("  lex <input>     - Tokenize shell script");
         println!("  parse <input>   - Parse shell script to AST");
         println!("  parse --perl <input> - Convert shell script to Perl");
+        println!("  parse --rust <input> - Convert shell script to Rust");
         println!("  file <filename> - Parse shell script from file");
         println!("  file --perl <filename> - Convert shell script file to Perl");
+        println!("  file --rust <filename> - Convert shell script file to Rust");
         return;
     }
     
@@ -54,6 +56,13 @@ fn main() {
                 }
                 let input = &args[3];
                 parse_to_perl(input);
+            } else if args.len() >= 3 && args[2] == "--rust" {
+                if args.len() < 4 {
+                    println!("Error: parse --rust command requires input");
+                    return;
+                }
+                let input = &args[3];
+                parse_to_rust(input);
             } else {
                 let input = &args[2];
                 parse_input(input);
@@ -71,6 +80,13 @@ fn main() {
                 }
                 let filename = &args[3];
                 parse_file_to_perl(filename);
+            } else if args.len() >= 3 && args[2] == "--rust" {
+                if args.len() < 4 {
+                    println!("Error: file --rust command requires filename");
+                    return;
+                }
+                let filename = &args[3];
+                parse_file_to_rust(filename);
             } else {
                 let filename = &args[2];
                 parse_file(filename);
@@ -159,6 +175,38 @@ fn parse_file_to_perl(filename: &str) {
     match fs::read_to_string(filename) {
         Ok(content) => {
             parse_to_perl(&content);
+        }
+        Err(e) => {
+            println!("Error reading file: {}", e);
+        }
+    }
+}
+
+fn parse_to_rust(input: &str) {
+    println!("Converting to Rust: {}", input);
+    println!("Rust Code:");
+    println!("{}", "=".repeat(50));
+    
+    match Parser::new(input).parse() {
+        Ok(commands) => {
+            let mut generator = RustGenerator::new();
+            let rust_code = generator.generate(&commands);
+            println!("{}", rust_code);
+        }
+        Err(e) => {
+            println!("Parse error: {}", e);
+        }
+    }
+    
+    println!("{}", "=".repeat(50));
+}
+
+fn parse_file_to_rust(filename: &str) {
+    println!("Converting file to Rust: {}", filename);
+    
+    match fs::read_to_string(filename) {
+        Ok(content) => {
+            parse_to_rust(&content);
         }
         Err(e) => {
             println!("Error reading file: {}", e);
