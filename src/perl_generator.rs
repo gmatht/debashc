@@ -185,8 +185,12 @@ impl PerlGenerator {
     fn command_to_string(&self, command: &Command) -> String {
         match command {
             Command::Simple(cmd) => {
-                let args = cmd.args.iter().map(|arg| format!("'{}'", arg)).collect::<Vec<_>>().join(" ");
-                format!("{} {}", cmd.name, args)
+                if cmd.args.is_empty() {
+                    cmd.name.to_string()
+                } else {
+                    let args = cmd.args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>().join(" ");
+                    format!("{} {}", cmd.name, args)
+                }
             }
             _ => "command".to_string(),
         }

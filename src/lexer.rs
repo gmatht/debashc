@@ -377,7 +377,13 @@ impl Lexer {
             if std::mem::discriminant(token) == std::mem::discriminant(&expected) {
                 Ok(())
             } else {
-                Err(LexerError::UnexpectedChar('?'))
+                // Get the actual character from the current token for better error reporting
+                if let Some((_, start, end)) = self.tokens.get(self.current - 1) {
+                    let actual_char = self.input[*start..*end].chars().next().unwrap_or('?');
+                    Err(LexerError::UnexpectedChar(actual_char))
+                } else {
+                    Err(LexerError::UnexpectedChar('?'))
+                }
             }
         } else {
             Err(LexerError::UnexpectedChar('?'))

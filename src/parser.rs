@@ -35,6 +35,23 @@ impl Parser {
         self.skip_whitespace_and_comments();
         
         while !self.lexer.is_eof() {
+            // Check if we're at EOF after skipping whitespace and comments
+            if self.lexer.is_eof() {
+                break;
+            }
+            
+            // Check if we're at a newline or semicolon (empty command)
+            if let Some(token) = self.lexer.peek() {
+                match token {
+                    Token::Newline | Token::Semicolon => {
+                        self.lexer.next(); // consume the separator
+                        self.skip_whitespace_and_comments();
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            
             let command = self.parse_command()?;
             commands.push(command);
             
@@ -69,6 +86,11 @@ impl Parser {
             Some(Token::For) => self.parse_for_loop(),
             Some(Token::Function) => self.parse_function(),
             Some(Token::ParenOpen) => self.parse_subshell(),
+            Some(Token::Semicolon) => {
+                // Skip semicolon and continue parsing
+                self.lexer.next();
+                self.parse_command()
+            }
             _ => self.parse_pipeline(),
         }
     }
@@ -99,6 +121,10 @@ impl Parser {
                     self.skip_whitespace_and_comments();
                     commands.push(self.parse_simple_command()?);
                 }
+                Token::Semicolon | Token::Newline => {
+                    // Stop parsing pipeline when we hit a command separator
+                    break;
+                }
                 _ => break,
             }
         }
@@ -122,8 +148,25 @@ impl Parser {
                     if let Some(Token::Assign) = self.lexer.peek_n(1) {
                         let var_name = self.get_identifier_text()?;
                         self.lexer.next(); // consume =
-                        let value = self.parse_word()?;
+                        
+                        // Parse the value until we hit a space or end
+                        let mut value_parts = Vec::new();
+                        while let Some(next_token) = self.lexer.peek() {
+                            match next_token {
+                                Token::Identifier | Token::Number => {
+                                    value_parts.push(self.get_identifier_text()?);
+                                }
+                                Token::Space | Token::Tab | Token::Newline | Token::Semicolon => {
+                                    break;
+                                }
+                                _ => break,
+                            }
+                        }
+                        let value = value_parts.join("");
                         env_vars.insert(var_name, value);
+                        
+                        // Skip whitespace after the environment variable
+                        self.skip_whitespace_and_comments();
                     } else {
                         break;
                     }
@@ -173,6 +216,67 @@ impl Parser {
                 Token::Dollar | Token::DollarBrace | Token::DollarParen => {
                     args.push(self.parse_variable_expansion()?);
                 }
+                Token::Minus => {
+                    // Handle arguments starting with minus (like -la, -v, etc.)
+                    let token_clone = token.clone();
+                    self.lexer.next(); // consume the minus
+                    if let Some(Token::Identifier) = self.lexer.peek() {
+                        let arg = format!("-{}", self.get_identifier_text()?);
+                        args.push(arg);
+                    } else {
+                        return Err(ParserError::UnexpectedToken(token_clone));
+                    }
+                }
+                Token::NonZero => {
+                    // Handle -n argument
+                    self.lexer.next(); // consume the NonZero token
+                    if let Some(Token::Identifier) = self.lexer.peek() {
+                        let arg = format!("-n{}", self.get_identifier_text()?);
+                        args.push(arg);
+                    } else {
+                        args.push("-n".to_string());
+                    }
+                }
+                Token::Character => {
+                    // Handle -c argument
+                    self.lexer.next(); // consume the Character token
+                    if let Some(Token::Identifier) = self.lexer.peek() {
+                        let arg = format!("-c{}", self.get_identifier_text()?);
+                        args.push(arg);
+                    } else {
+                        args.push("-c".to_string());
+                    }
+                }
+                Token::File => {
+                    // Handle -f argument
+                    self.lexer.next(); // consume the File token
+                    args.push("-f".to_string());
+                }
+                Token::Directory => {
+                    // Handle -d argument
+                    self.lexer.next(); // consume the Directory token
+                    args.push("-d".to_string());
+                }
+                Token::Exists => {
+                    // Handle -e argument
+                    self.lexer.next(); // consume the Exists token
+                    args.push("-e".to_string());
+                }
+                Token::Readable => {
+                    // Handle -r argument
+                    self.lexer.next(); // consume the Readable token
+                    args.push("-r".to_string());
+                }
+                Token::Writable => {
+                    // Handle -w argument
+                    self.lexer.next(); // consume the Writable token
+                    args.push("-w".to_string());
+                }
+                Token::Executable => {
+                    // Handle -x argument
+                    self.lexer.next(); // consume the Executable token
+                    args.push("-x".to_string());
+                }
                 Token::RedirectIn | Token::RedirectOut | Token::RedirectAppend |
                 Token::RedirectInOut | Token::Heredoc | Token::HeredocTabs => {
                     redirects.push(self.parse_redirect()?);
@@ -180,6 +284,16 @@ impl Parser {
                 Token::Newline | Token::Semicolon => {
                     // Stop parsing arguments when we hit a command separator
                     break;
+                }
+                Token::TestBracketClose => {
+                    // Handle closing bracket for test commands
+                    self.lexer.next(); // consume the ]
+                    args.push("]".to_string());
+                    break;
+                }
+                Token::Space | Token::Tab => {
+                    // Skip whitespace but continue parsing arguments
+                    self.lexer.next();
                 }
                 _ => break,
             }
@@ -213,9 +327,23 @@ impl Parser {
         self.lexer.consume(Token::Then)?;
         let then_branch = Box::new(self.parse_command()?);
         
+        // Skip whitespace and comments before checking for semicolon
+        self.skip_whitespace_and_comments();
+        
         // Consume semicolon if present after then branch
         if let Some(Token::Semicolon) = self.lexer.peek() {
             self.lexer.next();
+            self.skip_whitespace_and_comments();
+        } else {
+            // If no semicolon, check if we're at the end or if there's an else
+            if let Some(Token::Else) = self.lexer.peek() {
+                // No semicolon needed before else
+            } else if let Some(Token::Fi) = self.lexer.peek() {
+                // No semicolon needed before fi
+            } else {
+                // Expect a semicolon
+                return Err(ParserError::ExpectedToken(Token::Semicolon));
+            }
         }
         
         let else_branch = if let Some(Token::Else) = self.lexer.peek() {
