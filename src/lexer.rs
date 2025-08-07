@@ -100,6 +100,8 @@ pub enum Token {
     BraceOpen,
     #[token("}")]
     BraceClose,
+    #[regex(r"\{[^}]*\}", priority = 2)]
+    BraceExpansion,
     #[token("=")]
     Assign,
     #[token("+=")]
