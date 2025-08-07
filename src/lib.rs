@@ -4,6 +4,7 @@ pub mod ast;
 pub mod perl_generator;
 pub mod rust_generator;
 pub mod python_generator;
+pub mod lua_generator;
 pub mod wasm;
 
 pub use lexer::*;
@@ -12,4 +13,8 @@ pub use ast::*;
 pub use perl_generator::*;
 pub use rust_generator::*;
 pub use python_generator::*;
-pub use wasm::*; 
+pub use lua_generator::*;
+pub use wasm::*;
+
+#[cfg(test)]
+mod integration_tests; 

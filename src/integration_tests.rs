@@ -1,8 +1,8 @@
-use debashc::lexer::{Lexer, Token};
-use debashc::parser::Parser;
-use debashc::perl_generator::PerlGenerator;
-use debashc::rust_generator::RustGenerator;
-use debashc::python_generator::PythonGenerator;
+use crate::lexer::{Lexer, Token};
+use crate::parser::Parser;
+use crate::perl_generator::PerlGenerator;
+use crate::rust_generator::RustGenerator;
+use crate::python_generator::PythonGenerator;
 use std::fs;
 use std::process::Command;
 

@@ -1,5 +1,5 @@
 use wasm_bindgen::prelude::*;
-use crate::{Lexer, Parser, PerlGenerator, RustGenerator, PythonGenerator};
+use crate::{Lexer, Parser, PerlGenerator, RustGenerator, PythonGenerator, LuaGenerator};
 
 #[wasm_bindgen]
 pub struct Debashc;
@@ -68,6 +68,18 @@ impl Debashc {
         match parser.parse() {
             Ok(commands) => {
                 let mut generator = PythonGenerator::new();
+                Ok(generator.generate(&commands))
+            }
+            Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
+        }
+    }
+
+    /// Convert shell script to Lua
+    pub fn to_lua(&mut self, input: &str) -> Result<String, JsValue> {
+        let mut parser = Parser::new(input);
+        match parser.parse() {
+            Ok(commands) => {
+                let mut generator = LuaGenerator::new();
                 Ok(generator.generate(&commands))
             }
             Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
