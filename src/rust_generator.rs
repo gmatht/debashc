@@ -21,8 +21,8 @@ impl RustGenerator {
         self.indent_level += 1;
 
         for command in commands {
-            output.push_str(&self.indent());
-            output.push_str(&self.generate_command(command));
+            let chunk = self.generate_command(command);
+            output.push_str(&self.indent_block(&chunk));
         }
 
         self.indent_level -= 1;
@@ -176,15 +176,15 @@ impl RustGenerator {
         output.push_str(" {\n");
         
         self.indent_level += 1;
-        output.push_str(&self.indent());
-        output.push_str(&self.generate_command(&if_stmt.then_branch));
+        let then_chunk = self.generate_command(&if_stmt.then_branch);
+        output.push_str(&self.indent_block(&then_chunk));
         self.indent_level -= 1;
         
         if let Some(else_branch) = &if_stmt.else_branch {
             output.push_str("} else {\n");
             self.indent_level += 1;
-            output.push_str(&self.indent());
-            output.push_str(&self.generate_command(else_branch));
+            let else_chunk = self.generate_command(else_branch);
+            output.push_str(&self.indent_block(&else_chunk));
             self.indent_level -= 1;
         }
         
@@ -201,8 +201,8 @@ impl RustGenerator {
         output.push_str(" {\n");
         
         self.indent_level += 1;
-        output.push_str(&self.indent());
-        output.push_str(&self.generate_command(&while_loop.body));
+        let body_chunk = self.generate_command(&while_loop.body);
+        output.push_str(&self.indent_block(&body_chunk));
         self.indent_level -= 1;
         
         output.push_str("}\n");
@@ -217,8 +217,8 @@ impl RustGenerator {
             // Infinite loop
             output.push_str("loop {\n");
             self.indent_level += 1;
-            output.push_str(&self.indent());
-            output.push_str(&self.generate_command(&for_loop.body));
+            let body_chunk = self.generate_command(&for_loop.body);
+            output.push_str(&self.indent_block(&body_chunk));
             self.indent_level -= 1;
             output.push_str("}\n");
         } else {
@@ -240,8 +240,8 @@ impl RustGenerator {
         
         output.push_str(&format!("fn {}() -> Result<(), Box<dyn std::error::Error>> {{\n", func.name));
         self.indent_level += 1;
-        output.push_str(&self.indent());
-        output.push_str(&self.generate_command(&func.body));
+        let body_chunk = self.generate_command(&func.body);
+        output.push_str(&self.indent_block(&body_chunk));
         self.indent_level -= 1;
         output.push_str("    Ok(())\n");
         output.push_str("}\n");
@@ -254,8 +254,8 @@ impl RustGenerator {
         // Run subshell inline (foreground)
         output.push_str("{\n");
         self.indent_level += 1;
-        output.push_str(&self.indent());
-        output.push_str(&self.generate_command(command));
+        let inner_chunk = self.generate_command(command);
+        output.push_str(&self.indent_block(&inner_chunk));
         self.indent_level -= 1;
         output.push_str("}\n");
         output
@@ -267,8 +267,8 @@ impl RustGenerator {
         output.push_str("let _ = thread::spawn(|| {\n");
         output.push_str("    let _ = (|| -> Result<(), Box<dyn std::error::Error>> {\n");
         self.indent_level += 1;
-        output.push_str(&self.indent());
-        output.push_str(&self.generate_command(command));
+        let inner_chunk = self.generate_command(command);
+        output.push_str(&self.indent_block(&inner_chunk));
         output.push_str(&self.indent());
         output.push_str("Ok(())\n");
         self.indent_level -= 1;
@@ -321,6 +321,17 @@ impl RustGenerator {
         "    ".repeat(self.indent_level)
     }
     
+    fn indent_block(&self, s: &str) -> String {
+        let prefix = self.indent();
+        let mut out = String::new();
+        for line in s.lines() {
+            out.push_str(&prefix);
+            out.push_str(line);
+            out.push('\n');
+        }
+        out
+    }
+    
     fn escape_rust_string(&self, s: &str) -> String {
         // First, unescape any \" sequences to " to avoid double-escaping
         let unescaped = s.replace("\\\"", "\"");
@@ -332,3 +343,4 @@ impl RustGenerator {
                  .replace("\t", "\\t")
     }
 }
+
