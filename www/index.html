@@ -273,14 +273,9 @@
                         throw new Error('Unknown operation');
                 }
 
-                if (result.ok) {
-                    console.log('Operation successful, result:', result.val);
-                    setOutput(result.val);
-                    showStatus('Operation completed successfully!', 'success');
-                } else {
-                    console.error('Operation failed with error:', result.val);
-                    throw new Error(result.val);
-                }
+                console.log('Operation successful, result:', result);
+                setOutput(result);
+                showStatus('Operation completed successfully!', 'success');
             } catch (error) {
                 console.error('Exception caught:', error);
                 setOutput('Error: ' + error.message);

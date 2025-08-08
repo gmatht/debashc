@@ -8,7 +8,7 @@
     <div id="output"></div>
 
     <script type="module">
-        import init, { Debashc, init_panic_hook } from './www/pkg/debashc.js';
+        import init, { Debashc, init_panic_hook } from './pkg/debashc.js';
 
         async function testWasm() {
             try {
@@ -34,9 +34,9 @@
                 document.getElementById('output').innerHTML = `
                     <h2>Test Results:</h2>
                     <p><strong>Input:</strong> ${testInput}</p>
-                    <p><strong>Result:</strong> ${result.ok ? 'Success' : 'Failed'}</p>
+                    <p><strong>Result:</strong> Success</p>
                     <p><strong>Output:</strong></p>
-                    <pre>${result.ok ? result.val : result.val}</pre>
+                    <pre>${result}</pre>
                 `;
                 
             } catch (error) {
