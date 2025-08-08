@@ -267,7 +267,14 @@ fn parse_input(input: &str) {
             }
         }
         Err(e) => {
-            println!("Parse error: {}", e);
+            if let Some((line, col)) = extract_line_col(&e) {
+                println!("Parse error at {}:{}: {}", line, col, e);
+                if let Some(snippet) = caret_snippet(input, line, col) {
+                    println!("{}", snippet);
+                }
+            } else {
+                println!("Parse error: {}", e);
+            }
         }
     }
     
@@ -364,7 +371,14 @@ fn parse_to_python(input: &str) {
             println!("{}", python_code);
         }
         Err(e) => {
-            println!("Parse error: {:?}", e);
+            if let Some((line, col)) = extract_line_col(&e) {
+                println!("Parse error at {}:{}: {:?}", line, col, e);
+                if let Some(snippet) = caret_snippet(input, line, col) {
+                    println!("{}", snippet);
+                }
+            } else {
+                println!("Parse error: {:?}", e);
+            }
         }
     }
 }
@@ -447,7 +461,13 @@ fn parse_to_c(input: &str) {
             let code = generator.generate(&commands);
             println!("{}", code);
         }
-        Err(e) => println!("Parse error: {:?}", e),
+        Err(e) => {
+            if let Some((line, col)) = extract_line_col(&e) {
+                println!("Parse error at {}:{}: {:?}", line, col, e);
+            } else {
+                println!("Parse error: {:?}", e);
+            }
+        },
     }
 }
 
@@ -572,6 +592,39 @@ fn parse_to_powershell(input: &str) {
         }
         Err(e) => println!("Parse error: {:?}", e),
     }
+}
+
+fn extract_line_col(e: &dyn std::error::Error) -> Option<(usize, usize)> {
+    let msg = e.to_string();
+    // Try to find pattern " at line:col" we emit in our errors
+    let parts: Vec<&str> = msg.split_whitespace().collect();
+    for window in parts.windows(2) {
+        if window[0] == "at" {
+            if let Some((l, c)) = parse_line_col(window[1]) { return Some((l, c)); }
+        }
+    }
+    None
+}
+
+fn parse_line_col(s: &str) -> Option<(usize, usize)> {
+    let mut it = s.split(':');
+    let line = it.next()?.trim_end_matches(',');
+    let col = it.next()?.trim_end_matches(',');
+    Some((line.parse().ok()?, col.parse().ok()?))
+}
+
+fn caret_snippet(input: &str, line: usize, col: usize) -> Option<String> {
+    let lines: Vec<&str> = input.lines().collect();
+    if line == 0 || line > lines.len() { return None; }
+    let src_line = lines[line - 1];
+    let mut caret = String::new();
+    let prefix = format!("{:>4} | ", line);
+    caret.push_str(&prefix);
+    caret.push_str(src_line);
+    caret.push('\n');
+    caret.push_str(&" ".repeat(prefix.len().saturating_sub(0) + col.saturating_sub(1)));
+    caret.push('^');
+    Some(caret)
 }
 
 fn parse_file_to_powershell(filename: &str) {

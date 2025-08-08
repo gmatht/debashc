@@ -7,8 +7,8 @@ use std::collections::HashMap;
 pub enum ParserError {
     #[error("Lexer error: {0}")]
     Lexer(#[from] LexerError),
-    #[error("Unexpected token: {0:?}")]
-    UnexpectedToken(Token),
+    #[error("Unexpected token: {token:?} at {line}:{col}")]
+    UnexpectedToken { token: Token, line: usize, col: usize },
     #[error("Expected token: {0:?}")]
     ExpectedToken(Token),
     #[error("Unexpected end of input")]
@@ -197,7 +197,12 @@ impl Parser {
                     self.parse_variable_expansion()?
                 }
                 _ => {
-                    return Err(ParserError::UnexpectedToken(token.clone()));
+                    let (line, col) = self
+                        .lexer
+                        .get_span()
+                        .map(|(s, _)| self.lexer.offset_to_line_col(s))
+                        .unwrap_or((1, 1));
+                    return Err(ParserError::UnexpectedToken { token: token.clone(), line, col });
                 }
             }
         } else {
@@ -224,7 +229,7 @@ impl Parser {
                         let arg = format!("-{}", self.get_identifier_text()?);
                         args.push(arg);
                     } else {
-                        return Err(ParserError::UnexpectedToken(token_clone));
+                        return Err(ParserError::UnexpectedToken { token: token_clone, line: 1, col: 1 });
                     }
                 }
                 Token::NonZero => {
@@ -396,7 +401,7 @@ impl Parser {
         // Variable name
         let variable = match self.lexer.peek() {
             Some(Token::Identifier) => self.get_identifier_text()?,
-            Some(t) => return Err(ParserError::UnexpectedToken(t.clone())),
+            Some(t) => return Err(ParserError::UnexpectedToken { token: t.clone(), line: 1, col: 1 }),
             None => return Err(ParserError::UnexpectedEOF),
         };
 
@@ -520,6 +525,7 @@ impl Parser {
             Some(Token::Number) => Ok(self.get_number_text()?),
             Some(Token::DoubleQuotedString) => Ok(self.get_string_text()?),
             Some(Token::SingleQuotedString) => Ok(self.get_string_text()?),
+            Some(Token::BacktickString) => Ok(self.get_raw_token_text()?),
             Some(Token::BraceOpen) => Ok(self.parse_brace_word()?),
             Some(Token::SourceDot) => {
                 // Treat standalone '.' as a normal word (e.g., `find . -name ...`)
@@ -529,7 +535,14 @@ impl Parser {
             Some(Token::Dollar) => Ok(self.parse_variable_expansion()?),
             Some(Token::DollarBrace) => Ok(self.parse_variable_expansion()?),
             Some(Token::DollarParen) => Ok(self.parse_variable_expansion()?),
-            _ => Err(ParserError::UnexpectedToken(Token::Identifier)),
+            _ => {
+                let (line, col) = self
+                    .lexer
+                    .get_span()
+                    .map(|(s, _)| self.lexer.offset_to_line_col(s))
+                    .unwrap_or((1, 1));
+                Err(ParserError::UnexpectedToken { token: Token::Identifier, line, col })
+            }
         };
         
         // Skip whitespace after consuming the word
@@ -565,7 +578,14 @@ impl Parser {
                 self.lexer.consume(Token::ParenClose)?;
                 result.push(')');
             }
-            _ => return Err(ParserError::UnexpectedToken(Token::Identifier)),
+            _ => {
+                let (line, col) = self
+                    .lexer
+                    .get_span()
+                    .map(|(s, _)| self.lexer.offset_to_line_col(s))
+                    .unwrap_or((1, 1));
+                return Err(ParserError::UnexpectedToken { token: Token::Identifier, line, col });
+            }
         }
         
         Ok(result)
@@ -578,7 +598,7 @@ impl Parser {
             match token {
                 Token::Identifier | Token::Number | Token::DoubleQuotedString |
                 Token::SingleQuotedString | Token::Dollar | Token::DollarBrace |
-                Token::DollarParen | Token::BraceOpen => {
+                Token::DollarParen | Token::BraceOpen | Token::BacktickString => {
                     words.push(self.parse_word()?);
                 }
                 _ => break,
@@ -660,6 +680,16 @@ impl Parser {
             } else {
                 Ok(text)
             }
+        } else {
+            Err(ParserError::UnexpectedEOF)
+        }
+    }
+
+    fn get_raw_token_text(&mut self) -> Result<String, ParserError> {
+        if let Some(span) = self.lexer.get_span() {
+            let text = self.lexer.get_text(span.0, span.1);
+            self.lexer.next(); // consume the token
+            Ok(text)
         } else {
             Err(ParserError::UnexpectedEOF)
         }

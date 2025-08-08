@@ -262,7 +262,19 @@ impl PerlGenerator {
             // For loop with items
             // Special-case numeric brace range like {0..5}
             if for_loop.items.len() == 1 {
-                if let Some((start, end)) = self.parse_numeric_brace_range(&for_loop.items[0]) {
+                let first = &for_loop.items[0];
+                if let Some((start, end)) = self.parse_numeric_brace_range(first) {
+                    output.push_str(&format!(
+                        "foreach my ${} ({}..{}) {{\n",
+                        for_loop.variable, start, end
+                    ));
+                    self.indent_level += 1;
+                    output.push_str(&self.indent());
+                    output.push_str(&self.generate_command(&for_loop.body));
+                    self.indent_level -= 1;
+                    output.push_str("}\n");
+                    return output;
+                } else if let Some((start, end)) = self.parse_seq_command(first) {
                     output.push_str(&format!(
                         "foreach my ${} ({}..{}) {{\n",
                         for_loop.variable, start, end
@@ -304,6 +316,27 @@ impl PerlGenerator {
         let start = parts[0].parse::<i64>().ok()?;
         let end = parts[1].parse::<i64>().ok()?;
         Some((start, end))
+    }
+
+    fn parse_seq_command(&self, s: &str) -> Option<(i64, i64)> {
+        // Accept backtick form `seq A B` or $(seq A B) or plain seq A B
+        let trimmed = s.trim();
+        // Strip backticks or $( )
+        let inner = if trimmed.starts_with('`') && trimmed.ends_with('`') {
+            &trimmed[1..trimmed.len()-1]
+        } else if trimmed.starts_with("$(") && trimmed.ends_with(')') {
+            &trimmed[2..trimmed.len()-1]
+        } else {
+            trimmed
+        };
+
+        let parts: Vec<&str> = inner.split_whitespace().collect();
+        if parts.len() == 3 && parts[0] == "seq" {
+            let start = parts[1].parse::<i64>().ok()?;
+            let end = parts[2].parse::<i64>().ok()?;
+            return Some((start, end));
+        }
+        None
     }
 
     fn generate_function(&mut self, func: &Function) -> String {

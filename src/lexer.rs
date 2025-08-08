@@ -1,5 +1,6 @@
 use logos::Logos;
 use thiserror::Error;
+use std::cmp::Ordering;
 
 #[derive(Logos, Debug, PartialEq, Clone)]
 pub enum Token {
@@ -321,8 +322,8 @@ pub enum Token {
 
 #[derive(Error, Debug)]
 pub enum LexerError {
-    #[error("Unexpected character: {0}")]
-    UnexpectedChar(char),
+    #[error("Unexpected character: {ch} at {line}:{col}")]
+    UnexpectedChar { ch: char, line: usize, col: usize },
     #[error("Unterminated string")]
     UnterminatedString,
     #[error("Invalid escape sequence")]
@@ -333,6 +334,7 @@ pub struct Lexer {
     tokens: Vec<(Token, usize, usize)>,
     current: usize,
     input: String,
+    line_starts: Vec<usize>,
 }
 
 impl Lexer {
@@ -351,11 +353,18 @@ impl Lexer {
             }
         }
         
-        Self {
-            tokens,
-            current: 0,
-            input: input.to_string(),
+        // Precompute starts of lines for quick offset->(line,col)
+        let mut line_starts = Vec::new();
+        line_starts.push(0);
+        for (idx, byte) in input.as_bytes().iter().enumerate() {
+            if *byte == b'\n' {
+                if idx + 1 < input.len() {
+                    line_starts.push(idx + 1);
+                }
+            }
         }
+
+        Self { tokens, current: 0, input: input.to_string(), line_starts }
     }
 
     pub fn peek(&self) -> Option<&Token> {
@@ -380,13 +389,14 @@ impl Lexer {
                 // Get the actual character from the current token for better error reporting
                 if let Some((_, start, end)) = self.tokens.get(self.current - 1) {
                     let actual_char = self.input[*start..*end].chars().next().unwrap_or('?');
-                    Err(LexerError::UnexpectedChar(actual_char))
+                    let (line, col) = self.offset_to_line_col(*start);
+                    Err(LexerError::UnexpectedChar { ch: actual_char, line, col })
                 } else {
-                    Err(LexerError::UnexpectedChar('?'))
+                    Err(LexerError::UnexpectedChar { ch: '?', line: 1, col: 1 })
                 }
             }
         } else {
-            Err(LexerError::UnexpectedChar('?'))
+            Err(LexerError::UnexpectedChar { ch: '?', line: 1, col: 1 })
         }
     }
 
@@ -410,6 +420,29 @@ impl Lexer {
         self.tokens.get(self.current).map(|(_, start, end)| {
             self.input[*start..*end].to_string()
         })
+    }
+}
+
+impl Lexer {
+    pub fn offset_to_line_col(&self, offset: usize) -> (usize, usize) {
+        if self.line_starts.is_empty() {
+            return (1, offset + 1);
+        }
+        // Binary search for the greatest line_start <= offset
+        let mut left = 0usize;
+        let mut right = self.line_starts.len();
+        while left < right {
+            let mid = (left + right) / 2;
+            match self.line_starts[mid].cmp(&offset) {
+                Ordering::Greater => right = mid,
+                _ => left = mid + 1,
+            }
+        }
+        let idx = left.saturating_sub(1);
+        let line_start = self.line_starts.get(idx).cloned().unwrap_or(0);
+        let line = idx + 1;
+        let col = offset.saturating_sub(line_start) + 1;
+        (line, col)
     }
 }
 
