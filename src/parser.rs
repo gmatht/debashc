@@ -43,7 +43,7 @@ impl Parser {
             // Check if we're at a newline or semicolon (empty command)
             if let Some(token) = self.lexer.peek() {
                 match token {
-                    Token::Newline | Token::Semicolon => {
+                    Token::Newline | Token::Semicolon | Token::CarriageReturn => {
                         self.lexer.next(); // consume the separator
                         self.skip_whitespace_and_comments();
                         continue;
@@ -86,7 +86,7 @@ impl Parser {
             Some(Token::For) => self.parse_for_loop(),
             Some(Token::Function) => self.parse_function(),
             Some(Token::ParenOpen) => self.parse_subshell(),
-            Some(Token::Semicolon) => {
+            Some(Token::Semicolon) | Some(Token::Newline) | Some(Token::CarriageReturn) => {
                 // Skip semicolon and continue parsing
                 self.lexer.next();
                 self.parse_command()
@@ -141,28 +141,47 @@ impl Parser {
         let mut redirects = Vec::new();
         let mut env_vars = HashMap::new();
         
-        // Parse environment variables
+        // Parse environment variable-style assignments at the start
         while let Some(token) = self.lexer.peek() {
             match token {
                 Token::Identifier => {
                     if let Some(Token::Assign) = self.lexer.peek_n(1) {
                         let var_name = self.get_identifier_text()?;
                         self.lexer.next(); // consume =
-                        
-                        // Parse the value until we hit a space or end
-                        let mut value_parts = Vec::new();
-                        while let Some(next_token) = self.lexer.peek() {
-                            match next_token {
-                                Token::Identifier | Token::Number => {
-                                    value_parts.push(self.get_identifier_text()?);
+                        // Capture value tokens until a separator (space, tab, newline, semicolon)
+                        // Special cases: arithmetic $((...)), quoted strings, backticks
+                        let mut value = String::new();
+                        if let Some(tok) = self.lexer.peek() {
+                            match tok {
+                                Token::Arithmetic => {
+                                    value.push_str(&self.capture_arithmetic_text()?);
                                 }
-                                Token::Space | Token::Tab | Token::Newline | Token::Semicolon => {
-                                    break;
+                                Token::DoubleQuotedString | Token::SingleQuotedString => {
+                                    value.push_str(&self.get_string_text()?);
                                 }
-                                _ => break,
+                                Token::BacktickString => {
+                                    value.push_str(&self.get_raw_token_text()?);
+                                }
+                                _ => {
+                                    loop {
+                                        match self.lexer.peek() {
+                                            Some(Token::Space) | Some(Token::Tab) | Some(Token::Newline) | Some(Token::Semicolon) | None => break,
+                                            Some(Token::Arithmetic) => {
+                                                value.push_str(&self.capture_arithmetic_text()?);
+                                            }
+                                            _ => {
+                                                if let Some((start, end)) = self.lexer.get_span() {
+                                                    value.push_str(&self.lexer.get_text(start, end));
+                                                    self.lexer.next();
+                                                } else {
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
-                        let value = value_parts.join("");
                         env_vars.insert(var_name, value);
                         
                         // Skip whitespace after the environment variable
@@ -197,12 +216,21 @@ impl Parser {
                     self.parse_variable_expansion()?
                 }
                 _ => {
-                    let (line, col) = self
-                        .lexer
-                        .get_span()
-                        .map(|(s, _)| self.lexer.offset_to_line_col(s))
-                        .unwrap_or((1, 1));
-                    return Err(ParserError::UnexpectedToken { token: token.clone(), line, col });
+                    // If we have parsed environment-style assignments and hit a separator,
+                    // treat as an assignment-only command (no external program), using "true" as no-op.
+                    match token {
+                        Token::Semicolon | Token::Newline | Token::Done | Token::Fi | Token::Then | Token::Else | Token::ParenClose | Token::BraceClose => {
+                            "true".to_string()
+                        }
+                        _ => {
+                            let (line, col) = self
+                                .lexer
+                                .get_span()
+                                .map(|(s, _)| self.lexer.offset_to_line_col(s))
+                                .unwrap_or((1, 1));
+                            return Err(ParserError::UnexpectedToken { token: token.clone(), line, col });
+                        }
+                    }
                 }
             }
         } else {
@@ -282,6 +310,14 @@ impl Parser {
                     self.lexer.next(); // consume the Executable token
                     args.push("-x".to_string());
                 }
+                // Test comparison operators
+                Token::Eq => { self.lexer.next(); args.push("-eq".to_string()); }
+                Token::Ne => { self.lexer.next(); args.push("-ne".to_string()); }
+                Token::Lt => { self.lexer.next(); args.push("-lt".to_string()); }
+                Token::Le => { self.lexer.next(); args.push("-le".to_string()); }
+                Token::Gt => { self.lexer.next(); args.push("-gt".to_string()); }
+                Token::Ge => { self.lexer.next(); args.push("-ge".to_string()); }
+                Token::Zero => { self.lexer.next(); args.push("-z".to_string()); }
                 Token::RedirectIn | Token::RedirectOut | Token::RedirectAppend |
                 Token::RedirectInOut | Token::Heredoc | Token::HeredocTabs => {
                     redirects.push(self.parse_redirect()?);
@@ -382,12 +418,55 @@ impl Parser {
 
     fn parse_while_loop(&mut self) -> Result<Command, ParserError> {
         self.lexer.consume(Token::While)?;
-        
+        // Parse condition
         let condition = Box::new(self.parse_command()?);
-        
+
+        // Optional separator after condition (semicolon or newline) and skip whitespace
+        match self.lexer.peek() {
+            Some(Token::Semicolon) | Some(Token::Newline) | Some(Token::CarriageReturn) => { self.lexer.next(); },
+            _ => {}
+        }
+        while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn)) {
+            self.lexer.next();
+        }
+
+        // Expect 'do'
         self.lexer.consume(Token::Do)?;
+
+        // Allow newline/whitespace after 'do'
+        while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn)) {
+            self.lexer.next();
+        }
+
+        // Parse body (first command)
         let body = Box::new(self.parse_command()?);
-        
+
+        // Consume additional commands in body until 'done' (discard for now)
+        loop {
+            // Skip separators
+            while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn | Token::Semicolon)) {
+                self.lexer.next();
+            }
+            match self.lexer.peek() {
+                Some(Token::Done) | None => break,
+                _ => {
+                    // Parse and discard extra commands in the loop body
+                    let _ = self.parse_command()?;
+                }
+            }
+        }
+
+        // Allow optional separator after body before 'done'
+        loop {
+            match self.lexer.peek() {
+                Some(Token::Space) | Some(Token::Tab) | Some(Token::Comment) | Some(Token::Newline) | Some(Token::CarriageReturn) => { self.lexer.next(); continue; }
+                Some(Token::Semicolon) => { self.lexer.next(); continue; }
+                _ => {}
+            }
+            break;
+        }
+
+        // Expect 'done'
         self.lexer.consume(Token::Done)?;
         
         Ok(Command::While(WhileLoop { condition, body }))
@@ -415,11 +494,11 @@ impl Parser {
             self.skip_whitespace_and_comments();
             let words = self.parse_word_list()?;
             // Optional separator before 'do'
-            while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment)) {
+            while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::CarriageReturn)) {
                 self.lexer.next();
             }
             match self.lexer.peek() {
-                Some(Token::Semicolon) | Some(Token::Newline) => {
+                Some(Token::Semicolon) | Some(Token::Newline) | Some(Token::CarriageReturn) => {
                     self.lexer.next();
                 }
                 _ => {}
@@ -427,11 +506,11 @@ impl Parser {
             words
         } else {
             // No 'in' list; optional separator before 'do'
-            while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment)) {
+            while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::CarriageReturn)) {
                 self.lexer.next();
             }
             match self.lexer.peek() {
-                Some(Token::Semicolon) | Some(Token::Newline) => {
+                Some(Token::Semicolon) | Some(Token::Newline) | Some(Token::CarriageReturn) => {
                     self.lexer.next();
                 }
                 _ => {}
@@ -440,16 +519,31 @@ impl Parser {
         };
 
         // Allow whitespace/newlines/comments before 'do'
-        while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+        while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn)) {
             self.lexer.next();
         }
         self.lexer.consume(Token::Do)?;
         let body = Box::new(self.parse_command()?);
 
+        // Consume additional commands in body until 'done' (discard for now)
+        loop {
+            // Skip separators
+            while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn | Token::Semicolon)) {
+                self.lexer.next();
+            }
+            match self.lexer.peek() {
+                Some(Token::Done) | None => break,
+                _ => {
+                    // Parse and discard extra commands in the loop body
+                    let _ = self.parse_command()?;
+                }
+            }
+        }
+
         // Allow optional separator after body before 'done'
         loop {
             match self.lexer.peek() {
-                Some(Token::Space) | Some(Token::Tab) | Some(Token::Comment) | Some(Token::Newline) => {
+                Some(Token::Space) | Some(Token::Tab) | Some(Token::Comment) | Some(Token::Newline) | Some(Token::CarriageReturn) => {
                     self.lexer.next();
                     continue;
                 }
@@ -474,10 +568,66 @@ impl Parser {
 
     fn parse_function(&mut self) -> Result<Command, ParserError> {
         self.lexer.consume(Token::Function)?;
-        
-        let name = self.get_identifier_text()?;
-        
-        let body = Box::new(self.parse_command()?);
+        // Allow whitespace between 'function' and name
+        self.skip_whitespace_and_comments();
+
+        let name = match self.lexer.peek() {
+            Some(Token::Identifier) => self.get_identifier_text()?,
+            Some(t) => {
+                let (line, col) = self
+                    .lexer
+                    .get_span()
+                    .map(|(s, _)| self.lexer.offset_to_line_col(s))
+                    .unwrap_or((1, 1));
+                return Err(ParserError::UnexpectedToken { token: t.clone(), line, col });
+            }
+            None => return Err(ParserError::UnexpectedEOF),
+        };
+
+        // Skip whitespace after name
+        self.skip_whitespace_and_comments();
+
+        // Optional empty parentheses after function name: function name()
+        if let Some(Token::ParenOpen) = self.lexer.peek() {
+            // Consume () if present
+            self.lexer.next();
+            if let Some(Token::ParenClose) = self.lexer.peek() { self.lexer.next(); }
+            // Skip whitespace/newlines
+            while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+                self.lexer.next();
+            }
+        }
+
+        // Brace-wrapped function body: { ... }
+        let body = if let Some(Token::BraceOpen) = self.lexer.peek() {
+            // Consume '{'
+            self.lexer.next();
+            // Allow whitespace/newlines
+            while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+                self.lexer.next();
+            }
+            // Parse first command as the body node
+            let first = Box::new(self.parse_command()?);
+
+            // Consume any additional commands inside the block (ignored for now)
+            loop {
+                // Skip separators
+                while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon)) {
+                    self.lexer.next();
+                }
+                match self.lexer.peek() {
+                    Some(Token::BraceClose) | None => break,
+                    _ => { let _ = self.parse_command()?; }
+                }
+            }
+
+            // Expect closing '}'
+            self.lexer.consume(Token::BraceClose)?;
+            first
+        } else {
+            // Fallback: parse next as a single command body
+            Box::new(self.parse_command()?)
+        };
         
         Ok(Command::Function(Function { name, body }))
     }
@@ -572,10 +722,25 @@ impl Parser {
             }
             Some(Token::DollarParen) => {
                 self.lexer.next();
-                // Parse command substitution
+                // Parse command substitution: capture until matching ')'
                 result.push_str("$(");
-                // This would need more complex parsing
-                self.lexer.consume(Token::ParenClose)?;
+                let mut depth: i32 = 1;
+                while !self.lexer.is_eof() && depth > 0 {
+                    if let Some((start, end)) = self.lexer.get_span() {
+                        match self.lexer.peek() {
+                            Some(Token::DollarParen) => { depth += 1; }
+                            Some(Token::ParenClose) => { depth -= 1; }
+                            _ => {}
+                        }
+                        let text = self.lexer.get_text(start, end);
+                        self.lexer.next();
+                        if depth >= 0 {
+                            result.push_str(&text);
+                        }
+                    } else {
+                        break;
+                    }
+                }
                 result.push(')');
             }
             _ => {
@@ -693,6 +858,41 @@ impl Parser {
         } else {
             Err(ParserError::UnexpectedEOF)
         }
+    }
+
+    fn capture_arithmetic_text(&mut self) -> Result<String, ParserError> {
+        // We are at $((' start. Capture until matching '))'
+        // The lexer token for start is DollarParen for $( and Arithmetic for $((
+        // Our lexer provides Arithmetic for '$((' specifically.
+        let mut text = String::new();
+        if let Some((start, end)) = self.lexer.get_span() {
+            text.push_str(&self.lexer.get_text(start, end));
+            self.lexer.next(); // consume $(('
+        } else {
+            return Err(ParserError::UnexpectedEOF);
+        }
+
+        // Arithmetic token corresponds to '$((' which is two opening parens
+        let mut depth: i32 = 2;
+        while !self.lexer.is_eof() && depth > 0 {
+            if let Some((start, end)) = self.lexer.get_span() {
+                match self.lexer.peek() {
+                    Some(Token::Arithmetic) => { depth += 2; }
+                    Some(Token::ParenClose) => {
+                        // Could be one or two parens; capture text and adjust after
+                    }
+                    _ => {}
+                }
+                let seg = self.lexer.get_text(start, end);
+                self.lexer.next();
+                // Adjust depth when we see '))'
+                if seg == ")" { depth -= 1; }
+                text.push_str(&seg);
+            } else {
+                break;
+            }
+        }
+        Ok(text)
     }
 
     fn skip_whitespace_and_comments(&mut self) {
