@@ -23,6 +23,19 @@ impl BatchGenerator {
             Command::For(_) => String::from("REM for not implemented\n"),
             Command::Function(_) => String::from("REM function not implemented\n"),
             Command::Subshell(_) => String::from("REM subshell not implemented\n"),
+            Command::Background(cmd) => {
+                // Start in background using start /B
+                if let Command::Simple(s) = &**cmd {
+                    if s.args.is_empty() { format!("start /B {}\n", s.name) } else { format!("start /B {} {}\n", s.name, s.args.join(" ")) }
+                } else {
+                    String::from("REM background compound command not implemented\n")
+                }
+            }
+            Command::Block(block) => {
+                let mut out = String::new();
+                for c in &block.commands { out.push_str(&self.generate_command(c)); }
+                out
+            }
         }
     }
 

@@ -1,4 +1,4 @@
-use crate::ast::{Command, SimpleCommand, Pipeline, IfStatement, WhileLoop, ForLoop, Function};
+use crate::ast::{Command, SimpleCommand, Pipeline, IfStatement, WhileLoop, ForLoop, Function, Block};
 
 pub struct LuaGenerator {
     indent_level: usize,
@@ -63,6 +63,8 @@ impl LuaGenerator {
             Command::For(for_loop) => self.generate_for_loop(for_loop),
             Command::Function(func) => self.generate_function(func),
             Command::Subshell(cmd) => self.generate_subshell(cmd),
+            Command::Background(cmd) => self.generate_background(cmd),
+            Command::Block(block) => self.generate_block(block),
         }
     }
 
@@ -80,6 +82,17 @@ impl LuaGenerator {
                     lua_code.push_str(&format!("print({})\n", self.escape_lua_string(arg)));
                 } else {
                     lua_code.push_str("print()\n");
+                }
+            }
+            "sleep" => {
+                if let Some(arg) = cmd.args.first() {
+                    // Use socket.sleep if available, fallback to os.execute
+                    lua_code.push_str("local has_socket, socket = pcall(require, 'socket')\n");
+                    lua_code.push_str("if has_socket then\n");
+                    lua_code.push_str(&format!("    socket.sleep({})\n", arg));
+                    lua_code.push_str("else\n");
+                    lua_code.push_str(&format!("    os.execute('sleep {}')\n", arg.replace("'", "\\'")));
+                    lua_code.push_str("end\n");
                 }
             }
             "cd" => {
@@ -232,13 +245,32 @@ impl LuaGenerator {
 
     fn generate_subshell(&mut self, cmd: &Command) -> String {
         let mut lua_code = String::new();
-        // Launch subshell body in a coroutine to emulate background execution
+        // Run subshell inline
+        lua_code.push_str("do\n");
+        self.indent_level += 1;
+        lua_code.push_str(&self.generate_command(cmd));
+        self.indent_level -= 1;
+        lua_code.push_str("end\n");
+        lua_code
+    }
+
+    fn generate_background(&mut self, cmd: &Command) -> String {
+        let mut lua_code = String::new();
+        // Background: use coroutine to emulate async
         lua_code.push_str("local co = coroutine.create(function()\n");
         self.indent_level += 1;
         lua_code.push_str(&self.generate_command(cmd));
         self.indent_level -= 1;
         lua_code.push_str("end)\n");
         lua_code.push_str("coroutine.resume(co)\n");
+        lua_code
+    }
+
+    fn generate_block(&mut self, block: &Block) -> String {
+        let mut lua_code = String::new();
+        for cmd in &block.commands {
+            lua_code.push_str(&self.generate_command(cmd));
+        }
         lua_code
     }
 

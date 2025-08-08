@@ -20,7 +20,20 @@ impl PowerShellGenerator {
             Command::While(_) => String::from("# while not implemented\n"),
             Command::For(_) => String::from("# for not implemented\n"),
             Command::Function(_) => String::from("# function not implemented\n"),
-            Command::Subshell(_) => String::from("# subshell not implemented\n"),
+            Command::Subshell(cmd) => {
+                // Inline execution for subshell
+                self.emit(cmd)
+            },
+            Command::Background(cmd) => {
+                // Run in background job
+                let body = self.emit(cmd);
+                format!("Start-Job -ScriptBlock {{\n{}\n}}\n", body)
+            }
+            Command::Block(block) => {
+                let mut out = String::new();
+                for c in &block.commands { out.push_str(&self.emit(c)); }
+                out
+            }
         }
     }
 

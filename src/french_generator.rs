@@ -42,6 +42,16 @@ impl FrenchGenerator {
             Command::For(_) => String::from("Boucler sur des éléments.\n"),
             Command::Function(f) => format!("Définir la fonction '{}'.\n", f.name),
             Command::Subshell(_) => String::from("Exécuter dans un sous-shell.\n"),
+            Command::Background(cmd) => {
+                let mut s = String::from("Exécuter en arrière-plan: \n");
+                s.push_str(&self.decrire_commande(cmd));
+                s
+            }
+            Command::Block(block) => {
+                let mut s = String::from("Exécuter un bloc de commandes:\n");
+                for c in &block.commands { s.push_str(&self.decrire_commande(c)); }
+                s
+            }
         }
     }
 }

@@ -27,7 +27,20 @@ impl JsGenerator {
             Command::While(_) => String::from("// while not implemented\n"),
             Command::For(_) => String::from("// for not implemented\n"),
             Command::Function(_) => String::from("// function not implemented\n"),
-            Command::Subshell(_) => String::from("// subshell not implemented\n"),
+            Command::Subshell(cmd) => {
+                // Inline execution of subshell (no isolation)
+                self.generate_command(cmd)
+            },
+            Command::Background(cmd) => {
+                // Fire-and-forget using child_process without waiting
+                let body = match &**cmd { Command::Simple(s) => self.command_to_shell(s), _ => String::from("") };
+                format!("require('child_process').exec(\"{}\");\n", self.escape_js_raw(&body))
+            }
+            Command::Block(block) => {
+                let mut out = String::new();
+                for c in &block.commands { out.push_str(&self.generate_command(c)); }
+                out
+            }
         }
     }
 

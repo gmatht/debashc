@@ -42,6 +42,16 @@ impl EnglishGenerator {
             Command::For(_) => String::from("Loop over items.\n"),
             Command::Function(f) => format!("Define function '{}'.\n", f.name),
             Command::Subshell(_) => String::from("Run in a subshell.\n"),
+            Command::Background(cmd) => {
+                let mut s = String::from("Run in background: \n");
+                s.push_str(&self.describe_command(cmd));
+                s
+            }
+            Command::Block(block) => {
+                let mut s = String::from("Execute a block of commands:\n");
+                for c in &block.commands { s.push_str(&self.describe_command(c)); }
+                s
+            }
         }
     }
 }

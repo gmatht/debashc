@@ -45,6 +45,14 @@ impl CGenerator {
             Command::For(for_loop) => self.generate_for_loop(for_loop),
             Command::Function(_) => String::from("/* function not implemented */\n"),
             Command::Subshell(_) => String::from("/* subshell not implemented */\n"),
+            Command::Background(cmd) => {
+                let mut out = String::new();
+                out.push_str("/* background start */\n");
+                out.push_str(&self.generate_command(cmd));
+                out.push_str("/* background end */\n");
+                out
+            }
+            Command::Block(block) => self.generate_block(block),
         }
     }
 
@@ -126,6 +134,14 @@ impl CGenerator {
         if let Some(else_b) = &if_stmt.else_branch {
             out.push_str("/* else */\n");
             out.push_str(&self.generate_command(else_b));
+        }
+        out
+    }
+
+    fn generate_block(&mut self, block: &Block) -> String {
+        let mut out = String::new();
+        for cmd in &block.commands {
+            out.push_str(&self.generate_command(cmd));
         }
         out
     }

@@ -9,6 +9,8 @@ pub enum Command {
     For(ForLoop),
     Function(Function),
     Subshell(Box<Command>),
+    Background(Box<Command>),
+    Block(Block),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -56,6 +58,11 @@ pub struct ForLoop {
 pub struct Function {
     pub name: String,
     pub body: Box<Command>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Block {
+    pub commands: Vec<Command>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

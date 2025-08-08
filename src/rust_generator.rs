@@ -14,8 +14,9 @@ impl RustGenerator {
         output.push_str("use std::process::Command;\n");
         output.push_str("use std::env;\n");
         output.push_str("use std::fs;\n");
-        output.push_str("use std::io::{self, Write};\n\n");
-        output.push_str("use std::thread;\n\n");
+        output.push_str("use std::io::{self, Write};\n");
+        output.push_str("use std::thread;\n");
+        output.push_str("use std::time::Duration;\n\n");
         output.push_str("fn main() -> Result<(), Box<dyn std::error::Error>> {\n");
         self.indent_level += 1;
 
@@ -40,6 +41,8 @@ impl RustGenerator {
             Command::For(for_loop) => self.generate_for_loop(for_loop),
             Command::Function(func) => self.generate_function(func),
             Command::Subshell(cmd) => self.generate_subshell(cmd),
+            Command::Background(cmd) => self.generate_background(cmd),
+            Command::Block(block) => self.generate_block(block),
         }
     }
 
@@ -61,6 +64,10 @@ impl RustGenerator {
                 let escaped_args = self.escape_rust_string(&args);
                 output.push_str(&format!("println!(\"{}\");\n", escaped_args));
             }
+        } else if cmd.name == "sleep" {
+            // Use std::thread::sleep
+            let dur = cmd.args.get(0).cloned().unwrap_or_else(|| "1".to_string());
+            output.push_str(&format!("thread::sleep(Duration::from_secs_f64({}f64));\n", dur));
         } else if cmd.name == "cd" {
             // Special handling for cd
             let empty_string = "".to_string();
@@ -129,6 +136,13 @@ impl RustGenerator {
                 let src = &cmd.args[0];
                 let dst = &cmd.args[1];
                 output.push_str(&format!("fs::copy(\"{}\", \"{}\")?;\n", src, dst));
+            }
+        } else if cmd.name == "read" {
+            // Read a line from stdin into a variable
+            if let Some(var) = cmd.args.get(0) {
+                output.push_str(&format!("let mut {} = String::new();\n", var));
+                output.push_str(&format!("io::stdin().read_line(&mut {})?;\n", var));
+                output.push_str(&format!("let {v} = {v}.trim().to_string();\n", v = var));
             }
         } else {
             // Generic command
@@ -237,9 +251,20 @@ impl RustGenerator {
 
     fn generate_subshell(&mut self, command: &Command) -> String {
         let mut output = String::new();
-        // Spawn subshell body in a background thread
+        // Run subshell inline (foreground)
+        output.push_str("{\n");
+        self.indent_level += 1;
+        output.push_str(&self.indent());
+        output.push_str(&self.generate_command(command));
+        self.indent_level -= 1;
+        output.push_str("}\n");
+        output
+    }
+
+    fn generate_background(&mut self, command: &Command) -> String {
+        let mut output = String::new();
+        // Spawn in a background thread
         output.push_str("let _ = thread::spawn(|| {\n");
-        // Inner closure to allow use of ? inside generated code
         output.push_str("    let _ = (|| -> Result<(), Box<dyn std::error::Error>> {\n");
         self.indent_level += 1;
         output.push_str(&self.indent());
@@ -249,6 +274,14 @@ impl RustGenerator {
         self.indent_level -= 1;
         output.push_str("    })();\n");
         output.push_str("});\n");
+        output
+    }
+
+    fn generate_block(&mut self, block: &Block) -> String {
+        let mut output = String::new();
+        for cmd in &block.commands {
+            output.push_str(&self.generate_command(cmd));
+        }
         output
     }
 

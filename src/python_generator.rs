@@ -33,6 +33,8 @@ impl PythonGenerator {
             Command::For(for_loop) => self.generate_for_loop(for_loop),
             Command::Function(func) => self.generate_function(func),
             Command::Subshell(cmd) => self.generate_subshell(cmd),
+            Command::Background(cmd) => self.generate_background(cmd),
+            Command::Block(block) => self.generate_block(block),
         }
     }
 
@@ -54,6 +56,11 @@ impl PythonGenerator {
                 let escaped_args = self.escape_python_string(&args);
                 output.push_str(&format!("print({})\n", escaped_args));
             }
+        } else if cmd.name == "sleep" {
+            // Use time.sleep
+            output.push_str("import time\n");
+            let dur = cmd.args.get(0).cloned().unwrap_or_else(|| "1".to_string());
+            output.push_str(&format!("time.sleep({})\n", dur));
         } else if cmd.name == "cd" {
             // Special handling for cd
             let empty_string = "".to_string();
@@ -111,6 +118,11 @@ impl PythonGenerator {
                 let dst = &cmd.args[1];
                 output.push_str(&format!("import shutil\n"));
                 output.push_str(&format!("shutil.copy2('{}', '{}')\n", src, dst));
+            }
+        } else if cmd.name == "read" {
+            // Read a line into a variable
+            if let Some(var) = cmd.args.get(0) {
+                output.push_str(&format!("{} = input()\n", var));
             }
         } else if cmd.name == "[" {
             // Special handling for test commands
@@ -280,9 +292,26 @@ impl PythonGenerator {
 
     fn generate_subshell(&mut self, command: &Command) -> String {
         let mut output = String::new();
-        // Spawn subshell in a background thread
+        // Run subshell inline
+        output.push_str("try:\n");
+        self.indent_level += 1;
+        output.push_str(&self.indent());
+        output.push_str(&self.generate_command(command));
+        self.indent_level -= 1;
+        output.push_str(&self.indent());
+        output.push_str("except Exception as e:\n");
+        self.indent_level += 1;
+        output.push_str(&self.indent());
+        output.push_str("print(f'Error: {e}', file=sys.stderr)\n");
+        self.indent_level -= 1;
+        output
+    }
+
+    fn generate_background(&mut self, command: &Command) -> String {
+        let mut output = String::new();
+        // Spawn background thread
         output.push_str("import threading\n");
-        output.push_str("def _subshell_body():\n");
+        output.push_str("def _bg_body():\n");
         self.indent_level += 1;
         output.push_str(&self.indent());
         output.push_str("try:\n");
@@ -296,8 +325,16 @@ impl PythonGenerator {
         output.push_str(&self.indent());
         output.push_str("print(f'Error: {e}', file=sys.stderr)\n");
         self.indent_level -= 2;
-        output.push_str("t = threading.Thread(target=_subshell_body, daemon=True)\n");
+        output.push_str("t = threading.Thread(target=_bg_body, daemon=True)\n");
         output.push_str("t.start()\n");
+        output
+    }
+
+    fn generate_block(&mut self, block: &Block) -> String {
+        let mut output = String::new();
+        for cmd in &block.commands {
+            output.push_str(&self.generate_command(cmd));
+        }
         output
     }
 

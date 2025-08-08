@@ -52,7 +52,14 @@ impl Parser {
                 }
             }
             
-            let command = self.parse_command()?;
+            let mut command = self.parse_command()?;
+
+            // If a background '&' follows immediately, wrap the command
+            if let Some(Token::Background) = self.lexer.peek() {
+                self.lexer.next();
+                command = Command::Background(Box::new(command));
+            }
+
             commands.push(command);
             
             // Handle semicolons, newlines, and background '&'
@@ -635,30 +642,37 @@ impl Parser {
     fn parse_subshell(&mut self) -> Result<Command, ParserError> {
         self.lexer.consume(Token::ParenOpen)?;
         
-        // Parse first command inside subshell
-        let command = Box::new(self.parse_command()?);
-
-        // Allow multiple commands inside subshell; parse and discard until ')'
+        // Parse one or more commands until ')'
+        let mut commands = Vec::new();
         loop {
             // Skip separators within subshell body
             while matches!(
                 self.lexer.peek(),
-                Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon | Token::CarriageReturn | Token::Background)
+                Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon | Token::CarriageReturn)
             ) {
                 self.lexer.next();
             }
             match self.lexer.peek() {
                 Some(Token::ParenClose) | None => break,
                 _ => {
-                    // Parse and ignore additional commands inside the subshell
-                    let _ = self.parse_command()?;
+                    let mut cmd = self.parse_command()?;
+                    // Background marker inside subshell
+                    if let Some(Token::Background) = self.lexer.peek() {
+                        self.lexer.next();
+                        cmd = Command::Background(Box::new(cmd));
+                    }
+                    commands.push(cmd);
                 }
             }
         }
 
         self.lexer.consume(Token::ParenClose)?;
         
-        Ok(Command::Subshell(command))
+        if commands.len() == 1 {
+            Ok(Command::Subshell(Box::new(commands.remove(0))))
+        } else {
+            Ok(Command::Subshell(Box::new(Command::Block(Block { commands }))))
+        }
     }
 
     fn parse_redirect(&mut self) -> Result<Redirect, ParserError> {

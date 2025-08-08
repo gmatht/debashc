@@ -32,6 +32,8 @@ impl PerlGenerator {
             Command::For(for_loop) => self.generate_for_loop(for_loop),
             Command::Function(func) => self.generate_function(func),
             Command::Subshell(cmd) => self.generate_subshell(cmd),
+            Command::Background(cmd) => self.generate_background(cmd),
+            Command::Block(block) => self.generate_block(block),
         }
     }
 
@@ -362,6 +364,27 @@ impl PerlGenerator {
         self.indent_level -= 1;
         output.push_str("};\n");
         
+        output
+    }
+
+    fn generate_background(&mut self, command: &Command) -> String {
+        let mut output = String::new();
+        // Use threads to emulate background
+        output.push_str("use threads;\n");
+        output.push_str("threads->create(sub {\n");
+        self.indent_level += 1;
+        output.push_str(&self.indent());
+        output.push_str(&self.generate_command(command));
+        self.indent_level -= 1;
+        output.push_str("});\n");
+        output
+    }
+
+    fn generate_block(&mut self, block: &Block) -> String {
+        let mut output = String::new();
+        for cmd in &block.commands {
+            output.push_str(&self.generate_command(cmd));
+        }
         output
     }
 
