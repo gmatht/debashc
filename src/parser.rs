@@ -40,10 +40,10 @@ impl Parser {
                 break;
             }
             
-            // Check if we're at a newline or semicolon (empty command)
+            // Check if we're at a newline/semicolon/& (empty command or separator)
             if let Some(token) = self.lexer.peek() {
                 match token {
-                    Token::Newline | Token::Semicolon | Token::CarriageReturn => {
+                    Token::Newline | Token::Semicolon | Token::CarriageReturn | Token::Background => {
                         self.lexer.next(); // consume the separator
                         self.skip_whitespace_and_comments();
                         continue;
@@ -55,10 +55,10 @@ impl Parser {
             let command = self.parse_command()?;
             commands.push(command);
             
-            // Handle semicolons and newlines
+            // Handle semicolons, newlines, and background '&'
             while let Some(token) = self.lexer.peek() {
                 match token {
-                    Token::Semicolon | Token::Newline => {
+                    Token::Semicolon | Token::Newline | Token::Background => {
                         self.lexer.next();
                     }
                     _ => break,
@@ -635,8 +635,27 @@ impl Parser {
     fn parse_subshell(&mut self) -> Result<Command, ParserError> {
         self.lexer.consume(Token::ParenOpen)?;
         
+        // Parse first command inside subshell
         let command = Box::new(self.parse_command()?);
-        
+
+        // Allow multiple commands inside subshell; parse and discard until ')'
+        loop {
+            // Skip separators within subshell body
+            while matches!(
+                self.lexer.peek(),
+                Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon | Token::CarriageReturn | Token::Background)
+            ) {
+                self.lexer.next();
+            }
+            match self.lexer.peek() {
+                Some(Token::ParenClose) | None => break,
+                _ => {
+                    // Parse and ignore additional commands inside the subshell
+                    let _ = self.parse_command()?;
+                }
+            }
+        }
+
         self.lexer.consume(Token::ParenClose)?;
         
         Ok(Command::Subshell(command))

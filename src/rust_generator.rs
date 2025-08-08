@@ -145,13 +145,9 @@ impl RustGenerator {
     fn generate_pipeline(&mut self, pipeline: &Pipeline) -> String {
         let mut output = String::new();
         
-        // For now, implement a simple pipeline using Command
-        if let Some(first_cmd) = pipeline.commands.first() {
-            output.push_str("let output = ");
-            output.push_str(&self.generate_command(first_cmd));
-            output.push_str("    .output()?;\n");
-            output.push_str("let output_str = String::from_utf8_lossy(&output.stdout);\n");
-            output.push_str("print!(\"{}\", output_str);\n");
+        // Simplified: execute sequentially; no external piping
+        for cmd in &pipeline.commands {
+            output.push_str(&self.generate_command(cmd));
         }
 
         output

@@ -60,26 +60,13 @@ impl PythonGenerator {
             let dir = cmd.args.first().unwrap_or(&empty_string);
             output.push_str(&format!("os.chdir('{}')\n", dir));
         } else if cmd.name == "ls" {
-            // Special handling for ls
-            if cmd.args.is_empty() || cmd.args[0] == "." {
-                output.push_str("for item in os.listdir('.'):\n");
-                output.push_str(&self.indent());
-                output.push_str("    if item not in ['.', '..']:\n");
-                output.push_str(&self.indent());
-                output.push_str("        print(item)\n");
-            } else if cmd.args[0].starts_with('-') {
-                // Handle ls with flags like -la, -l, etc.
-                output.push_str("import subprocess\n");
-                let args_str = cmd.args.iter().map(|arg| format!("'{}'", arg)).collect::<Vec<_>>().join(", ");
-                output.push_str(&format!("subprocess.run(['ls', {}])\n", args_str));
-            } else {
-                // Handle ls with directory argument
-                output.push_str(&format!("for item in os.listdir('{}'):\n", cmd.args[0]));
-                output.push_str(&self.indent());
-                output.push_str("    if item not in ['.', '..']:\n");
-                output.push_str(&self.indent());
-                output.push_str("        print(item)\n");
-            }
+            // Special handling for ls (use Python stdlib; ignore flags)
+            let dir_expr = if cmd.args.is_empty() { ".".to_string() } else { cmd.args[0].clone() };
+            output.push_str(&format!("for item in os.listdir('{}'):\n", dir_expr));
+            output.push_str(&self.indent());
+            output.push_str("    if item not in ['.', '..']:\n");
+            output.push_str(&self.indent());
+            output.push_str("        print(item)\n");
         } else if cmd.name == "grep" {
             // Special handling for grep
             if cmd.args.len() >= 2 {
