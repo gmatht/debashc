@@ -61,9 +61,15 @@ impl PerlGenerator {
             let dir = cmd.args.first().unwrap_or(&empty_string);
             output.push_str(&format!("chdir('{}') or die \"Cannot change to directory: $!\\n\";\n", dir));
         } else if cmd.name == "ls" {
-            // Special handling for ls
-            let args = if cmd.args.is_empty() { "." } else { &cmd.args[0] };
-            output.push_str(&format!("opendir(my $dh, '{}') or die \"Cannot open directory: $!\\n\";\n", args));
+            // Special handling for ls (ignore flags like -la); default to current dir
+            let dir = if cmd.args.is_empty() {
+                ".".to_string()
+            } else if cmd.args[0].starts_with('-') {
+                ".".to_string()
+            } else {
+                cmd.args[0].clone()
+            };
+            output.push_str(&format!("opendir(my $dh, '{}') or die \"Cannot open directory: $!\\n\";\n", dir));
             output.push_str("while (my $file = readdir($dh)) {\n");
             output.push_str("    print(\"$file\\n\") unless $file =~ /^\\.\\.?$/;\n");
             output.push_str("}\n");

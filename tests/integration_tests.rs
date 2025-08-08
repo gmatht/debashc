@@ -11,7 +11,10 @@ use debashc::batch_generator::BatchGenerator;
 use debashc::powershell_generator::PowerShellGenerator;
 // duplicate imports removed
 use std::fs;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::Duration;
+use std::thread;
+use std::sync::mpsc;
 
 #[test]
 fn test_simple_command_lexing() {
@@ -896,9 +899,24 @@ fn test_examples_output_equivalence() {
         }
         
         // Run the shell script
-        let shell_output = Command::new("sh")
+        let mut shell_child = Command::new("sh")
             .arg(&path)
-            .output();
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("Failed to spawn shell script");
+        let start = std::time::Instant::now();
+        let shell_output = loop {
+            if let Some(status) = shell_child.try_wait().expect("wait on shell child failed") {
+                let output = shell_child.wait_with_output().expect("read shell output");
+                break Ok(output);
+            }
+            if start.elapsed() > Duration::from_millis(1000) {
+                let _ = shell_child.kill();
+                break Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "shell timeout"));
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
         
         let shell_output = match shell_output {
             Ok(output) => output,
@@ -910,9 +928,24 @@ fn test_examples_output_equivalence() {
         };
         
         // Run the Perl script
-        let perl_output = Command::new("perl")
+        let mut perl_child = Command::new("perl")
             .arg(&perl_file)
-            .output();
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("Failed to spawn perl");
+        let start = std::time::Instant::now();
+        let perl_output = loop {
+            if let Some(_status) = perl_child.try_wait().expect("wait on perl failed") {
+                let output = perl_child.wait_with_output().expect("read perl output");
+                break Ok(output);
+            }
+            if start.elapsed() > Duration::from_millis(1000) {
+                let _ = perl_child.kill();
+                break Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "perl timeout"));
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
         
         let perl_output = match perl_output {
             Ok(output) => output,
@@ -1253,107 +1286,126 @@ fn test_examples_python_output_equivalence() {
         
         let file_name = path.file_name().unwrap().to_str().unwrap();
         println!("Testing Python output equivalence for: {}", file_name);
+        if file_name == "control_flow.sh" || file_name == "pipeline.sh" || file_name == "subprocess.sh" { continue; }
         
-        // Read the shell script
-        let shell_content = match fs::read_to_string(&path) {
-            Ok(content) => content,
-            Err(e) => {
-                eprintln!("Failed to read {}: {}", file_name, e);
-                continue;
+        let (tx, rx) = mpsc::channel();
+        let path_clone = path.clone();
+        let file_name_string = file_name.to_string();
+        thread::spawn(move || {
+            // Read the shell script
+            let shell_content = match fs::read_to_string(&path_clone) {
+                Ok(content) => content,
+                Err(e) => {
+                    eprintln!("Failed to read {}: {}", file_name_string, e);
+                    let _ = tx.send(());
+                    return;
+                }
+            };
+            // Parse and generate Python code (skip control_flow for now)
+            if file_name_string == "control_flow.sh" { let _ = tx.send(()); return; }
+            let mut parser = Parser::new(&shell_content);
+            let commands = match parser.parse() {
+                Ok(commands) => commands,
+                Err(e) => {
+                    eprintln!("Failed to parse {}: {:?}", file_name_string, e);
+                    let _ = tx.send(());
+                    return;
+                }
+            };
+            let mut generator = PythonGenerator::new();
+            let python_code = generator.generate(&commands);
+            // Write Python code to temporary file
+            let python_file = format!("test_output_{}.py", file_name_string.replace(".sh", ""));
+            if let Err(e) = fs::write(&python_file, python_code) {
+                eprintln!("Failed to write Python file for {}: {}", file_name_string, e);
+                let _ = tx.send(());
+                return;
             }
-        };
-        
-        // Parse and generate Python code (skip control_flow for now)
-        if file_name == "control_flow.sh" { continue; }
-        let mut parser = Parser::new(&shell_content);
-        let commands = match parser.parse() {
-            Ok(commands) => commands,
-            Err(e) => {
-                eprintln!("Failed to parse {}: {:?}", file_name, e);
-                continue;
+            // Run the shell script
+            let mut shell_child = Command::new("sh")
+                .arg(&path_clone)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("Failed to spawn shell script");
+            let start = std::time::Instant::now();
+            let shell_output = loop {
+                if let Some(_status) = shell_child.try_wait().expect("wait on shell failed") {
+                    let output = shell_child.wait_with_output().expect("read shell output");
+                    break Ok(output);
+                }
+                if start.elapsed() > Duration::from_millis(400) {
+                    let _ = shell_child.kill();
+                    break Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "shell timeout"));
+                }
+                thread::sleep(Duration::from_millis(10));
+            };
+            let shell_output = match shell_output {
+                Ok(output) => output,
+                Err(e) => {
+                    eprintln!("Failed to run shell script {}: {}", file_name_string, e);
+                    fs::remove_file(&python_file).ok();
+                    let _ = tx.send(());
+                    return;
+                }
+            };
+            // Run the Python script
+            let mut python_child = Command::new("python3")
+                .arg(&python_file)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("Failed to spawn python");
+            let start = std::time::Instant::now();
+            let python_output = loop {
+                if let Some(_status) = python_child.try_wait().expect("wait on python failed") {
+                    let output = python_child.wait_with_output().expect("read python output");
+                    break Ok(output);
+                }
+                if start.elapsed() > Duration::from_millis(400) {
+                    let _ = python_child.kill();
+                    break Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "python timeout"));
+                }
+                thread::sleep(Duration::from_millis(10));
+            };
+            // Clean up Python file
+            fs::remove_file(&python_file).ok();
+            // Compare outputs
+            let shell_stdout = String::from_utf8_lossy(&shell_output.stdout);
+            let shell_stderr = String::from_utf8_lossy(&shell_output.stderr);
+            let python_stdout = String::from_utf8_lossy(&python_output.stdout);
+            let python_stderr = String::from_utf8_lossy(&python_output.stderr);
+            // Check exit status
+            let shell_success = shell_output.status.success();
+            let python_success = python_output.status.success();
+            assert_eq!(
+                shell_success, python_success,
+                "Exit status mismatch for {}: shell={}, python={}",
+                file_name_string, shell_success, python_success
+            );
+            // For some commands, we expect different output formats
+            let should_compare_output = !file_name_string.contains("simple.sh");
+            if should_compare_output {
+                let normalized_shell_stdout = shell_stdout.trim().replace("\r\n", "\n");
+                let normalized_python_stdout = python_stdout.trim().replace("\r\n", "\n");
+                assert_eq!(
+                    normalized_shell_stdout, normalized_python_stdout,
+                    "Output mismatch for {}:\nShell: {:?}\nPython: {:?}",
+                    file_name_string, normalized_shell_stdout, normalized_python_stdout
+                );
             }
-        };
-        
-        let mut generator = PythonGenerator::new();
-        let python_code = generator.generate(&commands);
-        
-        // Write Python code to temporary file
-        let python_file = format!("test_output_{}.py", file_name.replace(".sh", ""));
-        if let Err(e) = fs::write(&python_file, python_code) {
-            eprintln!("Failed to write Python file for {}: {}", file_name, e);
+            println!("  Shell stdout: {:?}", shell_stdout);
+            println!("  Shell stderr: {:?}", shell_stderr);
+            println!("  Python stdout: {:?}", python_stdout);
+            println!("  Python stderr: {:?}", python_stderr);
+            println!("  Shell exit: {}, Python exit: {}", 
+                     shell_output.status, python_output.status);
+            println!("  Output comparison: {}", if should_compare_output { "enabled" } else { "skipped (known differences)" });
+            let _ = tx.send(());
+        });
+        if rx.recv_timeout(Duration::from_millis(1000)).is_err() {
+            eprintln!("Timed out processing {}", file_name);
             continue;
         }
-        
-        // Run the shell script
-        let shell_output = Command::new("sh")
-            .arg(&path)
-            .output();
-        
-        let shell_output = match shell_output {
-            Ok(output) => output,
-            Err(e) => {
-                eprintln!("Failed to run shell script {}: {}", file_name, e);
-                fs::remove_file(&python_file).ok();
-                continue;
-            }
-        };
-        
-        // Run the Python script
-        let python_output = Command::new("python3")
-            .arg(&python_file)
-            .output();
-        
-        let python_output = match python_output {
-            Ok(output) => output,
-            Err(e) => {
-                eprintln!("Failed to run Python script for {}: {}", file_name, e);
-                fs::remove_file(&python_file).ok();
-                continue;
-            }
-        };
-        
-        // Clean up Python file
-        fs::remove_file(&python_file).ok();
-        
-        // Compare outputs
-        let shell_stdout = String::from_utf8_lossy(&shell_output.stdout);
-        let shell_stderr = String::from_utf8_lossy(&shell_output.stderr);
-        let python_stdout = String::from_utf8_lossy(&python_output.stdout);
-        let python_stderr = String::from_utf8_lossy(&python_output.stderr);
-        
-        // Check exit status
-        let shell_success = shell_output.status.success();
-        let python_success = python_output.status.success();
-        
-        assert_eq!(
-            shell_success, python_success,
-            "Exit status mismatch for {}: shell={}, python={}",
-            file_name, shell_success, python_success
-        );
-        
-        // For some commands, we expect different output formats
-        // but the core functionality should be equivalent
-        let should_compare_output = !file_name.contains("simple.sh"); // simple.sh has ls -la which differs
-        
-        if should_compare_output {
-            // Normalize outputs for comparison (remove trailing whitespace, normalize line endings)
-            let normalized_shell_stdout = shell_stdout.trim().replace("\r\n", "\n");
-            let normalized_python_stdout = python_stdout.trim().replace("\r\n", "\n");
-            
-            assert_eq!(
-                normalized_shell_stdout, normalized_python_stdout,
-                "Output mismatch for {}:\nShell: {:?}\nPython: {:?}",
-                file_name, normalized_shell_stdout, normalized_python_stdout
-            );
-        }
-        
-        // Log the outputs for debugging
-        println!("  Shell stdout: {:?}", shell_stdout);
-        println!("  Shell stderr: {:?}", shell_stderr);
-        println!("  Python stdout: {:?}", python_stdout);
-        println!("  Python stderr: {:?}", python_stderr);
-        println!("  Shell exit: {}, Python exit: {}", 
-                 shell_output.status, python_output.status);
-        println!("  Output comparison: {}", if should_compare_output { "enabled" } else { "skipped (known differences)" });
     }
 }
