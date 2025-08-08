@@ -390,18 +390,74 @@ impl Parser {
 
     fn parse_for_loop(&mut self) -> Result<Command, ParserError> {
         self.lexer.consume(Token::For)?;
-        
-        let variable = self.get_identifier_text()?;
-        
+        // Allow whitespace/comments after 'for'
+        self.skip_whitespace_and_comments();
+
+        // Variable name
+        let variable = match self.lexer.peek() {
+            Some(Token::Identifier) => self.get_identifier_text()?,
+            Some(t) => return Err(ParserError::UnexpectedToken(t.clone())),
+            None => return Err(ParserError::UnexpectedEOF),
+        };
+
+        // Allow whitespace/comments after variable
+        self.skip_whitespace_and_comments();
+
+        // Optional 'in' list
         let items = if let Some(Token::In) = self.lexer.peek() {
             self.lexer.next();
-            self.parse_word_list()?
+            // Allow whitespace/comments after 'in'
+            self.skip_whitespace_and_comments();
+            let words = self.parse_word_list()?;
+            // Optional separator before 'do'
+            while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment)) {
+                self.lexer.next();
+            }
+            match self.lexer.peek() {
+                Some(Token::Semicolon) | Some(Token::Newline) => {
+                    self.lexer.next();
+                }
+                _ => {}
+            }
+            words
         } else {
+            // No 'in' list; optional separator before 'do'
+            while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment)) {
+                self.lexer.next();
+            }
+            match self.lexer.peek() {
+                Some(Token::Semicolon) | Some(Token::Newline) => {
+                    self.lexer.next();
+                }
+                _ => {}
+            }
             Vec::new()
         };
-        
+
+        // Allow whitespace/newlines/comments before 'do'
+        while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+            self.lexer.next();
+        }
         self.lexer.consume(Token::Do)?;
         let body = Box::new(self.parse_command()?);
+
+        // Allow optional separator after body before 'done'
+        loop {
+            match self.lexer.peek() {
+                Some(Token::Space) | Some(Token::Tab) | Some(Token::Comment) | Some(Token::Newline) => {
+                    self.lexer.next();
+                    continue;
+                }
+                Some(Token::Semicolon) => {
+                    self.lexer.next();
+                    // consume any following whitespace/newlines as well
+                    continue;
+                }
+                _ => {}
+            }
+            break;
+        }
+
         self.lexer.consume(Token::Done)?;
         
         Ok(Command::For(ForLoop {
@@ -464,6 +520,7 @@ impl Parser {
             Some(Token::Number) => Ok(self.get_number_text()?),
             Some(Token::DoubleQuotedString) => Ok(self.get_string_text()?),
             Some(Token::SingleQuotedString) => Ok(self.get_string_text()?),
+            Some(Token::BraceOpen) => Ok(self.parse_brace_word()?),
             Some(Token::SourceDot) => {
                 // Treat standalone '.' as a normal word (e.g., `find . -name ...`)
                 self.lexer.next();
@@ -521,7 +578,7 @@ impl Parser {
             match token {
                 Token::Identifier | Token::Number | Token::DoubleQuotedString |
                 Token::SingleQuotedString | Token::Dollar | Token::DollarBrace |
-                Token::DollarParen => {
+                Token::DollarParen | Token::BraceOpen => {
                     words.push(self.parse_word()?);
                 }
                 _ => break,
@@ -529,6 +586,48 @@ impl Parser {
         }
         
         Ok(words)
+    }
+
+    fn parse_brace_word(&mut self) -> Result<String, ParserError> {
+        // Capture from '{' to matching '}' and return the exact substring
+        let (start, _end) = self
+            .lexer
+            .get_span()
+            .ok_or(ParserError::UnexpectedEOF)?;
+
+        // consume '{'
+        self.lexer.next();
+        let mut depth: i32 = 1;
+        let mut last_end = start;
+
+        loop {
+            if self.lexer.is_eof() {
+                return Err(ParserError::InvalidSyntax(
+                    "Unterminated brace expansion".to_string(),
+                ));
+            }
+
+            // capture current token span, then consume
+            if let Some((_, end)) = self.lexer.get_span() {
+                match self.lexer.peek() {
+                    Some(Token::BraceOpen) => depth += 1,
+                    Some(Token::BraceClose) => depth -= 1,
+                    _ => {}
+                }
+                // consume current token
+                self.lexer.next();
+                last_end = end;
+
+                if depth == 0 {
+                    break;
+                }
+            } else {
+                return Err(ParserError::UnexpectedEOF);
+            }
+        }
+
+        // Return substring including the braces
+        Ok(self.lexer.get_text(start, last_end))
     }
 
     fn get_identifier_text(&mut self) -> Result<String, ParserError> {

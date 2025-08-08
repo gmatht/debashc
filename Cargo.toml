@@ -8,7 +8,7 @@ name = "debashc"
 path = "src/main.rs"
 
 [lib]
-crate-type = ["lib", "cdylib"]
+crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 logos = "0.13"
