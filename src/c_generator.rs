@@ -1,5 +1,4 @@
 use crate::ast::*;
-use std::collections::HashMap;
 
 pub struct CGenerator {
     indent_level: usize,
@@ -77,7 +76,7 @@ impl CGenerator {
                         fmt.push(' ');
                     }
                 }
-                fmt.push('\n');
+                fmt.push_str("\\n");
                 if printf_args.is_empty() {
                     line.push_str(&format!("printf(\"{}\");\n", fmt));
                 } else {
