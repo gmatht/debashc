@@ -316,45 +316,55 @@ impl Parser {
         // Parse condition - for now, just parse as a simple command
         let condition = Box::new(self.parse_simple_command()?);
         
-        // Consume semicolon if present (optional in some shell syntax)
-        if let Some(Token::Semicolon) = self.lexer.peek() {
+        // Consume optional separator (semicolon or newline) after condition
+        match self.lexer.peek() {
+            Some(Token::Semicolon) | Some(Token::Newline) => { self.lexer.next(); },
+            _ => {}
+        }
+        
+        // Skip whitespace/newlines before then
+        while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
             self.lexer.next();
         }
         
-        // Skip whitespace before then
-        self.skip_whitespace_and_comments();
-        
         self.lexer.consume(Token::Then)?;
+        // Allow newline/whitespace after 'then'
+        while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+            self.lexer.next();
+        }
         let then_branch = Box::new(self.parse_command()?);
         
-        // Skip whitespace and comments before checking for semicolon
-        self.skip_whitespace_and_comments();
-        
-        // Consume semicolon if present after then branch
-        if let Some(Token::Semicolon) = self.lexer.peek() {
+        // Skip whitespace/newlines before checking for separator
+        while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
             self.lexer.next();
-            self.skip_whitespace_and_comments();
-        } else {
-            // If no semicolon, check if we're at the end or if there's an else
-            if let Some(Token::Else) = self.lexer.peek() {
-                // No semicolon needed before else
-            } else if let Some(Token::Fi) = self.lexer.peek() {
-                // No semicolon needed before fi
-            } else {
-                // Expect a semicolon
-                return Err(ParserError::ExpectedToken(Token::Semicolon));
-            }
+        }
+        
+        // Consume optional separator (semicolon or newline) after then branch
+        match self.lexer.peek() {
+            Some(Token::Semicolon) | Some(Token::Newline) => {
+                self.lexer.next();
+                while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+                    self.lexer.next();
+                }
+            },
+            _ => {}
         }
         
         let else_branch = if let Some(Token::Else) = self.lexer.peek() {
             self.lexer.next();
+            // Allow newline/whitespace after 'else'
+            while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+                self.lexer.next();
+            }
             Some(Box::new(self.parse_command()?))
         } else {
             None
         };
         
-        // Skip whitespace before fi
-        self.skip_whitespace_and_comments();
+        // Skip whitespace/newlines before fi
+        while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+            self.lexer.next();
+        }
         
         self.lexer.consume(Token::Fi)?;
         
