@@ -280,16 +280,24 @@ impl PythonGenerator {
 
     fn generate_subshell(&mut self, command: &Command) -> String {
         let mut output = String::new();
-        
+        // Spawn subshell in a background thread
+        output.push_str("import threading\n");
+        output.push_str("def _subshell_body():\n");
+        self.indent_level += 1;
+        output.push_str(&self.indent());
         output.push_str("try:\n");
         self.indent_level += 1;
         output.push_str(&self.indent());
         output.push_str(&self.generate_command(command));
         self.indent_level -= 1;
-        output.push_str("except Exception as e:\n");
         output.push_str(&self.indent());
-        output.push_str("    print(f'Error: {e}', file=sys.stderr)\n");
-        
+        output.push_str("except Exception as e:\n");
+        self.indent_level += 1;
+        output.push_str(&self.indent());
+        output.push_str("print(f'Error: {e}', file=sys.stderr)\n");
+        self.indent_level -= 2;
+        output.push_str("t = threading.Thread(target=_subshell_body, daemon=True)\n");
+        output.push_str("t.start()\n");
         output
     }
 

@@ -15,6 +15,7 @@ impl RustGenerator {
         output.push_str("use std::env;\n");
         output.push_str("use std::fs;\n");
         output.push_str("use std::io::{self, Write};\n\n");
+        output.push_str("use std::thread;\n\n");
         output.push_str("fn main() -> Result<(), Box<dyn std::error::Error>> {\n");
         self.indent_level += 1;
 
@@ -236,14 +237,18 @@ impl RustGenerator {
 
     fn generate_subshell(&mut self, command: &Command) -> String {
         let mut output = String::new();
-        
-        output.push_str("{\n");
+        // Spawn subshell body in a background thread
+        output.push_str("let _ = thread::spawn(|| {\n");
+        // Inner closure to allow use of ? inside generated code
+        output.push_str("    let _ = (|| -> Result<(), Box<dyn std::error::Error>> {\n");
         self.indent_level += 1;
         output.push_str(&self.indent());
         output.push_str(&self.generate_command(command));
+        output.push_str(&self.indent());
+        output.push_str("Ok(())\n");
         self.indent_level -= 1;
-        output.push_str("}\n");
-        
+        output.push_str("    })();\n");
+        output.push_str("});\n");
         output
     }
 

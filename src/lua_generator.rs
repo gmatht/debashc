@@ -232,13 +232,13 @@ impl LuaGenerator {
 
     fn generate_subshell(&mut self, cmd: &Command) -> String {
         let mut lua_code = String::new();
-        
-        lua_code.push_str("do\n");
+        // Launch subshell body in a coroutine to emulate background execution
+        lua_code.push_str("local co = coroutine.create(function()\n");
         self.indent_level += 1;
         lua_code.push_str(&self.generate_command(cmd));
         self.indent_level -= 1;
-        lua_code.push_str("end\n");
-        
+        lua_code.push_str("end)\n");
+        lua_code.push_str("coroutine.resume(co)\n");
         lua_code
     }
 
