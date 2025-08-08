@@ -5,6 +5,12 @@ mod perl_generator;
 mod rust_generator;
 mod python_generator;
 mod lua_generator;
+mod c_generator;
+mod js_generator;
+mod english_generator;
+mod french_generator;
+mod batch_generator;
+mod powershell_generator;
 
 use lexer::*;
 use parser::*;
@@ -13,6 +19,12 @@ use perl_generator::*;
 use rust_generator::*;
 use python_generator::*;
 use lua_generator::*;
+use c_generator::*;
+use js_generator::*;
+use english_generator::*;
+use french_generator::*;
+use batch_generator::*;
+use powershell_generator::*;
 
 use std::env;
 use std::fs;
@@ -30,11 +42,25 @@ fn main() {
         println!("  parse --rust <input> - Convert shell script to Rust");
         println!("  parse --python <input> - Convert shell script to Python");
         println!("  parse --lua <input> - Convert shell script to Lua");
+        println!("  parse --c <input> - Convert shell script to C");
+        println!("  parse --js <input> - Convert shell script to JavaScript (Node.js)");
+        println!("  parse --english <input> - Generate English pseudocode");
+        println!("  parse --french <input> - Générer du pseudo-code en français");
+        println!("  parse --comment <input> - Output original SH with English pseudocode comments");
+        println!("  parse --bat <input> - Convert shell script to Windows Batch");
+        println!("  parse --ps <input> - Convert shell script to PowerShell");
         println!("  file <filename> - Parse shell script from file");
         println!("  file --perl <filename> - Convert shell script file to Perl");
         println!("  file --rust <filename> - Convert shell script file to Rust");
         println!("  file --python <filename> - Convert shell script file to Python");
         println!("  file --lua <filename> - Convert shell script file to Lua");
+        println!("  file --c <filename> - Convert shell script file to C");
+        println!("  file --js <filename> - Convert shell script file to JavaScript (Node.js)");
+        println!("  file --english <filename> - Generate English pseudocode from file");
+        println!("  file --french <filename> - Générer du pseudo-code en français (fichier)");
+        println!("  file --comment <filename> - Output original SH with English pseudocode comments");
+        println!("  file --bat <filename> - Convert shell script file to Windows Batch");
+        println!("  file --ps <filename> - Convert shell script file to PowerShell");
         return;
     }
     
@@ -96,9 +122,45 @@ fn main() {
                 }
                 let input = &args[3];
                 parse_to_lua(input);
+            } else if args.len() >= 3 && args[2] == "--c" {
+                if args.len() < 4 { println!("Error: parse --c command requires input"); return; }
+                let input = &args[3];
+                parse_to_c(input);
+            } else if args.len() >= 3 && args[2] == "--js" {
+                if args.len() < 4 { println!("Error: parse --js command requires input"); return; }
+                let input = &args[3];
+                parse_to_js(input);
+            } else if args.len() >= 3 && args[2] == "--english" {
+                if args.len() < 4 { println!("Error: parse --english command requires input"); return; }
+                let input = &args[3];
+                parse_to_english(input);
+            } else if args.len() >= 3 && args[2] == "--french" {
+                if args.len() < 4 { println!("Error: parse --french command requires input"); return; }
+                let input = &args[3];
+                parse_to_french(input);
+            } else if args.len() >= 3 && args[2] == "--comment" {
+                if args.len() < 4 { println!("Error: parse --comment command requires input"); return; }
+                let input = &args[3];
+                parse_to_commented_shell(input);
+            } else if args.len() >= 3 && args[2] == "--bat" {
+                if args.len() < 4 { println!("Error: parse --bat command requires input"); return; }
+                let input = &args[3];
+                parse_to_batch(input);
+            } else if args.len() >= 3 && args[2] == "--ps" {
+                if args.len() < 4 { println!("Error: parse --ps command requires input"); return; }
+                let input = &args[3];
+                parse_to_powershell(input);
             } else {
                 let input = &args[2];
-                parse_input(input);
+                // If looks like a filename or the path exists, treat as file
+                if input.ends_with(".sh") || std::path::Path::new(input).exists() {
+                    match fs::read_to_string(input) {
+                        Ok(content) => parse_input(&content),
+                        Err(_) => parse_input(input),
+                    }
+                } else {
+                    parse_input(input);
+                }
             }
         }
         "file" => {
@@ -134,6 +196,34 @@ fn main() {
                 }
                 let filename = &args[3];
                 parse_file_to_lua(filename);
+            } else if args.len() >= 3 && args[2] == "--c" {
+                if args.len() < 4 { println!("Error: file --c command requires filename"); return; }
+                let filename = &args[3];
+                parse_file_to_c(filename);
+            } else if args.len() >= 3 && args[2] == "--js" {
+                if args.len() < 4 { println!("Error: file --js command requires filename"); return; }
+                let filename = &args[3];
+                parse_file_to_js(filename);
+            } else if args.len() >= 3 && args[2] == "--english" {
+                if args.len() < 4 { println!("Error: file --english command requires filename"); return; }
+                let filename = &args[3];
+                parse_file_to_english(filename);
+            } else if args.len() >= 3 && args[2] == "--french" {
+                if args.len() < 4 { println!("Error: file --french command requires filename"); return; }
+                let filename = &args[3];
+                parse_file_to_french(filename);
+            } else if args.len() >= 3 && args[2] == "--comment" {
+                if args.len() < 4 { println!("Error: file --comment command requires filename"); return; }
+                let filename = &args[3];
+                parse_file_to_commented_shell(filename);
+            } else if args.len() >= 3 && args[2] == "--bat" {
+                if args.len() < 4 { println!("Error: file --bat command requires filename"); return; }
+                let filename = &args[3];
+                parse_file_to_batch(filename);
+            } else if args.len() >= 3 && args[2] == "--ps" {
+                if args.len() < 4 { println!("Error: file --ps command requires filename"); return; }
+                let filename = &args[3];
+                parse_file_to_powershell(filename);
             } else {
                 let filename = &args[2];
                 parse_file(filename);
@@ -344,6 +434,150 @@ fn parse_file_to_lua(filename: &str) {
         Err(e) => {
             println!("Error reading file: {}", e);
         }
+    }
+}
+
+fn parse_to_c(input: &str) {
+    println!("Converting to C: {}", input);
+    println!("C Code:");
+    println!("{}", "=".repeat(50));
+    match Parser::new(input).parse() {
+        Ok(commands) => {
+            let mut generator = CGenerator::new();
+            let code = generator.generate(&commands);
+            println!("{}", code);
+        }
+        Err(e) => println!("Parse error: {:?}", e),
+    }
+}
+
+fn parse_file_to_c(filename: &str) {
+    match fs::read_to_string(filename) {
+        Ok(content) => parse_to_c(&content),
+        Err(e) => println!("Error reading file: {}", e),
+    }
+}
+
+fn parse_to_js(input: &str) {
+    println!("Converting to JavaScript: {}", input);
+    println!("JavaScript Code:");
+    println!("{}", "=".repeat(50));
+    match Parser::new(input).parse() {
+        Ok(commands) => {
+            let mut generator = JsGenerator::new();
+            let code = generator.generate(&commands);
+            println!("{}", code);
+        }
+        Err(e) => println!("Parse error: {:?}", e),
+    }
+}
+
+fn parse_file_to_js(filename: &str) {
+    match fs::read_to_string(filename) {
+        Ok(content) => parse_to_js(&content),
+        Err(e) => println!("Error reading file: {}", e),
+    }
+}
+
+fn parse_to_english(input: &str) {
+    println!("English Pseudocode for: {}", input);
+    println!("{}", "=".repeat(50));
+    match Parser::new(input).parse() {
+        Ok(commands) => {
+            let mut generator = EnglishGenerator::new();
+            let code = generator.generate(&commands);
+            println!("{}", code);
+        }
+        Err(e) => println!("Parse error: {:?}", e),
+    }
+}
+
+fn parse_file_to_english(filename: &str) {
+    match fs::read_to_string(filename) {
+        Ok(content) => parse_to_english(&content),
+        Err(e) => println!("Error reading file: {}", e),
+    }
+}
+
+fn parse_to_french(input: &str) {
+    println!("Pseudo-code français pour: {}", input);
+    println!("{}", "=".repeat(50));
+    match Parser::new(input).parse() {
+        Ok(commands) => {
+            let mut generator = FrenchGenerator::new();
+            let code = generator.generate(&commands);
+            println!("{}", code);
+        }
+        Err(e) => println!("Parse error: {:?}", e),
+    }
+}
+
+fn parse_file_to_french(filename: &str) {
+    match fs::read_to_string(filename) {
+        Ok(content) => parse_to_french(&content),
+        Err(e) => println!("Error reading file: {}", e),
+    }
+}
+
+fn parse_to_commented_shell(input: &str) {
+    println!("Original shell with English pseudocode comments:");
+    println!("{}", "=".repeat(50));
+    let mut parser = Parser::new(input);
+    match parser.parse() {
+        Ok(commands) => {
+            let mut generator = EnglishGenerator::new();
+            let commentary = generator.generate(&commands);
+            println!("# {}", commentary.replace('\n', "\n# "));
+            println!("{}", input);
+        }
+        Err(e) => println!("Parse error: {:?}", e),
+    }
+}
+
+fn parse_file_to_commented_shell(filename: &str) {
+    match fs::read_to_string(filename) {
+        Ok(content) => parse_to_commented_shell(&content),
+        Err(e) => println!("Error reading file: {}", e),
+    }
+}
+
+fn parse_to_batch(input: &str) {
+    println!("Windows Batch for: {}", input);
+    println!("{}", "=".repeat(50));
+    match Parser::new(input).parse() {
+        Ok(commands) => {
+            let mut generator = BatchGenerator::new();
+            let code = generator.generate(&commands);
+            println!("{}", code);
+        }
+        Err(e) => println!("Parse error: {:?}", e),
+    }
+}
+
+fn parse_file_to_batch(filename: &str) {
+    match fs::read_to_string(filename) {
+        Ok(content) => parse_to_batch(&content),
+        Err(e) => println!("Error reading file: {}", e),
+    }
+}
+
+fn parse_to_powershell(input: &str) {
+    println!("PowerShell for: {}", input);
+    println!("{}", "=".repeat(50));
+    match Parser::new(input).parse() {
+        Ok(commands) => {
+            let mut generator = PowerShellGenerator::new();
+            let code = generator.generate(&commands);
+            println!("{}", code);
+        }
+        Err(e) => println!("Parse error: {:?}", e),
+    }
+}
+
+fn parse_file_to_powershell(filename: &str) {
+    match fs::read_to_string(filename) {
+        Ok(content) => parse_to_powershell(&content),
+        Err(e) => println!("Error reading file: {}", e),
     }
 }
 

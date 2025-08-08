@@ -6,6 +6,12 @@ pub mod rust_generator;
 pub mod python_generator;
 pub mod lua_generator;
 pub mod wasm;
+pub mod c_generator;
+pub mod js_generator;
+pub mod english_generator;
+pub mod french_generator;
+pub mod batch_generator;
+pub mod powershell_generator;
 
 pub use lexer::*;
 pub use parser::*;
@@ -15,6 +21,12 @@ pub use rust_generator::*;
 pub use python_generator::*;
 pub use lua_generator::*;
 pub use wasm::*;
+pub use c_generator::*;
+pub use js_generator::*;
+pub use english_generator::*;
+pub use french_generator::*;
+pub use batch_generator::*;
+pub use powershell_generator::*;
 
 #[cfg(test)]
 mod integration_tests; 

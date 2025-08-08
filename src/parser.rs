@@ -210,7 +210,7 @@ impl Parser {
         // Parse arguments and redirects
         while let Some(token) = self.lexer.peek() {
             match token {
-                Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString => {
+                Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString | Token::SourceDot => {
                     args.push(self.parse_word()?);
                 }
                 Token::Dollar | Token::DollarBrace | Token::DollarParen => {
@@ -454,6 +454,11 @@ impl Parser {
             Some(Token::Number) => Ok(self.get_number_text()?),
             Some(Token::DoubleQuotedString) => Ok(self.get_string_text()?),
             Some(Token::SingleQuotedString) => Ok(self.get_string_text()?),
+            Some(Token::SourceDot) => {
+                // Treat standalone '.' as a normal word (e.g., `find . -name ...`)
+                self.lexer.next();
+                Ok(".".to_string())
+            }
             Some(Token::Dollar) => Ok(self.parse_variable_expansion()?),
             Some(Token::DollarBrace) => Ok(self.parse_variable_expansion()?),
             Some(Token::DollarParen) => Ok(self.parse_variable_expansion()?),

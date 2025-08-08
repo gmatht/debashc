@@ -161,7 +161,7 @@
 <body>
     <div class="header">
         <h1>Debashc</h1>
-        <p>Convert shell scripts to Perl, Rust, Python, and Lua</p>
+        <p>Convert shell scripts to Perl, Rust, Python, Lua, C, JavaScript, Batch, PowerShell, or Pseudocode</p>
     </div>
     
     <div class="container">
@@ -175,6 +175,12 @@
                 <button id="rust-btn">To Rust</button>
                 <button id="python-btn">To Python</button>
                 <button id="lua-btn">To Lua</button>
+                <button id="c-btn">To C</button>
+                <button id="js-btn">To JS</button>
+                <button id="english-btn">To English</button>
+                <button id="french-btn">To French</button>
+                <button id="bat-btn">To Batch</button>
+                <button id="ps-btn">To PowerShell</button>
                 <button id="clear-btn" class="clear-btn">Clear</button>
             </div>
             <div class="examples">
@@ -205,6 +211,8 @@
         import init, { Debashc, init_panic_hook } from './pkg/debashc.js';
 
         let debashc;
+        let currentOperation = 'parse';
+        let inputIdleTimer = null;
 
         async function initialize() {
             try {
@@ -269,6 +277,24 @@
                     case 'lua':
                         result = debashc.to_lua(input);
                         break;
+                    case 'c':
+                        result = debashc.to_c(input);
+                        break;
+                    case 'js':
+                        result = debashc.to_js(input);
+                        break;
+                    case 'english':
+                        result = debashc.to_english(input);
+                        break;
+                    case 'french':
+                        result = debashc.to_french(input);
+                        break;
+                    case 'bat':
+                        result = debashc.to_bat(input);
+                        break;
+                    case 'ps':
+                        result = debashc.to_ps(input);
+                        break;
                     default:
                         throw new Error('Unknown operation');
                 }
@@ -290,13 +316,25 @@
         }
 
         // Event listeners
-        document.getElementById('lex-btn').addEventListener('click', () => executeOperation('lex'));
-        document.getElementById('parse-btn').addEventListener('click', () => executeOperation('parse'));
-        document.getElementById('perl-btn').addEventListener('click', () => executeOperation('perl'));
-        document.getElementById('rust-btn').addEventListener('click', () => executeOperation('rust'));
-        document.getElementById('python-btn').addEventListener('click', () => executeOperation('python'));
-        document.getElementById('lua-btn').addEventListener('click', () => executeOperation('lua'));
+        const inputEl = document.getElementById('input');
+        inputEl.addEventListener('input', () => {
+            if (inputIdleTimer) clearTimeout(inputIdleTimer);
+            inputIdleTimer = setTimeout(() => executeOperation(currentOperation), 1000);
+        });
+
+        document.getElementById('lex-btn').addEventListener('click', () => { currentOperation = 'lex'; executeOperation('lex'); });
+        document.getElementById('parse-btn').addEventListener('click', () => { currentOperation = 'parse'; executeOperation('parse'); });
+        document.getElementById('perl-btn').addEventListener('click', () => { currentOperation = 'perl'; executeOperation('perl'); });
+        document.getElementById('rust-btn').addEventListener('click', () => { currentOperation = 'rust'; executeOperation('rust'); });
+        document.getElementById('python-btn').addEventListener('click', () => { currentOperation = 'python'; executeOperation('python'); });
+        document.getElementById('lua-btn').addEventListener('click', () => { currentOperation = 'lua'; executeOperation('lua'); });
         document.getElementById('clear-btn').addEventListener('click', clearAll);
+        document.getElementById('c-btn').addEventListener('click', () => executeOperation('c'));
+        document.getElementById('js-btn').addEventListener('click', () => executeOperation('js'));
+        document.getElementById('english-btn').addEventListener('click', () => { currentOperation = 'english'; executeOperation('english'); });
+        document.getElementById('french-btn').addEventListener('click', () => { currentOperation = 'french'; executeOperation('french'); });
+        document.getElementById('bat-btn').addEventListener('click', () => { currentOperation = 'bat'; executeOperation('bat'); });
+        document.getElementById('ps-btn').addEventListener('click', () => { currentOperation = 'ps'; executeOperation('ps'); });
 
         // Initialize the application
         initialize();
