@@ -260,8 +260,25 @@ impl PerlGenerator {
             output.push_str("}\n");
         } else {
             // For loop with items
-            output.push_str(&format!("foreach my ${} (qw({})) {{\n", 
-                for_loop.variable, 
+            // Special-case numeric brace range like {0..5}
+            if for_loop.items.len() == 1 {
+                if let Some((start, end)) = self.parse_numeric_brace_range(&for_loop.items[0]) {
+                    output.push_str(&format!(
+                        "foreach my ${} ({}..{}) {{\n",
+                        for_loop.variable, start, end
+                    ));
+                    self.indent_level += 1;
+                    output.push_str(&self.indent());
+                    output.push_str(&self.generate_command(&for_loop.body));
+                    self.indent_level -= 1;
+                    output.push_str("}\n");
+                    return output;
+                }
+            }
+
+            output.push_str(&format!(
+                "foreach my ${} (qw({})) {{\n",
+                for_loop.variable,
                 for_loop.items.join(" ")
             ));
             self.indent_level += 1;
@@ -272,6 +289,21 @@ impl PerlGenerator {
         }
         
         output
+    }
+
+    fn parse_numeric_brace_range(&self, s: &str) -> Option<(i64, i64)> {
+        // Matches forms like {0..5} or {10..3}
+        if !(s.starts_with('{') && s.ends_with('}')) {
+            return None;
+        }
+        let inner = &s[1..s.len() - 1];
+        let parts: Vec<&str> = inner.split("..").collect();
+        if parts.len() != 2 {
+            return None;
+        }
+        let start = parts[0].parse::<i64>().ok()?;
+        let end = parts[1].parse::<i64>().ok()?;
+        Some((start, end))
     }
 
     fn generate_function(&mut self, func: &Function) -> String {
