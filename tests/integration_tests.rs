@@ -699,7 +699,10 @@ fn test_example_control_flow_sh_to_perl() {
     assert!(perl_code.contains("if (-f 'file.txt')"));
     assert!(perl_code.contains("print(\"File exists\\n\");"));
     assert!(perl_code.contains("print(\"File does not exist\\n\");"));
-    assert!(perl_code.contains("for my $i (1..5)"));
+    assert!(
+        perl_code.contains("for my $i (1..5)") ||
+        perl_code.contains("foreach my $i (1..5)")
+    );
     assert!(perl_code.contains("print(\"Number: $i\\n\");"));
     assert!(perl_code.contains("while ($i < 10)"));
     assert!(perl_code.contains("print(\"Counter: $i\\n\");"));
