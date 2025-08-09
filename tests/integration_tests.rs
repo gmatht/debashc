@@ -518,7 +518,7 @@ fn test_perl_generator_environment_variables() {
     let mut generator = PerlGenerator::new();
     let perl_code = generator.generate(&commands);
     
-    assert!(perl_code.contains("$ENV{PATH} = '/usr/bin';"));
+    assert!(perl_code.contains("$ENV{PATH} = \"/usr/bin\";") || perl_code.contains("$ENV{PATH} = '/usr/bin';"));
     assert!(perl_code.contains("print(\"hello\\n\");"));
 }
 
@@ -561,7 +561,7 @@ fn test_perl_generator_generic_command() {
     let mut generator = PerlGenerator::new();
     let perl_code = generator.generate(&commands);
     
-    assert!(perl_code.contains("system('python', 'script.py', 'arg1', 'arg2');"));
+    assert!(perl_code.contains("system(\"python\", \"script.py\", \"arg1\", \"arg2\");") || perl_code.contains("system('python', 'script.py', 'arg1', 'arg2');"));
 }
 
 #[test]
@@ -807,7 +807,8 @@ fn test_all_examples_generate_perl() {
         "examples/simple.sh",
         "examples/pipeline.sh", 
         "examples/control_flow.sh",
-        "examples/test_quoted.sh"
+        "examples/test_quoted.sh",
+        "examples/gnu_bash_extensions.sh",
     ];
     
     for example in examples {
@@ -832,7 +833,8 @@ fn test_all_examples_generate_rust() {
         "examples/simple.sh",
         "examples/pipeline.sh", 
         "examples/control_flow.sh",
-        "examples/test_quoted.sh"
+        "examples/test_quoted.sh",
+        "examples/gnu_bash_extensions.sh",
     ];
     
     for example in examples {
@@ -1105,11 +1107,10 @@ fn test_examples_rust_generation() {
                     
                     // Clean up compiled binary
                     let binary_name = rust_file.replace(".rs", "");
-                    if cfg!(windows) {
-                        fs::remove_file(format!("{}.exe", binary_name)).ok();
-                    } else {
-                        fs::remove_file(&binary_name).ok();
-                    }
+                    #[cfg(windows)]
+                    { let _ = fs::remove_file(format!("{}.exe", binary_name)); }
+                    #[cfg(not(windows))]
+                    { let _ = fs::remove_file(&binary_name); }
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     eprintln!("  ✗ Rust compilation failed: {}", stderr);

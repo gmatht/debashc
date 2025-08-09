@@ -42,7 +42,8 @@ impl PerlGenerator {
         
         // Handle environment variables
         for (var, value) in &cmd.env_vars {
-            output.push_str(&format!("$ENV{{{}}} = '{}';\n", var, value));
+            let val = self.perl_string_literal(value);
+            output.push_str(&format!("$ENV{{{}}} = {};\n", var, val));
         }
 
         // Generate the command
@@ -123,9 +124,15 @@ impl PerlGenerator {
             // Special handling for test
             self.generate_test_command(cmd, &mut output);
         } else {
-            // Generic command execution
-            let args = cmd.args.iter().map(|arg| format!("'{}'", arg)).collect::<Vec<_>>().join(", ");
-            output.push_str(&format!("system('{}', {});\n", cmd.name, args));
+            // Generic command execution with proper escaping
+            let name = self.perl_string_literal(&cmd.name);
+            let args = cmd
+                .args
+                .iter()
+                .map(|arg| self.perl_string_literal(arg))
+                .collect::<Vec<_>>()
+                .join(", ");
+            output.push_str(&format!("system({}, {});\n", name, args));
         }
 
         output
@@ -408,5 +415,10 @@ impl PerlGenerator {
                  .replace("\n", "\\n")
                  .replace("\r", "\\r")
                  .replace("\t", "\\t")
+    }
+
+    fn perl_string_literal(&self, s: &str) -> String {
+        // Prefer double-quoted string with escapes to avoid conflicts with single quotes inside args
+        format!("\"{}\"", self.escape_perl_string(s))
     }
 } 
