@@ -11,6 +11,7 @@ pub enum Command {
     Subshell(Box<Command>),
     Background(Box<Command>),
     Block(Block),
+    BlankLine,
 }
 
 #[derive(Debug, Clone, PartialEq)]

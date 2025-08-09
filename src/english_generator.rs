@@ -52,6 +52,7 @@ impl EnglishGenerator {
                 for c in &block.commands { s.push_str(&self.describe_command(c)); }
                 s
             }
+            Command::BlankLine => String::from("\n"),
         }
     }
 }

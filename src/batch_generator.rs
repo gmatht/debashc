@@ -36,6 +36,7 @@ impl BatchGenerator {
                 for c in &block.commands { out.push_str(&self.generate_command(c)); }
                 out
             }
+            Command::BlankLine => String::from("\n"),
         }
     }
 

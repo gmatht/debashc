@@ -43,6 +43,7 @@ impl RustGenerator {
             Command::Subshell(cmd) => self.generate_subshell(cmd),
             Command::Background(cmd) => self.generate_background(cmd),
             Command::Block(block) => self.generate_block(block),
+            Command::BlankLine => "\n".to_string(),
         }
     }
 

@@ -53,6 +53,7 @@ impl CGenerator {
                 out
             }
             Command::Block(block) => self.generate_block(block),
+            Command::BlankLine => String::from("\n"),
         }
     }
 

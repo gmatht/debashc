@@ -34,6 +34,7 @@ impl PowerShellGenerator {
                 for c in &block.commands { out.push_str(&self.emit(c)); }
                 out
             }
+            Command::BlankLine => "\n".to_string(),
         }
     }
 

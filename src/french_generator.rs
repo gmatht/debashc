@@ -52,6 +52,7 @@ impl FrenchGenerator {
                 for c in &block.commands { s.push_str(&self.decrire_commande(c)); }
                 s
             }
+            Command::BlankLine => String::from("\n"),
         }
     }
 }

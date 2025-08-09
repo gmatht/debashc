@@ -45,8 +45,22 @@ impl Parser {
             // Check if we're at a newline/semicolon/& (empty command or separator)
             if let Some(token) = self.lexer.peek() {
                 match token {
-                    Token::Newline | Token::Semicolon | Token::CarriageReturn | Token::Background => {
-                        self.lexer.next(); // consume the separator
+                    Token::Newline => {
+                        // Consume consecutive newlines
+                        let mut count = 0usize;
+                        while matches!(self.lexer.peek(), Some(Token::Newline)) {
+                            self.lexer.next();
+                            count += 1;
+                        }
+                        // If two or more, record a blank line in AST
+                        if count >= 2 {
+                            commands.push(Command::BlankLine);
+                        }
+                        self.skip_whitespace_and_comments();
+                        continue;
+                    }
+                    Token::Semicolon | Token::CarriageReturn | Token::Background => {
+                        self.lexer.next();
                         self.skip_whitespace_and_comments();
                         continue;
                     }
@@ -65,13 +79,21 @@ impl Parser {
             commands.push(command);
             
             // Handle semicolons, newlines, and background '&'
+            let mut newline_count = 0usize;
             while let Some(token) = self.lexer.peek() {
                 match token {
-                    Token::Semicolon | Token::Newline | Token::Background => {
+                    Token::Semicolon | Token::Background => {
                         self.lexer.next();
+                    }
+                    Token::Newline => {
+                        self.lexer.next();
+                        newline_count += 1;
                     }
                     _ => break,
                 }
+            }
+            if newline_count >= 2 {
+                commands.push(Command::BlankLine);
             }
             
             // Skip whitespace and comments before next command
