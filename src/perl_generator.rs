@@ -404,6 +404,7 @@ impl PerlGenerator {
         // Then escape quotes and other characters for Perl
         unescaped.replace("\\", "\\\\")
                  .replace("\"", "\\\"")
+                 .replace("$", "\\$")
                  .replace("\n", "\\n")
                  .replace("\r", "\\r")
                  .replace("\t", "\\t")
