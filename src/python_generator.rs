@@ -47,14 +47,30 @@ impl PythonGenerator {
         }
 
         // Generate the command
-        if cmd.name == "echo" {
+        if cmd.name == "true" {
+            // Builtin true: successful no-op
+            output.push_str("pass\n");
+        } else if cmd.name == "false" {
+            // Builtin false: represent failure by exiting non-zero
+            output.push_str("import sys\n");
+            output.push_str("sys.exit(1)\n");
+        } else if cmd.name == "echo" {
             // Special handling for echo
             if cmd.args.is_empty() {
                 output.push_str("print()\n");
             } else {
-                let args = cmd.args.join(" ");
-                let escaped_args = self.escape_python_string(&args);
-                output.push_str(&format!("print({})\n", escaped_args));
+                // Support $# and $@
+                if cmd.args.len() == 1 && cmd.args[0] == "$#" {
+                    output.push_str("import sys\n");
+                    output.push_str("print(len(sys.argv) - 1)\n");
+                } else if cmd.args.len() == 1 && (cmd.args[0] == "$@" || cmd.args[0] == "${@}") {
+                    output.push_str("import sys\n");
+                    output.push_str("print(' '.join(sys.argv[1:]))\n");
+                } else {
+                    let args = cmd.args.join(" ");
+                    let escaped_args = self.escape_python_string(&args);
+                    output.push_str(&format!("print({})\n", escaped_args));
+                }
             }
         } else if cmd.name == "sleep" {
             // Use time.sleep

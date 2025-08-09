@@ -47,14 +47,26 @@ impl PerlGenerator {
         }
 
         // Generate the command
-        if cmd.name == "echo" {
+        if cmd.name == "true" {
+            // Builtin true: successful no-op
+            output.push_str("1;\n");
+        } else if cmd.name == "false" {
+            // Builtin false: no-op; semantic failure not modeled in this simplified generator
+            output.push_str("0;\n");
+        } else if cmd.name == "echo" {
             // Special handling for echo
             if cmd.args.is_empty() {
                 output.push_str("print(\"\\n\");\n");
             } else {
-                let args = cmd.args.join(" ");
-                let escaped_args = self.escape_perl_string(&args);
-                output.push_str(&format!("print(\"{}\\n\");\n", escaped_args));
+                // Support special variables like $# (argc)
+                if cmd.args.len() == 1 && cmd.args[0] == "$#" {
+                    output.push_str("print(scalar(@ARGV) . \"\\n\");\n");
+                } else {
+                    let args = cmd.args.join(" ");
+                    let escaped_args = self.escape_perl_string(&args);
+                    // Allow interpolation ($var) intentionally by not escaping '$'
+                    output.push_str(&format!("print(\"{}\\n\");\n", escaped_args));
+                }
             }
         } else if cmd.name == "cd" {
             // Special handling for cd
@@ -278,6 +290,19 @@ impl PerlGenerator {
             // Special-case numeric brace range like {0..5}
             if for_loop.items.len() == 1 {
                 let first = &for_loop.items[0];
+                // Special-case "$@" to iterate over @ARGV
+                if first == "$@" || first == "${@}" {
+                    output.push_str(&format!(
+                        "foreach my ${} (@ARGV) {{\n",
+                        for_loop.variable
+                    ));
+                    self.indent_level += 1;
+                    output.push_str(&self.indent());
+                    output.push_str(&self.generate_command(&for_loop.body));
+                    self.indent_level -= 1;
+                    output.push_str("}\n");
+                    return output;
+                }
                 if let Some((start, end)) = self.parse_numeric_brace_range(first) {
                     output.push_str(&format!(
                         "foreach my ${} ({}..{}) {{\n",

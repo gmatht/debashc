@@ -293,11 +293,46 @@ fn test_lexer_span_information() {
 }
 
 #[test]
+fn test_lex_dollar_brace_variants() {
+    let input = "${#x} ${!y} ${*} ${@}";
+    let mut lexer = Lexer::new(input);
+    assert_eq!(lexer.next(), Some(&Token::DollarBraceHash));
+    assert_eq!(lexer.next(), Some(&Token::Identifier));
+    assert_eq!(lexer.next(), Some(&Token::BraceClose));
+    assert_eq!(lexer.next(), Some(&Token::Space));
+    assert_eq!(lexer.next(), Some(&Token::DollarBraceBang));
+    assert_eq!(lexer.next(), Some(&Token::Identifier));
+    assert_eq!(lexer.next(), Some(&Token::BraceClose));
+    assert_eq!(lexer.next(), Some(&Token::Space));
+    assert_eq!(lexer.next(), Some(&Token::DollarBraceStar));
+    assert_eq!(lexer.next(), Some(&Token::BraceClose));
+    assert_eq!(lexer.next(), Some(&Token::Space));
+    assert_eq!(lexer.next(), Some(&Token::DollarBraceAt));
+    assert_eq!(lexer.next(), Some(&Token::BraceClose));
+}
+
+#[test]
+fn test_lexer_identifier_with_dash() {
+    let input = "inside-subshell";
+    let mut lexer = Lexer::new(input);
+    assert_eq!(lexer.next(), Some(&Token::Identifier));
+    assert_eq!(lexer.next(), None);
+}
+
+#[test]
 fn test_parser_error_handling() {
     let input = "if [ -f file.txt"; // Missing closing bracket and then/fi
     let mut parser = Parser::new(input);
     let result = parser.parse();
     assert!(result.is_err());
+}
+
+#[test]
+fn test_parser_env_assignments_with_substitutions() {
+    let input = "FOO=$(echo hi) BAR=$((1+2)); echo done";
+    let mut parser = Parser::new(input);
+    let result = parser.parse();
+    assert!(result.is_ok(), "Parser failed on assignments with substitutions: {:?}", result.err());
 }
 
 #[test]
@@ -565,6 +600,59 @@ fn test_perl_generator_generic_command() {
 }
 
 #[test]
+fn test_perl_generator_args_handling() {
+    // echo $#
+    let input = "echo $#";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    let mut gen = PerlGenerator::new();
+    let code = gen.generate(&commands);
+    assert!(code.contains("scalar(@ARGV)"), "Perl should use @ARGV for $# echo, got: {}", code);
+
+    // for a in "$@"
+    let input2 = "for a in \"$@\"; do echo \"$a\"; done";
+    let mut parser2 = Parser::new(input2);
+    let commands2 = parser2.parse().unwrap();
+    let mut gen2 = PerlGenerator::new();
+    let code2 = gen2.generate(&commands2);
+    assert!(code2.contains("@ARGV"), "Perl should iterate @ARGV for $@: {}", code2);
+}
+
+#[test]
+fn test_python_generator_args_handling() {
+    let input = "echo $#";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    let mut gen = PythonGenerator::new();
+    let code = gen.generate(&commands);
+    assert!(code.contains("len(sys.argv) - 1"));
+
+    let input2 = "echo $@";
+    let mut parser2 = Parser::new(input2);
+    let commands2 = parser2.parse().unwrap();
+    let mut gen2 = PythonGenerator::new();
+    let code2 = gen2.generate(&commands2);
+    assert!(code2.contains("' '.join(sys.argv[1:])"));
+}
+
+#[test]
+fn test_rust_generator_args_handling() {
+    let input = "echo $#";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    let mut gen = RustGenerator::new();
+    let code = gen.generate(&commands);
+    assert!(code.contains("env::args().count().saturating_sub(1)"));
+
+    let input2 = "echo $@";
+    let mut parser2 = Parser::new(input2);
+    let commands2 = parser2.parse().unwrap();
+    let mut gen2 = RustGenerator::new();
+    let code2 = gen2.generate(&commands2);
+    assert!(code2.contains("env::args().skip(1).collect::<Vec<_>>()"));
+}
+
+#[test]
 fn test_perl_generator_quoted_strings() {
     // Test double quoted strings
     let input = r#"echo "Hello, World!""#;
@@ -790,6 +878,8 @@ fn test_all_examples_parse_successfully() {
         "examples/control_flow.sh",
         "examples/test_quoted.sh",
         "examples/gnu_bash_extensions.sh",
+        "examples/args.sh",
+        "examples/misc.sh",
     ];
     
     for example in examples {
@@ -809,6 +899,8 @@ fn test_all_examples_generate_perl() {
         "examples/control_flow.sh",
         "examples/test_quoted.sh",
         "examples/gnu_bash_extensions.sh",
+        "examples/args.sh",
+        "examples/misc.sh",
     ];
     
     for example in examples {
@@ -899,8 +991,9 @@ fn test_examples_output_equivalence() {
             }
         };
         
-        // Parse and generate Perl code (skip control_flow and GNU extensions for now)
-        if file_name == "control_flow.sh" || file_name == "gnu_bash_extensions.sh" { continue; }
+        // Parse and generate Perl code (skip control_flow, GNU extensions)
+        if file_name == "control_flow.sh"
+            || file_name == "gnu_bash_extensions.sh" { continue; }
         let mut parser = Parser::new(&shell_content);
         let commands = match parser.parse() {
             Ok(commands) => commands,

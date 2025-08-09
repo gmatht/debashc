@@ -157,6 +157,12 @@ pub enum Token {
     DollarBrace,
     #[token("$(")]
     DollarParen,
+    #[token("$#")]
+    DollarHashSimple,
+    #[token("$@")]
+    DollarAtSimple,
+    #[token("$*")]
+    DollarStarSimple,
     #[token("`", priority = 1)]
     Backtick,
     #[token("${#")]
@@ -259,7 +265,7 @@ pub enum Token {
     DollarDoubleQuotedString,
 
     // Identifiers and words
-    #[regex(r"[a-zA-Z_][a-zA-Z0-9_.]*|/[a-zA-Z0-9_.]*", priority = 1)]
+    #[regex(r"[a-zA-Z_][a-zA-Z0-9_.-]*|/[a-zA-Z0-9_.-]*", priority = 1)]
     Identifier,
 
     #[regex(r"[0-9]+")]

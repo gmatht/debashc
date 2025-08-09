@@ -183,6 +183,9 @@ impl Parser {
                                 Token::Arithmetic => {
                                     value.push_str(&self.capture_arithmetic_text()?);
                                 }
+                                Token::DollarParen => {
+                                    value.push_str(&self.parse_variable_expansion()?);
+                                }
                                 Token::ParenOpen => {
                                     value.push_str(&self.capture_parenthetical_text()?);
                                 }
@@ -198,6 +201,9 @@ impl Parser {
                                             Some(Token::Space) | Some(Token::Tab) | Some(Token::Newline) | Some(Token::Semicolon) | None => break,
                                             Some(Token::Arithmetic) => {
                                                 value.push_str(&self.capture_arithmetic_text()?);
+                                            }
+                                            Some(Token::DollarParen) => {
+                                                value.push_str(&self.parse_variable_expansion()?);
                                             }
                                             Some(Token::ParenOpen) => {
                                                 value.push_str(&self.capture_parenthetical_text()?);
@@ -240,6 +246,7 @@ impl Parser {
                                     if let Some(tok) = self.lexer.peek() {
                                         match tok {
                                             Token::Arithmetic => { value.push_str(&self.capture_arithmetic_text()?); }
+                                            Token::DollarParen => { value.push_str(&self.parse_variable_expansion()?); }
                                             Token::ParenOpen => { value.push_str(&self.capture_parenthetical_text()?); }
                                             Token::DoubleQuotedString | Token::SingleQuotedString => { value.push_str(&self.get_string_text()?); }
                                             Token::BacktickString => { value.push_str(&self.get_raw_token_text()?); }
@@ -248,6 +255,7 @@ impl Parser {
                                                     match self.lexer.peek() {
                                                         Some(Token::Space) | Some(Token::Tab) | Some(Token::Newline) | Some(Token::Semicolon) | None => break,
                                                         Some(Token::Arithmetic) => { value.push_str(&self.capture_arithmetic_text()?); }
+                                                        Some(Token::DollarParen) => { value.push_str(&self.parse_variable_expansion()?); }
                                                         Some(Token::ParenOpen) => { value.push_str(&self.capture_parenthetical_text()?); }
                                                         _ => {
                                                             if let Some((s2, e2)) = self.lexer.get_span() {
@@ -350,10 +358,14 @@ impl Parser {
                 Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString | Token::SourceDot | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString => {
                     args.push(self.parse_word()?);
                 }
-                Token::Dollar | Token::DollarBrace | Token::DollarParen
+                Token::Dollar | Token::DollarBrace | Token::DollarParen | Token::DollarHashSimple | Token::DollarAtSimple | Token::DollarStarSimple
                 | Token::DollarBraceHash | Token::DollarBraceBang | Token::DollarBraceStar | Token::DollarBraceAt
                 | Token::DollarBraceHashStar | Token::DollarBraceHashAt | Token::DollarBraceBangStar | Token::DollarBraceBangAt => {
                     args.push(self.parse_variable_expansion()?);
+                }
+                Token::Arithmetic => {
+                    let txt = self.capture_arithmetic_text()?;
+                    args.push(txt);
                 }
                 Token::Minus => {
                     // Handle arguments starting with minus (like -la, -v, etc.)
@@ -911,10 +923,11 @@ impl Parser {
                 Ok(".".to_string())
             }
             Some(Token::Dollar) => Ok(self.parse_variable_expansion()?),
-            Some(Token::DollarBrace) | Some(Token::DollarParen)
+            Some(Token::DollarBrace) | Some(Token::DollarParen) | Some(Token::DollarHashSimple) | Some(Token::DollarAtSimple) | Some(Token::DollarStarSimple)
             | Some(Token::DollarBraceHash) | Some(Token::DollarBraceBang) | Some(Token::DollarBraceStar) | Some(Token::DollarBraceAt)
             | Some(Token::DollarBraceHashStar) | Some(Token::DollarBraceHashAt) | Some(Token::DollarBraceBangStar) | Some(Token::DollarBraceBangAt)
                 => Ok(self.parse_variable_expansion()?),
+            Some(Token::Arithmetic) => Ok(self.capture_arithmetic_text()?),
             _ => {
                 let (line, col) = self
                     .lexer
@@ -943,6 +956,9 @@ impl Parser {
                     result.push_str(&format!("${}", self.get_identifier_text()?));
                 }
             }
+            Some(Token::DollarHashSimple) => { self.lexer.next(); result.push_str("$#"); }
+            Some(Token::DollarAtSimple) => { self.lexer.next(); result.push_str("$@"); }
+            Some(Token::DollarStarSimple) => { self.lexer.next(); result.push_str("$*"); }
             Some(Token::DollarBrace)
             | Some(Token::DollarBraceHash) | Some(Token::DollarBraceBang) | Some(Token::DollarBraceStar) | Some(Token::DollarBraceAt)
             | Some(Token::DollarBraceHashStar) | Some(Token::DollarBraceHashAt) | Some(Token::DollarBraceBangStar) | Some(Token::DollarBraceBangAt) => {
@@ -1010,7 +1026,7 @@ impl Parser {
             match token {
                 Token::Identifier | Token::Number | Token::DoubleQuotedString |
                 Token::SingleQuotedString | Token::Dollar | Token::DollarBrace |
-                Token::DollarParen | Token::BraceOpen | Token::BacktickString
+                Token::DollarParen | Token::BraceOpen | Token::BacktickString | Token::Arithmetic | Token::DollarHashSimple | Token::DollarAtSimple | Token::DollarStarSimple
                 | Token::DollarBraceHash | Token::DollarBraceBang | Token::DollarBraceStar | Token::DollarBraceAt
                 | Token::DollarBraceHashStar | Token::DollarBraceHashAt | Token::DollarBraceBangStar | Token::DollarBraceBangAt => {
                     words.push(self.parse_word()?);

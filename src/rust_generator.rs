@@ -55,14 +55,28 @@ impl RustGenerator {
         }
 
         // Generate the command
-        if cmd.name == "echo" {
+        if cmd.name == "true" {
+            // Builtin true: successful no-op
+            output.push_str("/* true */\n");
+        } else if cmd.name == "false" {
+            // Builtin false: early return with error to reflect non-zero status
+            output.push_str("return Err(\"false builtin\".into());\n");
+        } else if cmd.name == "echo" {
             // Special handling for echo
             if cmd.args.is_empty() {
                 output.push_str("println!();\n");
             } else {
-                let args = cmd.args.join(" ");
-                let escaped_args = self.escape_rust_string(&args);
-                output.push_str(&format!("println!(\"{}\");\n", escaped_args));
+                if cmd.args.len() == 1 && cmd.args[0] == "$#" {
+                    output.push_str("let argc = std::env::args().count().saturating_sub(1);\n");
+                    output.push_str("println!(\"{}\", argc);\n");
+                } else if cmd.args.len() == 1 && (cmd.args[0] == "$@" || cmd.args[0] == "${@}") {
+                    output.push_str("let joined = std::env::args().skip(1).collect::<Vec<_>>().join(\" \" );\n");
+                    output.push_str("println!(\"{}\", joined);\n");
+                } else {
+                    let args = cmd.args.join(" ");
+                    let escaped_args = self.escape_rust_string(&args);
+                    output.push_str(&format!("println!(\"{}\");\n", escaped_args));
+                }
             }
         } else if cmd.name == "sleep" {
             // Use std::thread::sleep
