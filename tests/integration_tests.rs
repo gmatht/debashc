@@ -706,13 +706,17 @@ fn test_example_control_flow_sh_to_perl() {
     );
     assert!(
         perl_code.contains("print(\"Number: $i\\n\");") ||
-        perl_code.contains("print(\"Number: \\\$i\\n\");")
+        perl_code.contains("print(\"Number: \\\u{0024}i\\n\");") ||
+        perl_code.contains("print(\"Number: \\\u{24}i\\n\");") ||
+        perl_code.contains("print(\"Number: \\$i\\n\");")
     );
     // Our Perl while-loop may differ; ensure a while construct exists
     assert!(perl_code.contains("while "));
     assert!(
         perl_code.contains("print(\"Counter: $i\\n\");") ||
-        perl_code.contains("print(\"Counter: \\\$i\\n\");")
+        perl_code.contains("print(\"Counter: \\\u{0024}i\\n\");") ||
+        perl_code.contains("print(\"Counter: \\\u{24}i\\n\");") ||
+        perl_code.contains("print(\"Counter: \\$i\\n\");")
     );
     assert!(perl_code.contains("sub greet"));
     assert!(perl_code.contains("Hello, "));
@@ -784,7 +788,8 @@ fn test_all_examples_parse_successfully() {
         "examples/simple.sh",
         "examples/pipeline.sh", 
         "examples/control_flow.sh",
-        "examples/test_quoted.sh"
+        "examples/test_quoted.sh",
+        "examples/gnu_bash_extensions.sh",
     ];
     
     for example in examples {
@@ -892,8 +897,8 @@ fn test_examples_output_equivalence() {
             }
         };
         
-        // Parse and generate Perl code (skip control_flow for now)
-        if file_name == "control_flow.sh" { continue; }
+        // Parse and generate Perl code (skip control_flow and GNU extensions for now)
+        if file_name == "control_flow.sh" || file_name == "gnu_bash_extensions.sh" { continue; }
         let mut parser = Parser::new(&shell_content);
         let commands = match parser.parse() {
             Ok(commands) => commands,

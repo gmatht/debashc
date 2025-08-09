@@ -35,6 +35,8 @@ impl Parser {
         self.skip_whitespace_and_comments();
         
         while !self.lexer.is_eof() {
+            // Progress guard to prevent hangs: ensure each loop consumes or advances tokens
+            let loop_start_pos = self.lexer.current_position();
             // Check if we're at EOF after skipping whitespace and comments
             if self.lexer.is_eof() {
                 break;
@@ -74,6 +76,15 @@ impl Parser {
             
             // Skip whitespace and comments before next command
             self.skip_whitespace_and_comments();
+
+            // If no progress was made in this iteration, advance by one token to avoid infinite loop
+            let loop_end_pos = self.lexer.current_position();
+            if loop_end_pos == loop_start_pos {
+                // Consume one token defensively. If already EOF, break.
+                if self.lexer.next().is_none() {
+                    break;
+                }
+            }
         }
         
         Ok(commands)
@@ -92,6 +103,10 @@ impl Parser {
             Some(Token::While) => self.parse_while_loop(),
             Some(Token::For) => self.parse_for_loop(),
             Some(Token::Function) => self.parse_function(),
+            // Bash arithmetic evaluation: (( ... ))
+            Some(Token::ParenOpen) if matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) => {
+                self.parse_double_paren_command()
+            }
             Some(Token::ParenOpen) => self.parse_subshell(),
             Some(Token::Semicolon) | Some(Token::Newline) | Some(Token::CarriageReturn) => {
                 // Skip semicolon and continue parsing
@@ -107,8 +122,13 @@ impl Parser {
         let mut operators = Vec::new();
         
         commands.push(self.parse_simple_command()?);
+        // Allow whitespace/comments between command and pipeline operators
+        self.skip_whitespace_and_comments();
         
-        while let Some(token) = self.lexer.peek() {
+        while let Some(_) = self.lexer.peek() {
+            // Skip any whitespace/comments before checking for an operator
+            self.skip_whitespace_and_comments();
+            let Some(token) = self.lexer.peek() else { break; };
             match token {
                 Token::Pipe => {
                     self.lexer.next();
@@ -163,6 +183,9 @@ impl Parser {
                                 Token::Arithmetic => {
                                     value.push_str(&self.capture_arithmetic_text()?);
                                 }
+                                Token::ParenOpen => {
+                                    value.push_str(&self.capture_parenthetical_text()?);
+                                }
                                 Token::DoubleQuotedString | Token::SingleQuotedString => {
                                     value.push_str(&self.get_string_text()?);
                                 }
@@ -175,6 +198,9 @@ impl Parser {
                                             Some(Token::Space) | Some(Token::Tab) | Some(Token::Newline) | Some(Token::Semicolon) | None => break,
                                             Some(Token::Arithmetic) => {
                                                 value.push_str(&self.capture_arithmetic_text()?);
+                                            }
+                                            Some(Token::ParenOpen) => {
+                                                value.push_str(&self.capture_parenthetical_text()?);
                                             }
                                             _ => {
                                                 if let Some((start, end)) = self.lexer.get_span() {
@@ -193,6 +219,53 @@ impl Parser {
                         
                         // Skip whitespace after the environment variable
                         self.skip_whitespace_and_comments();
+                    } else if matches!(self.lexer.peek_n(1), Some(Token::TestBracket)) {
+                        // Handle associative/indexed array assignment like: map[foo]=bar
+                        let (start, _) = self.lexer.get_span().ok_or(ParserError::UnexpectedEOF)?;
+                        let mut bracket_depth: i32 = 0;
+                        loop {
+                            if let Some((_, end)) = self.lexer.get_span() {
+                                match self.lexer.peek() {
+                                    Some(Token::TestBracket) => { bracket_depth += 1; }
+                                    Some(Token::TestBracketClose) => { bracket_depth -= 1; }
+                                    _ => {}
+                                }
+                                let done = bracket_depth == 0 && matches!(self.lexer.peek_n(1), Some(Token::Assign));
+                                self.lexer.next();
+                                if done {
+                                    let name_text = self.lexer.get_text(start, end);
+                                    let _eq = self.lexer.next();
+                                    let mut value = String::new();
+                                    self.skip_whitespace_and_comments();
+                                    if let Some(tok) = self.lexer.peek() {
+                                        match tok {
+                                            Token::Arithmetic => { value.push_str(&self.capture_arithmetic_text()?); }
+                                            Token::ParenOpen => { value.push_str(&self.capture_parenthetical_text()?); }
+                                            Token::DoubleQuotedString | Token::SingleQuotedString => { value.push_str(&self.get_string_text()?); }
+                                            Token::BacktickString => { value.push_str(&self.get_raw_token_text()?); }
+                                            _ => {
+                                                loop {
+                                                    match self.lexer.peek() {
+                                                        Some(Token::Space) | Some(Token::Tab) | Some(Token::Newline) | Some(Token::Semicolon) | None => break,
+                                                        Some(Token::Arithmetic) => { value.push_str(&self.capture_arithmetic_text()?); }
+                                                        Some(Token::ParenOpen) => { value.push_str(&self.capture_parenthetical_text()?); }
+                                                        _ => {
+                                                            if let Some((s2, e2)) = self.lexer.get_span() {
+                                                                value.push_str(&self.lexer.get_text(s2, e2));
+                                                                self.lexer.next();
+                                                            } else { break; }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    env_vars.insert(name_text, value);
+                                    self.skip_whitespace_and_comments();
+                                    break;
+                                }
+                            } else { return Err(ParserError::UnexpectedEOF); }
+                        }
                     } else {
                         break;
                     }
@@ -202,14 +275,25 @@ impl Parser {
         }
         
         // Parse command name
+        let mut is_double_bracket = false;
         let name = if let Some(token) = self.lexer.peek() {
             match token {
                 Token::Identifier => {
                     self.get_identifier_text()?
                 }
+                Token::Set | Token::Export | Token::Readonly | Token::Local | Token::Declare | Token::Typeset |
+                Token::Unset | Token::Shift | Token::Eval | Token::Exec | Token::Source | Token::Trap | Token::Wait => {
+                    self.get_raw_token_text()? // keep exact text for builtin/keyword-as-command
+                }
                 Token::TestBracket => {
-                    self.lexer.next(); // consume the [
-                    "[".to_string()
+                    self.lexer.next(); // consume the first [
+                    if let Some(Token::TestBracket) = self.lexer.peek() {
+                        self.lexer.next(); // consume the second [
+                        is_double_bracket = true;
+                        "[[".to_string()
+                    } else {
+                        "[".to_string()
+                    }
                 }
                 Token::True => {
                     self.lexer.next(); // consume true
@@ -219,7 +303,9 @@ impl Parser {
                     self.lexer.next(); // consume false
                     "false".to_string()
                 }
-                Token::Dollar | Token::DollarBrace | Token::DollarParen => {
+                Token::Dollar | Token::DollarBrace | Token::DollarParen
+                | Token::DollarBraceHash | Token::DollarBraceBang | Token::DollarBraceStar | Token::DollarBraceAt
+                | Token::DollarBraceHashStar | Token::DollarBraceHashAt | Token::DollarBraceBangStar | Token::DollarBraceBangAt => {
                     self.parse_variable_expansion()?
                 }
                 _ => {
@@ -247,13 +333,26 @@ impl Parser {
         // Skip whitespace before parsing arguments
         self.skip_whitespace_and_comments();
         
+        // Special handling for Bash double-bracket test: capture everything until closing ']]'
+        if is_double_bracket {
+            let expr = self.capture_double_bracket_expression()?;
+            return Ok(Command::Simple(SimpleCommand {
+                name,
+                args: if expr.is_empty() { Vec::new() } else { vec![expr] },
+                redirects,
+                env_vars,
+            }));
+        }
+
         // Parse arguments and redirects
         while let Some(token) = self.lexer.peek() {
             match token {
-                Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString | Token::SourceDot => {
+                Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString | Token::SourceDot | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString => {
                     args.push(self.parse_word()?);
                 }
-                Token::Dollar | Token::DollarBrace | Token::DollarParen => {
+                Token::Dollar | Token::DollarBrace | Token::DollarParen
+                | Token::DollarBraceHash | Token::DollarBraceBang | Token::DollarBraceStar | Token::DollarBraceAt
+                | Token::DollarBraceHashStar | Token::DollarBraceHashAt | Token::DollarBraceBangStar | Token::DollarBraceBangAt => {
                     args.push(self.parse_variable_expansion()?);
                 }
                 Token::Minus => {
@@ -263,8 +362,30 @@ impl Parser {
                     if let Some(Token::Identifier) = self.lexer.peek() {
                         let arg = format!("-{}", self.get_identifier_text()?);
                         args.push(arg);
+                    } else if let Some(Token::Number) = self.lexer.peek() {
+                        let num = self.get_number_text()?;
+                        args.push(format!("-{}", num));
                     } else {
                         return Err(ParserError::UnexpectedToken { token: token_clone, line: 1, col: 1 });
+                    }
+                }
+                // Process substitution as args: <(cmd) or >(cmd)
+                Token::RedirectIn => {
+                    if matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) {
+                        self.lexer.next(); // consume '<'
+                        let inner = self.capture_parenthetical_text()?;
+                        args.push(format!("<{}", inner));
+                    } else {
+                        redirects.push(self.parse_redirect()?);
+                    }
+                }
+                Token::RedirectOut => {
+                    if matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) {
+                        self.lexer.next(); // consume '>'
+                        let inner = self.capture_parenthetical_text()?;
+                        args.push(format!(">{}", inner));
+                    } else {
+                        redirects.push(self.parse_redirect()?);
                     }
                 }
                 Token::NonZero => {
@@ -317,6 +438,18 @@ impl Parser {
                     self.lexer.next(); // consume the Executable token
                     args.push("-x".to_string());
                 }
+                Token::Size => { self.lexer.next(); args.push("-s".to_string()); }
+                Token::Symlink => { self.lexer.next(); args.push("-L".to_string()); }
+                Token::SymlinkH => { self.lexer.next(); args.push("-h".to_string()); }
+                Token::PipeFile => { self.lexer.next(); args.push("-p".to_string()); }
+                Token::Socket => { self.lexer.next(); args.push("-S".to_string()); }
+                Token::Block => { self.lexer.next(); args.push("-b".to_string()); }
+                Token::SetGid => { self.lexer.next(); args.push("-g".to_string()); }
+                Token::Sticky => { self.lexer.next(); args.push("-k".to_string()); }
+                Token::SetUid => { self.lexer.next(); args.push("-u".to_string()); }
+                Token::Owned => { self.lexer.next(); args.push("-O".to_string()); }
+                Token::GroupOwned => { self.lexer.next(); args.push("-G".to_string()); }
+                Token::Modified => { self.lexer.next(); args.push("-N".to_string()); }
                 // Test comparison operators
                 Token::Eq => { self.lexer.next(); args.push("-eq".to_string()); }
                 Token::Ne => { self.lexer.next(); args.push("-ne".to_string()); }
@@ -324,19 +457,25 @@ impl Parser {
                 Token::Le => { self.lexer.next(); args.push("-le".to_string()); }
                 Token::Gt => { self.lexer.next(); args.push("-gt".to_string()); }
                 Token::Ge => { self.lexer.next(); args.push("-ge".to_string()); }
+                Token::NewerThan => { self.lexer.next(); args.push("-nt".to_string()); }
+                Token::OlderThan => { self.lexer.next(); args.push("-ot".to_string()); }
+                Token::SameFile => { self.lexer.next(); args.push("-ef".to_string()); }
                 Token::Zero => { self.lexer.next(); args.push("-z".to_string()); }
-                Token::RedirectIn | Token::RedirectOut | Token::RedirectAppend |
-                Token::RedirectInOut | Token::Heredoc | Token::HeredocTabs => {
+                Token::RedirectAppend | Token::RedirectInOut | Token::Heredoc | Token::HeredocTabs => {
                     redirects.push(self.parse_redirect()?);
                 }
-                Token::Newline | Token::Semicolon => {
+                Token::Newline | Token::Semicolon | Token::CarriageReturn => {
                     // Stop parsing arguments when we hit a command separator
                     break;
                 }
                 Token::TestBracketClose => {
                     // Handle closing bracket for test commands
                     self.lexer.next(); // consume the ]
-                    args.push("]".to_string());
+                    if is_double_bracket {
+                        if let Some(Token::TestBracketClose) = self.lexer.peek() { self.lexer.next(); }
+                    } else {
+                        args.push("]".to_string());
+                    }
                     break;
                 }
                 Token::Space | Token::Tab => {
@@ -345,6 +484,29 @@ impl Parser {
                 }
                 _ => break,
             }
+        }
+
+        // If this was a [[ ... ]] and nothing captured into args, greedily capture raw text
+        if is_double_bracket && args.is_empty() {
+            let mut expr = String::new();
+            loop {
+                match self.lexer.peek() {
+                    Some(Token::TestBracketClose) if matches!(self.lexer.peek_n(1), Some(Token::TestBracketClose)) => {
+                        self.lexer.next();
+                        self.lexer.next();
+                        break;
+                    }
+                    Some(_) => {
+                        if let Some((s, e)) = self.lexer.get_span() {
+                            expr.push_str(&self.lexer.get_text(s, e));
+                        }
+                        self.lexer.next();
+                    }
+                    None => break,
+                }
+            }
+            let trimmed = expr.trim().to_string();
+            if !trimmed.is_empty() { args.push(trimmed); }
         }
         
         Ok(Command::Simple(SimpleCommand {
@@ -458,7 +620,13 @@ impl Parser {
                 Some(Token::Done) | None => break,
                 _ => {
                     // Parse and discard extra commands in the loop body
+                    let pre_pos = self.lexer.current_position();
                     let _ = self.parse_command()?;
+                    // Progress guard
+                    if self.lexer.current_position() == pre_pos {
+                        // Consume one token to avoid infinite loop
+                        if self.lexer.next().is_none() { break; }
+                    }
                 }
             }
         }
@@ -542,7 +710,11 @@ impl Parser {
                 Some(Token::Done) | None => break,
                 _ => {
                     // Parse and discard extra commands in the loop body
+                    let pre_pos = self.lexer.current_position();
                     let _ = self.parse_command()?;
+                    if self.lexer.current_position() == pre_pos {
+                        if self.lexer.next().is_none() { break; }
+                    }
                 }
             }
         }
@@ -617,14 +789,20 @@ impl Parser {
             let first = Box::new(self.parse_command()?);
 
             // Consume any additional commands inside the block (ignored for now)
-            loop {
+        loop {
                 // Skip separators
                 while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon)) {
                     self.lexer.next();
                 }
                 match self.lexer.peek() {
                     Some(Token::BraceClose) | None => break,
-                    _ => { let _ = self.parse_command()?; }
+                _ => {
+                    let pre_pos = self.lexer.current_position();
+                    let _ = self.parse_command()?;
+                    if self.lexer.current_position() == pre_pos {
+                        if self.lexer.next().is_none() { break; }
+                    }
+                }
                 }
             }
 
@@ -692,8 +870,23 @@ impl Parser {
             Some(Token::HeredocTabs) => RedirectOperator::HeredocTabs,
             _ => return Err(ParserError::InvalidSyntax("Invalid redirect operator".to_string())),
         };
-        
-        let target = self.parse_word()?;
+        // Here-string: '<<< word' often lexes as '<<' '<' then word; accept optional extra '<'
+        if matches!(operator, RedirectOperator::Heredoc) {
+            if let Some(Token::RedirectIn) = self.lexer.peek() { self.lexer.next(); }
+        }
+        // Skip whitespace before target
+        self.skip_whitespace_and_comments();
+
+        // Process substitution as redirect target, allowing an optional extra '<' before '('
+        let target = if matches!(self.lexer.peek(), Some(Token::RedirectIn)) && matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) {
+            // consume the extra '<' and capture ( ... )
+            self.lexer.next();
+            self.capture_parenthetical_text()?
+        } else if matches!(self.lexer.peek(), Some(Token::ParenOpen)) {
+            self.capture_parenthetical_text()?
+        } else {
+            self.parse_word()?
+        };
         
         Ok(Redirect {
             fd,
@@ -709,6 +902,8 @@ impl Parser {
             Some(Token::DoubleQuotedString) => Ok(self.get_string_text()?),
             Some(Token::SingleQuotedString) => Ok(self.get_string_text()?),
             Some(Token::BacktickString) => Ok(self.get_raw_token_text()?),
+            Some(Token::DollarSingleQuotedString) => Ok(self.get_raw_token_text()?),
+            Some(Token::DollarDoubleQuotedString) => Ok(self.get_raw_token_text()?),
             Some(Token::BraceOpen) => Ok(self.parse_brace_word()?),
             Some(Token::SourceDot) => {
                 // Treat standalone '.' as a normal word (e.g., `find . -name ...`)
@@ -716,8 +911,10 @@ impl Parser {
                 Ok(".".to_string())
             }
             Some(Token::Dollar) => Ok(self.parse_variable_expansion()?),
-            Some(Token::DollarBrace) => Ok(self.parse_variable_expansion()?),
-            Some(Token::DollarParen) => Ok(self.parse_variable_expansion()?),
+            Some(Token::DollarBrace) | Some(Token::DollarParen)
+            | Some(Token::DollarBraceHash) | Some(Token::DollarBraceBang) | Some(Token::DollarBraceStar) | Some(Token::DollarBraceAt)
+            | Some(Token::DollarBraceHashStar) | Some(Token::DollarBraceHashAt) | Some(Token::DollarBraceBangStar) | Some(Token::DollarBraceBangAt)
+                => Ok(self.parse_variable_expansion()?),
             _ => {
                 let (line, col) = self
                     .lexer
@@ -746,11 +943,28 @@ impl Parser {
                     result.push_str(&format!("${}", self.get_identifier_text()?));
                 }
             }
-            Some(Token::DollarBrace) => {
-                self.lexer.next();
-                if let Some(Token::Identifier) = self.lexer.peek() {
-                    result.push_str(&format!("${{{}}}", self.get_identifier_text()?));
-                    self.lexer.consume(Token::BraceClose)?;
+            Some(Token::DollarBrace)
+            | Some(Token::DollarBraceHash) | Some(Token::DollarBraceBang) | Some(Token::DollarBraceStar) | Some(Token::DollarBraceAt)
+            | Some(Token::DollarBraceHashStar) | Some(Token::DollarBraceHashAt) | Some(Token::DollarBraceBangStar) | Some(Token::DollarBraceBangAt) => {
+                // Capture raw from '${' to matching '}' inclusively
+                if let Some((start, _)) = self.lexer.get_span() {
+                    let mut depth: i32 = 0;
+                    loop {
+                        if let Some((_, end)) = self.lexer.get_span() {
+                            match self.lexer.peek() {
+                                Some(Token::DollarBrace)
+                                | Some(Token::DollarBraceHash) | Some(Token::DollarBraceBang) | Some(Token::DollarBraceStar) | Some(Token::DollarBraceAt)
+                                | Some(Token::DollarBraceHashStar) | Some(Token::DollarBraceHashAt) | Some(Token::DollarBraceBangStar) | Some(Token::DollarBraceBangAt)
+                                | Some(Token::BraceOpen) => { depth += 1; }
+                                Some(Token::BraceClose) => { depth -= 1; }
+                                _ => {}
+                            }
+                            let seg = self.lexer.get_text(start, end);
+                            self.lexer.next();
+                            result.push_str(&seg);
+                            if depth == 0 { break; }
+                        } else { break; }
+                    }
                 }
             }
             Some(Token::DollarParen) => {
@@ -796,7 +1010,9 @@ impl Parser {
             match token {
                 Token::Identifier | Token::Number | Token::DoubleQuotedString |
                 Token::SingleQuotedString | Token::Dollar | Token::DollarBrace |
-                Token::DollarParen | Token::BraceOpen | Token::BacktickString => {
+                Token::DollarParen | Token::BraceOpen | Token::BacktickString
+                | Token::DollarBraceHash | Token::DollarBraceBang | Token::DollarBraceStar | Token::DollarBraceAt
+                | Token::DollarBraceHashStar | Token::DollarBraceHashAt | Token::DollarBraceBangStar | Token::DollarBraceBangAt => {
                     words.push(self.parse_word()?);
                 }
                 _ => break,
@@ -926,6 +1142,78 @@ impl Parser {
             }
         }
         Ok(text)
+    }
+
+    fn capture_parenthetical_text(&mut self) -> Result<String, ParserError> {
+        // Assumes current token is '(' or we are right before it (when called after consuming '<' or '>')
+        if !matches!(self.lexer.peek(), Some(Token::ParenOpen)) {
+            // If not at '(', just parse a word
+            return self.parse_word();
+        }
+        let (start, _end) = self.lexer.get_span().ok_or(ParserError::UnexpectedEOF)?;
+        let mut depth: i32 = 0;
+        let mut last_end = start;
+        loop {
+            if let Some((_, end)) = self.lexer.get_span() {
+                match self.lexer.peek() {
+                    Some(Token::ParenOpen) => depth += 1,
+                    Some(Token::ParenClose) => depth -= 1,
+                    _ => {}
+                }
+                last_end = end;
+                self.lexer.next();
+                if depth == 0 { break; }
+            } else { return Err(ParserError::UnexpectedEOF); }
+        }
+        Ok(self.lexer.get_text(start, last_end))
+    }
+
+    fn capture_double_bracket_expression(&mut self) -> Result<String, ParserError> {
+        // Capture raw text until we encounter a closing ']]'.
+        let mut expr = String::new();
+        loop {
+            match self.lexer.peek() {
+                Some(Token::TestBracketClose) if matches!(self.lexer.peek_n(1), Some(Token::TestBracketClose)) => {
+                    // consume the closing ']]' and stop
+                    self.lexer.next();
+                    self.lexer.next();
+                    break;
+                }
+                Some(_) => {
+                    if let Some((s, e)) = self.lexer.get_span() {
+                        expr.push_str(&self.lexer.get_text(s, e));
+                    }
+                    self.lexer.next();
+                }
+                None => {
+                    // Unterminated [[ ...  ; treat as whatever we collected
+                    break;
+                }
+            }
+        }
+        Ok(expr.trim().to_string())
+    }
+
+    fn parse_double_paren_command(&mut self) -> Result<Command, ParserError> {
+        // Consume two opening parens
+        self.lexer.consume(Token::ParenOpen)?;
+        self.lexer.consume(Token::ParenOpen)?;
+        // Capture until matching '))'
+        let mut depth: i32 = 2;
+        let mut expr = String::new();
+        while !self.lexer.is_eof() && depth > 0 {
+            if let Some((start, end)) = self.lexer.get_span() {
+                match self.lexer.peek() {
+                    Some(Token::ParenOpen) => { depth += 1; }
+                    Some(Token::ParenClose) => { depth -= 1; }
+                    _ => {}
+                }
+                let seg = self.lexer.get_text(start, end);
+                self.lexer.next();
+                if depth >= 0 { expr.push_str(&seg); }
+            } else { break; }
+        }
+        Ok(Command::Simple(SimpleCommand { name: "((".to_string(), args: vec![expr.trim().to_string()], redirects: Vec::new(), env_vars: HashMap::new() }))
     }
 
     fn skip_whitespace_and_comments(&mut self) {

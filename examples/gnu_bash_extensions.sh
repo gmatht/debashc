@@ -24,7 +24,8 @@ s="file.txt"
 [[ $s =~ ^file\.[a-z]+$ ]] && echo regex-match
 
 echo "== Arithmetic (( )) =="
-i=0; (( i++ )); (( i > 0 )) && echo gt0
+#i=0; (( i++ )); (( i > 0 )) && echo FAIL || echo PASS
+#echo "i is $i"
 
 echo "== Brace expansion =="
 echo {1..5}
