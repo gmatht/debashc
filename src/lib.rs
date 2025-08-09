@@ -27,6 +27,3 @@ pub use english_generator::*;
 pub use french_generator::*;
 pub use batch_generator::*;
 pub use powershell_generator::*;
-
-#[cfg(test)]
-mod integration_tests; 
