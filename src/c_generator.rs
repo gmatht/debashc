@@ -20,7 +20,8 @@ impl CGenerator {
     pub fn generate(&mut self, commands: &[Command]) -> String {
         let mut output = String::new();
         output.push_str("#include <stdio.h>\n");
-        output.push_str("#include <stdlib.h>\n\n");
+        output.push_str("#include <stdlib.h>\n");
+        output.push_str("\n");
         output.push_str("int main(void) {\n");
         self.indent_level += 1;
 
@@ -33,6 +34,8 @@ impl CGenerator {
         output.push_str("return 0;\n");
         self.indent_level -= 1;
         output.push_str("}\n");
+        while output.ends_with("\n\n") { output.pop(); }
+        if !output.ends_with('\n') { output.push('\n'); }
         output
     }
 

@@ -11,6 +11,8 @@ impl BatchGenerator {
         for command in commands {
             output.push_str(&self.generate_command(command));
         }
+        while output.ends_with("\n\n") { output.pop(); }
+        if !output.ends_with('\n') { output.push('\n'); }
         output
     }
 

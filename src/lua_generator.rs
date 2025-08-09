@@ -50,7 +50,8 @@ impl LuaGenerator {
                 lua_code.push('\n');
             }
         }
-
+        while lua_code.ends_with("\n\n") { lua_code.pop(); }
+        if !lua_code.ends_with('\n') { lua_code.push('\n'); }
         lua_code
     }
 

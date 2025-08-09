@@ -10,6 +10,8 @@ impl FrenchGenerator {
         for c in commands {
             out.push_str(&self.decrire_commande(c));
         }
+        while out.ends_with("\n\n") { out.pop(); }
+        if !out.ends_with('\n') { out.push('\n'); }
         out
     }
 
