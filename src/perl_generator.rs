@@ -138,6 +138,9 @@ impl PerlGenerator {
         } else if cmd.name == "test" || cmd.name == "[" {
             // Special handling for test
             self.generate_test_command(cmd, &mut output);
+        } else if cmd.name == "shopt" {
+            // Builtin: ignore; treat as success
+            output.push_str("1;\n");
         } else {
             // Generic command execution with proper escaping
             let name = self.perl_string_literal(&cmd.name);
@@ -194,9 +197,10 @@ impl PerlGenerator {
     fn generate_pipeline(&mut self, pipeline: &Pipeline) -> String {
         let mut output = String::new();
         
+        let has_pipe = pipeline.operators.iter().any(|op| matches!(op, PipeOperator::Pipe));
         if pipeline.commands.len() == 1 {
             output.push_str(&self.generate_command(&pipeline.commands[0]));
-        } else {
+        } else if has_pipe {
             // For now, handle simple pipelines
             output.push_str("my $output;\n");
             for (i, command) in pipeline.commands.iter().enumerate() {
@@ -207,6 +211,24 @@ impl PerlGenerator {
                 }
             }
             output.push_str("print($output);\n");
+        } else {
+            // Implement && and || via system() exit codes
+            output.push_str("my $last_status = 0;\n");
+            if let Some(first) = pipeline.commands.first() {
+                output.push_str(&format!("$last_status = system('{}');\n", self.command_to_string(first)));
+            }
+            for (idx, op) in pipeline.operators.iter().enumerate() {
+                let cmd = &pipeline.commands[idx + 1];
+                match op {
+                    PipeOperator::And => {
+                        output.push_str(&format!("if ($last_status == 0) {{ $last_status = system('{}'); }}\n", self.command_to_string(cmd)));
+                    }
+                    PipeOperator::Or => {
+                        output.push_str(&format!("if ($last_status != 0) {{ $last_status = system('{}'); }}\n", self.command_to_string(cmd)));
+                    }
+                    PipeOperator::Pipe => {}
+                }
+            }
         }
         
         output

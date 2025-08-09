@@ -619,6 +619,25 @@ fn test_perl_generator_args_handling() {
 }
 
 #[test]
+fn test_perl_generator_shopt_builtin_and_boolean_operators() {
+    // shopt should be a no-op builtin
+    let input = "shopt -s nocasematch";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    let mut gen = PerlGenerator::new();
+    let code = gen.generate(&commands);
+    assert!(code.contains("1;"), "shopt should compile to a no-op success: {}", code);
+
+    // && and || should be emitted using system status checks (no backticks)
+    let input2 = "cmd1 && cmd2 || cmd3";
+    let mut parser2 = Parser::new(input2);
+    let commands2 = parser2.parse().unwrap();
+    let mut gen2 = PerlGenerator::new();
+    let code2 = gen2.generate(&commands2);
+    assert!(code2.contains("$last_status"), "Expected status chaining for boolean operators: {}", code2);
+}
+
+#[test]
 fn test_python_generator_args_handling() {
     let input = "echo $#";
     let mut parser = Parser::new(input);
