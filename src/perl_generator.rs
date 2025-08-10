@@ -54,7 +54,14 @@ impl PerlGenerator {
         }
 
         // Generate the command
-        if cmd.name == "true" && !cmd.env_vars.is_empty() && cmd.args.is_empty() {
+        if cmd.name == "((" {
+            // Handle arithmetic expressions like ((i++))
+            if let Some(expr) = cmd.args.first() {
+                // Convert shell arithmetic to Perl
+                let perl_expr = self.convert_arithmetic_to_perl(expr);
+                output.push_str(&format!("{}\\n", perl_expr));
+            }
+        } else if cmd.name == "true" && !cmd.env_vars.is_empty() && cmd.args.is_empty() {
             // Assignment-only shell locals: e.g., a=1
             for (var, value) in &cmd.env_vars {
                 let val = self.perl_string_literal(value);
@@ -183,15 +190,31 @@ impl PerlGenerator {
                 }
             }
         } else {
-            // Generic command execution with proper escaping
-            let name = self.perl_string_literal(&cmd.name);
-            let args = cmd
-                .args
-                .iter()
-                .map(|arg| self.perl_string_literal(arg))
-                .collect::<Vec<_>>()
-                .join(", ");
-            output.push_str(&format!("system({}, {});\n", name, args));
+            // Check if this might be a function call (not a builtin)
+            let builtins = ["echo", "cd", "ls", "grep", "cat", "mkdir", "rm", "mv", "cp", "test", "[", "[[", "shopt", "export", "true", "false"];
+            if builtins.contains(&cmd.name.as_str()) {
+                // Builtin command - use system()
+                let name = self.perl_string_literal(&cmd.name);
+                let args = cmd
+                    .args
+                    .iter()
+                    .map(|arg| self.perl_string_literal(arg))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                output.push_str(&format!("system({}, {});\n", name, args));
+            } else {
+                // Assume it's a function call
+                let args = cmd
+                    .args
+                    .iter()
+                    .map(|arg| self.perl_string_literal(arg))
+                    .collect::<Vec<_>>();
+                if args.is_empty() {
+                    output.push_str(&format!("{}();\n", cmd.name));
+                } else {
+                    output.push_str(&format!("{}({});\n", cmd.name, args.join(", ")));
+                }
+            }
         }
         if has_env { output.push_str("}\n"); }
         output
@@ -199,37 +222,66 @@ impl PerlGenerator {
 
     fn generate_test_command(&self, cmd: &SimpleCommand, output: &mut String) {
         // Convert test conditions to Perl
-        if cmd.args.len() >= 2 {
+        if cmd.args.len() == 3 {
+            // Format: [ operand1 operator operand2 ]
+            let operand1 = &cmd.args[0];
+            let operator = &cmd.args[1];
+            let operand2 = &cmd.args[2];
+            
+            match operator.as_str() {
+                "-lt" => {
+                    output.push_str(&format!("{} < {}", operand1, operand2));
+                }
+                "-le" => {
+                    output.push_str(&format!("{} <= {}", operand1, operand2));
+                }
+                "-eq" => {
+                    output.push_str(&format!("{} == {}", operand1, operand2));
+                }
+                "-ne" => {
+                    output.push_str(&format!("{} != {}", operand1, operand2));
+                }
+                "-gt" => {
+                    output.push_str(&format!("{} > {}", operand1, operand2));
+                }
+                "-ge" => {
+                    output.push_str(&format!("{} >= {}", operand1, operand2));
+                }
+                _ => {
+                    output.push_str(&format!("{} {} {}", operand1, operator, operand2));
+                }
+            }
+        } else if cmd.args.len() >= 2 {
             let operator = &cmd.args[0];
             let operand = &cmd.args[1];
             
             match operator.as_str() {
                 "-f" => {
-                    output.push_str(&format!("if (-f '{}') {{\n", operand));
+                    output.push_str(&format!("-f '{}'", operand));
                 }
                 "-d" => {
-                    output.push_str(&format!("if (-d '{}') {{\n", operand));
+                    output.push_str(&format!("-d '{}'", operand));
                 }
                 "-e" => {
-                    output.push_str(&format!("if (-e '{}') {{\n", operand));
+                    output.push_str(&format!("-e '{}'", operand));
                 }
                 "-r" => {
-                    output.push_str(&format!("if (-r '{}') {{\n", operand));
+                    output.push_str(&format!("-r '{}'", operand));
                 }
                 "-w" => {
-                    output.push_str(&format!("if (-w '{}') {{\n", operand));
+                    output.push_str(&format!("-w '{}'", operand));
                 }
                 "-x" => {
-                    output.push_str(&format!("if (-x '{}') {{\n", operand));
+                    output.push_str(&format!("-x '{}'", operand));
                 }
                 "-z" => {
-                    output.push_str(&format!("if (-z '{}') {{\n", operand));
+                    output.push_str(&format!("-z '{}'", operand));
                 }
                 "-n" => {
-                    output.push_str(&format!("if (-s '{}') {{\n", operand));
+                    output.push_str(&format!("-s '{}'", operand));
                 }
                 _ => {
-                    output.push_str(&format!("if ('{}' {} '{}') {{\n", operand, operator, operand));
+                    output.push_str(&format!("'{}' {} '{}'", operand, operator, operand));
                 }
             }
         }
@@ -293,7 +345,16 @@ impl PerlGenerator {
         let mut output = String::new();
         
         // Generate condition
-        output.push_str(&self.generate_command(&if_stmt.condition));
+        output.push_str("if (");
+        match &*if_stmt.condition {
+            Command::Simple(cmd) if cmd.name == "[" || cmd.name == "test" => {
+                self.generate_test_command(cmd, &mut output);
+            }
+            _ => {
+                output.push_str(&self.generate_command(&if_stmt.condition));
+            }
+        }
+        output.push_str(") {\n");
         
         // Generate then branch
         self.indent_level += 1;
@@ -320,15 +381,40 @@ impl PerlGenerator {
     fn generate_while_loop(&mut self, while_loop: &WhileLoop) -> String {
         let mut output = String::new();
         
-        output.push_str("while (1) {\n");
-        self.indent_level += 1;
+        // Handle different types of conditions
+        match &*while_loop.condition {
+            Command::Simple(cmd) if cmd.name == "[" || cmd.name == "test" => {
+                // For test commands, generate a simple while loop
+                // Initialize any variables used in test conditions
+                if cmd.args.len() >= 1 {
+                    let var_name = cmd.args[0].trim_start_matches('$');
+                    if !self.declared_locals.contains(var_name) {
+                        output.push_str(&format!("my ${} = 0;\n", var_name));
+                        self.declared_locals.insert(var_name.to_string());
+                    } else {
+                        // Variable already declared, just initialize it
+                        output.push_str(&format!("${} = 0;\n", var_name));
+                    }
+                }
+                output.push_str("while (");
+                self.generate_test_command(cmd, &mut output);
+                output.push_str(") {\n");
+            }
+            _ => {
+                // For other command types, generate a complex while loop with exit status check
+                output.push_str("while (1) {\n");
+                output.push_str(&self.indent());
+                output.push_str("my $condition = ");
+                output.push_str("system(");
+                output.push_str(&self.generate_command(&while_loop.condition));
+                output.push_str(") == 0");
+                output.push_str(";\n");
+                output.push_str(&self.indent());
+                output.push_str("last unless $condition;\n");
+            }
+        }
         
-        // Generate condition check
-        output.push_str(&self.indent());
-        output.push_str("my $condition = ");
-        output.push_str(&self.generate_command(&while_loop.condition));
-        output.push_str(&self.indent());
-        output.push_str("last unless $condition;\n");
+        self.indent_level += 1;
         
         // Generate body
         output.push_str(&self.indent());
@@ -338,6 +424,21 @@ impl PerlGenerator {
         output.push_str("}\n");
         
         output
+    }
+
+    fn find_for_loop_variable(&self, command: &Command) -> Option<String> {
+        match command {
+            Command::For(for_loop) => Some(for_loop.variable.clone()),
+            Command::Block(block) => {
+                for cmd in &block.commands {
+                    if let Some(var) = self.find_for_loop_variable(cmd) {
+                        return Some(var);
+                    }
+                }
+                None
+            }
+            _ => None
+        }
     }
 
     fn generate_for_loop(&mut self, for_loop: &ForLoop) -> String {
@@ -358,8 +459,10 @@ impl PerlGenerator {
                 let first = &for_loop.items[0];
                 // Special-case "$@" to iterate over @ARGV
                 if first == "$@" || first == "${@}" {
+                    output.push_str(&format!("my ${};\n", for_loop.variable));
+                    self.declared_locals.insert(for_loop.variable.clone());
                     output.push_str(&format!(
-                        "foreach my ${} (@ARGV) {{\n",
+                        "foreach ${} (@ARGV) {{\n",
                         for_loop.variable
                     ));
                     self.indent_level += 1;
@@ -370,8 +473,11 @@ impl PerlGenerator {
                     return output;
                 }
                 if let Some((start, end)) = self.parse_numeric_brace_range(first) {
+                    // Always declare variable at the start
+                    output.push_str(&format!("my ${};\n", for_loop.variable));
+                    self.declared_locals.insert(for_loop.variable.clone());
                     output.push_str(&format!(
-                        "foreach my ${} ({}..{}) {{\n",
+                        "foreach ${} ({}..{}) {{\n",
                         for_loop.variable, start, end
                     ));
                     self.indent_level += 1;
@@ -381,8 +487,11 @@ impl PerlGenerator {
                     output.push_str("}\n");
                     return output;
                 } else if let Some((start, end)) = self.parse_seq_command(first) {
+                    // Always declare variable at the start
+                    output.push_str(&format!("my ${};\n", for_loop.variable));
+                    self.declared_locals.insert(for_loop.variable.clone());
                     output.push_str(&format!(
-                        "foreach my ${} ({}..{}) {{\n",
+                        "foreach ${} ({}..{}) {{\n",
                         for_loop.variable, start, end
                     ));
                     self.indent_level += 1;
@@ -394,8 +503,11 @@ impl PerlGenerator {
                 }
             }
 
+            // Always declare variable at the start
+            output.push_str(&format!("my ${};\n", for_loop.variable));
+            self.declared_locals.insert(for_loop.variable.clone());
             output.push_str(&format!(
-                "foreach my ${} (qw({})) {{\n",
+                "foreach ${} (qw({})) {{\n",
                 for_loop.variable,
                 for_loop.items.join(" ")
             ));
@@ -512,5 +624,27 @@ impl PerlGenerator {
     fn perl_string_literal(&self, s: &str) -> String {
         // Prefer double-quoted string with escapes to avoid conflicts with single quotes inside args
         format!("\"{}\"", self.escape_perl_string(s))
+    }
+
+    fn convert_arithmetic_to_perl(&self, expr: &str) -> String {
+        // Convert shell arithmetic expressions to Perl
+        let mut result = expr.to_string();
+        
+        // Replace shell arithmetic operators with Perl equivalents
+        result = result.replace("++", "++");
+        result = result.replace("--", "--");
+        result = result.replace("+=", "+=");
+        result = result.replace("-=", "-=");
+        result = result.replace("*=", "*=");
+        result = result.replace("/=", "/=");
+        result = result.replace("%=", "%=");
+        result = result.replace("**=", "**=");
+        
+        // Handle variable references (ensure $ prefix)
+        if !result.starts_with('$') && result.chars().next().unwrap().is_alphabetic() {
+            result = format!("${}", result);
+        }
+        
+        result
     }
 } 

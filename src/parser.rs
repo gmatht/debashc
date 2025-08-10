@@ -507,9 +507,8 @@ impl Parser {
                     self.lexer.next(); // consume the ]
                     if is_double_bracket {
                         if let Some(Token::TestBracketClose) = self.lexer.peek() { self.lexer.next(); }
-                    } else {
-                        args.push("]".to_string());
                     }
+                    // Don't add "]" to args - it's just a syntax marker
                     break;
                 }
                 Token::Space | Token::Tab => {

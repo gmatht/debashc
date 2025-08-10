@@ -369,17 +369,17 @@ fn run_generated(lang: &str, input: &str) {
     }
 }
 
-fn test_file_equivalence(lang: &str, filename: &str) {
+fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
     // Read shell script content
     let shell_content = match fs::read_to_string(filename) {
         Ok(c) => c,
-        Err(e) => { eprintln!("Failed to read {}: {}", filename, e); return; }
+        Err(e) => { return Err(format!("Failed to read {}: {}", filename, e)); }
     };
 
     // Parse and generate target language code
     let commands = match Parser::new(&shell_content).parse() {
         Ok(c) => c,
-        Err(e) => { eprintln!("Failed to parse {}: {:?}", filename, e); return; }
+        Err(e) => { return Err(format!("Failed to parse {}: {:?}", filename, e)); }
     };
 
     let (tmp_file, run_cmd) = match lang {
@@ -387,35 +387,35 @@ fn test_file_equivalence(lang: &str, filename: &str) {
             let mut gen = PerlGenerator::new();
             let code = gen.generate(&commands);
             let tmp = "__tmp_test_output.pl";
-            if let Err(e) = fs::write(tmp, &code) { eprintln!("Failed to write Perl temp file: {}", e); return; }
+            if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Perl temp file: {}", e)); }
             (tmp.to_string(), vec![if cfg!(windows) { "perl" } else { "perl" }, tmp])
         }
         "python" => {
             let mut gen = PythonGenerator::new();
             let code = gen.generate(&commands);
             let tmp = "__tmp_test_output.py";
-            if let Err(e) = fs::write(tmp, &code) { eprintln!("Failed to write Python temp file: {}", e); return; }
+            if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Python temp file: {}", e)); }
             (tmp.to_string(), vec!["python3", tmp])
         }
         "lua" => {
             let mut gen = LuaGenerator::new();
             let code = gen.generate(&commands);
             let tmp = "__tmp_test_output.lua";
-            if let Err(e) = fs::write(tmp, &code) { eprintln!("Failed to write Lua temp file: {}", e); return; }
+            if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Lua temp file: {}", e)); }
             (tmp.to_string(), vec!["lua", tmp])
         }
         "js" => {
             let mut gen = JsGenerator::new();
             let code = gen.generate(&commands);
             let tmp = "__tmp_test_output.js";
-            if let Err(e) = fs::write(tmp, &code) { eprintln!("Failed to write JS temp file: {}", e); return; }
+            if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write JS temp file: {}", e)); }
             (tmp.to_string(), vec!["node", tmp])
         }
         "ps" => {
             let mut gen = PowerShellGenerator::new();
             let code = gen.generate(&commands);
             let tmp = "__tmp_test_output.ps1";
-            if let Err(e) = fs::write(tmp, &code) { eprintln!("Failed to write PowerShell temp file: {}", e); return; }
+            if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write PowerShell temp file: {}", e)); }
             let shell = if cfg!(windows) { "powershell" } else { "pwsh" };
             // Add -ExecutionPolicy Bypass to allow running unsigned scripts
             (tmp.to_string(), vec![shell, "-ExecutionPolicy", "Bypass", "-File", tmp])
@@ -424,7 +424,7 @@ fn test_file_equivalence(lang: &str, filename: &str) {
             let mut gen = RustGenerator::new();
             let code = gen.generate(&commands);
             let tmp_src = "__tmp_test_output.rs";
-            if let Err(e) = fs::write(tmp_src, &code) { eprintln!("Failed to write Rust temp file: {}", e); return; }
+            if let Err(e) = fs::write(tmp_src, &code) { return Err(format!("Failed to write Rust temp file: {}", e)); }
             // compile
             let out = if cfg!(windows) { "__tmp_test_bin.exe" } else { "__tmp_test_bin" };
             let out_path = std::env::current_dir().unwrap_or_default().join(out);
@@ -433,20 +433,20 @@ fn test_file_equivalence(lang: &str, filename: &str) {
                 .status();
             match compile_status {
                 Ok(s) if s.success() => {}
-                Ok(_) => { eprintln!("Rust compilation failed"); let _ = fs::remove_file(tmp_src); return; }
-                Err(e) => { eprintln!("Failed to run rustc: {}", e); let _ = fs::remove_file(tmp_src); return; }
+                Ok(_) => { return Err("Rust compilation failed".to_string()); }
+                Err(e) => { return Err(format!("Failed to run rustc: {}", e)); }
             }
             // We'll run compiled binary; remember to cleanup later
             (tmp_src.to_string(), vec![out])
         }
-        _ => { eprintln!("Unsupported language for --test-file: {}", lang); return; }
+        _ => { return Err(format!("Unsupported language for --test-file: {}", lang)); }
     };
 
     // Run shell script
     let shell_output = {
         let mut child = match Command::new("sh").arg(filename).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
             Ok(c) => c,
-            Err(e) => { eprintln!("Failed to spawn sh: {}", e); cleanup_tmp(lang, &tmp_file); return; }
+            Err(e) => { cleanup_tmp(lang, &tmp_file); return Err(format!("Failed to spawn sh: {}", e)); }
         };
         let start = std::time::Instant::now();
         loop {
@@ -469,7 +469,7 @@ fn test_file_equivalence(lang: &str, filename: &str) {
             let abs_bin = std::env::current_dir().unwrap_or_default().join(bin);
             let mut child = match Command::new(&abs_bin).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
                 Ok(c) => c,
-                Err(e) => { eprintln!("Failed to run compiled Rust: {} ({})", e, abs_bin.display()); cleanup_tmp(lang, &tmp_file); return; }
+                Err(e) => { cleanup_tmp(lang, &tmp_file); return Err(format!("Failed to run compiled Rust: {} ({})", e, abs_bin.display())); }
             };
             let start = std::time::Instant::now();
             let out = loop {
@@ -488,7 +488,7 @@ fn test_file_equivalence(lang: &str, filename: &str) {
             for a in &run_cmd[1..] { cmd.arg(a); }
             let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
                 Ok(c) => c,
-                Err(e) => { eprintln!("Failed to run translated program: {}", e); cleanup_tmp(lang, &tmp_file); return; }
+                Err(e) => { cleanup_tmp(lang, &tmp_file); return Err(format!("Failed to run translated program: {}", e)); }
             };
             let start = std::time::Instant::now();
             let out = loop {
@@ -516,18 +516,33 @@ fn test_file_equivalence(lang: &str, filename: &str) {
     let shell_success = shell_output.status.success();
     let trans_success = translated_output.status.success();
 
+    // Limit output to first 200 characters for readability
+    let truncate_output = |s: &str| -> String {
+        if s.len() > 200 {
+            format!("{}...", &s[..200])
+        } else {
+            s.to_string()
+        }
+    };
+
+    let truncated_shell_stdout = truncate_output(&shell_stdout);
+    let truncated_trans_stdout = truncate_output(&trans_stdout);
+    let truncated_shell_stderr = truncate_output(&shell_stderr);
+    let truncated_trans_stderr = truncate_output(&trans_stderr);
+
     println!("Shell exit: {} | Translated exit: {}", shell_output.status, translated_output.status);
-    println!("Shell stdout: {:?}", shell_stdout);
-    println!("Translated stdout: {:?}", trans_stdout);
-    println!("Shell stderr: {:?}", shell_stderr);
-    println!("Translated stderr: {:?}", trans_stderr);
+    println!("Shell stdout: {:?}", truncated_shell_stdout);
+    println!("Translated stdout: {:?}", truncated_trans_stdout);
+    println!("Shell stderr: {:?}", truncated_shell_stderr);
+    println!("Translated stderr: {:?}", truncated_trans_stderr);
 
     if shell_success != trans_success || shell_stdout != trans_stdout || shell_stderr != trans_stderr {
-        eprintln!("Mismatch detected (lang: {}, file: {})", lang, filename);
-        std::process::exit(1);
+        return Err(format!("Mismatch detected (lang: {}, file: {})", lang, filename));
     } else {
         println!("Outputs match (lang: {}, file: {})", lang, filename);
     }
+    
+    Ok(())
 }
 
 fn cleanup_tmp(lang: &str, tmp_file: &str) {
@@ -1014,27 +1029,14 @@ fn test_all_examples() {
             let mut error_msg = String::new();
             
             // Run the actual test
-            match std::panic::catch_unwind(|| {
-                let stdout = io::stdout();
-                let stderr = io::stderr();
-                let _stdout_handle = stdout.lock();
-                let _stderr_handle = stderr.lock();
-                
-                // Redirect output during test
-                let temp_stdout: Vec<u8> = Vec::new();
-                let temp_stderr: Vec<u8> = Vec::new();
-                let mut _temp_stdout = io::Cursor::new(temp_stdout);
-                let mut _temp_stderr = io::Cursor::new(temp_stderr);
-                
-                test_file_equivalence(generator, example);
-            }) {
+            match test_file_equivalence(generator, example) {
                 Ok(_) => {
                     passed_tests += 1;
                     print!("✓");
                 }
-                Err(_) => {
+                Err(e) => {
                     success = false;
-                    error_msg = format!("Test failed for {} with {}", example, generator);
+                    error_msg = format!("Test failed for {} with {}: {}", example, generator, e);
                     print!("✗");
                 }
             }
@@ -1047,16 +1049,53 @@ fn test_all_examples() {
     println!("\n\nSummary:");
     println!("{}", "=".repeat(50));
     println!("Total tests: {}", total_tests);
-    println!("Passed: {}", passed_tests);
+    println!("Passed: {} ({:.1}%)", passed_tests, (passed_tests as f64 / total_tests as f64) * 100.0);
     println!("Failed: {}", total_tests - passed_tests);
     
-    if passed_tests < total_tests {
-        println!("\nFailed tests:");
-        for (example, _generator, success, error_msg) in results {
-            if !success {
-                println!("- {}: {}", example, error_msg);
+    // Per-generator summary
+    println!("\nResults by Generator:");
+    println!("{}", "=".repeat(50));
+    for generator in &generators {
+        let gen_results: Vec<_> = results.iter()
+            .filter(|(_, g, _, _)| g == generator)
+            .collect();
+        let gen_passed = gen_results.iter().filter(|(_, _, success, _)| *success).count();
+        let gen_total = gen_results.len();
+        println!("{:<8}: {}/{} passed ({:.1}%)", 
+            generator, 
+            gen_passed, 
+            gen_total,
+            (gen_passed as f64 / gen_total as f64) * 100.0
+        );
+    }
+
+    // Per-example summary
+    println!("\nResults by Example:");
+    println!("{}", "=".repeat(50));
+    for example in &examples {
+        let example_results: Vec<_> = results.iter()
+            .filter(|(e, _, _, _)| e == example)
+            .collect();
+        let example_passed = example_results.iter().filter(|(_, _, success, _)| *success).count();
+        let example_total = example_results.len();
+        
+        // Only show examples with failures
+        if example_passed < example_total {
+            println!("{}: {}/{} passed", 
+                example.replace("examples/", "").replace("examples\\", ""),
+                example_passed,
+                example_total
+            );
+            // Show which generators failed
+            for (_, generator, success, error_msg) in example_results {
+                if !success {
+                    println!("  ✗ {}: {}", generator, error_msg);
+                }
             }
         }
+    }
+    
+    if passed_tests < total_tests {
         std::process::exit(1);
     } else {
         println!("\nAll tests passed!");

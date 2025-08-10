@@ -1278,11 +1278,19 @@ fn test_examples_output_equivalence() {
             );
         }
         
-        // Log the outputs for debugging
-        println!("  Shell stdout: {:?}", shell_stdout);
-        println!("  Shell stderr: {:?}", shell_stderr);
-        println!("  Perl stdout: {:?}", perl_stdout);
-        println!("  Perl stderr: {:?}", perl_stderr);
+        // Log the outputs for debugging (limited to 200 chars)
+        let truncate_output = |s: &str| -> String {
+            if s.len() > 200 {
+                format!("{}...", &s[..200])
+            } else {
+                s.to_string()
+            }
+        };
+
+        println!("  Shell stdout: {:?}", truncate_output(&shell_stdout));
+        println!("  Shell stderr: {:?}", truncate_output(&shell_stderr));
+        println!("  Perl stdout: {:?}", truncate_output(&perl_stdout));
+        println!("  Perl stderr: {:?}", truncate_output(&perl_stderr));
         println!("  Shell exit: {}, Perl exit: {}", 
                  shell_output.status, perl_output.status);
         println!("  Output comparison: {}", if should_compare_output { "enabled" } else { "skipped (known differences)" });
@@ -1996,10 +2004,19 @@ equiv_test_cases!(run_generated_rust, rust,
                     file_name_string, normalized_shell_stdout, normalized_python_stdout
                 );
             }
-            println!("  Shell stdout: {:?}", shell_stdout);
-            println!("  Shell stderr: {:?}", shell_stderr);
-            println!("  Python stdout: {:?}", python_stdout);
-            println!("  Python stderr: {:?}", python_stderr);
+            // Log the outputs for debugging (limited to 200 chars)
+            let truncate_output = |s: &str| -> String {
+                if s.len() > 200 {
+                    format!("{}...", &s[..200])
+                } else {
+                    s.to_string()
+                }
+            };
+
+            println!("  Shell stdout: {:?}", truncate_output(&shell_stdout));
+            println!("  Shell stderr: {:?}", truncate_output(&shell_stderr));
+            println!("  Python stdout: {:?}", truncate_output(&python_stdout));
+            println!("  Python stderr: {:?}", truncate_output(&python_stderr));
             println!("  Shell exit: {}, Python exit: {}", 
                      shell_output.status, python_output.status);
             println!("  Output comparison: {}", if should_compare_output { "enabled" } else { "skipped (known differences)" });
