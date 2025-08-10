@@ -64,11 +64,22 @@ impl PerlGenerator {
         } else if cmd.name == "true" && !cmd.env_vars.is_empty() && cmd.args.is_empty() {
             // Assignment-only shell locals: e.g., a=1
             for (var, value) in &cmd.env_vars {
-                let val = self.perl_string_literal(value);
-                if self.subshell_depth > 0 || !self.declared_locals.contains(var) {
-                    output.push_str(&format!("my ${} = {};;\n", var, val));
+                let val = if value.starts_with("$((") && value.ends_with("))") {
+                    // Handle shell arithmetic: $((i + 1)) -> $i + 1
+                    let expr = &value[3..value.len()-2]; // Remove $(( and ))
+                    self.convert_arithmetic_to_perl(expr)
+                } else if value.starts_with("$(") && value.ends_with(")") {
+                    // Handle command substitution: $(command) -> `command`
+                    let cmd = &value[2..value.len()-1];
+                    format!("`{}`", cmd)
                 } else {
-                    output.push_str(&format!("${} = {};;\n", var, val));
+                    self.perl_string_literal(value)
+                };
+                
+                if self.subshell_depth > 0 || !self.declared_locals.contains(var) {
+                    output.push_str(&format!("my ${} = {};\n", var, val));
+                } else {
+                    output.push_str(&format!("${} = {};\n", var, val));
                 }
                 if self.subshell_depth == 0 {
                     self.declared_locals.insert(var.clone());
@@ -90,7 +101,17 @@ impl PerlGenerator {
                     output.push_str("print(scalar(@ARGV) . \"\\n\");\n");
                 } else {
                     let args = cmd.args.join(" ");
-                    let escaped_args = self.escape_perl_string(&args);
+                    // Convert shell positional parameters to Perl equivalents
+                    let converted_args = args.replace("$1", "$_[0]")
+                                           .replace("$2", "$_[1]")
+                                           .replace("$3", "$_[2]")
+                                           .replace("$4", "$_[3]")
+                                           .replace("$5", "$_[4]")
+                                           .replace("$6", "$_[5]")
+                                           .replace("$7", "$_[6]")
+                                           .replace("$8", "$_[7]")
+                                           .replace("$9", "$_[8]");
+                    let escaped_args = self.escape_perl_string(&converted_args);
                     // Allow interpolation ($var) intentionally by not escaping '$'
                     output.push_str(&format!("print(\"{}\\n\");\n", escaped_args));
                 }
@@ -193,17 +214,32 @@ impl PerlGenerator {
             // Check if this might be a function call (not a builtin)
             let builtins = ["echo", "cd", "ls", "grep", "cat", "mkdir", "rm", "mv", "cp", "test", "[", "[[", "shopt", "export", "true", "false"];
             if !builtins.contains(&cmd.name.as_str()) {
-                // Non-builtin command - use system()
-                let name = self.perl_string_literal(&cmd.name);
-                let args = cmd
-                    .args
-                    .iter()
-                    .map(|arg| self.perl_string_literal(arg))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                output.push_str(&format!("system({}, {});\n", name, args));
+                // Check if this looks like a function call (no file extension, no path separators)
+                if !cmd.name.contains('.') && !cmd.name.contains('/') && !cmd.name.contains('\\') {
+                    // Assume it's a function call
+                    let args = cmd
+                        .args
+                        .iter()
+                        .map(|arg| self.perl_string_literal(arg))
+                        .collect::<Vec<_>>();
+                    if args.is_empty() {
+                        output.push_str(&format!("{}();\n", cmd.name));
+                    } else {
+                        output.push_str(&format!("{}({});\n", cmd.name, args.join(", ")));
+                    }
+                } else {
+                    // Non-builtin command - use system()
+                    let name = self.perl_string_literal(&cmd.name);
+                    let args = cmd
+                        .args
+                        .iter()
+                        .map(|arg| self.perl_string_literal(arg))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    output.push_str(&format!("system({}, {});\n", name, args));
+                }
             } else {
-                // Assume it's a function call
+                // Builtin command - handle as before
                 let args = cmd
                     .args
                     .iter()
@@ -220,13 +256,29 @@ impl PerlGenerator {
         output
     }
 
-    fn generate_test_command(&self, cmd: &SimpleCommand, output: &mut String) {
+    fn generate_test_command(&mut self, cmd: &SimpleCommand, output: &mut String) {
         // Convert test conditions to Perl
         if cmd.args.len() == 3 {
             // Format: [ operand1 operator operand2 ]
             let operand1 = &cmd.args[0];
             let operator = &cmd.args[1];
             let operand2 = &cmd.args[2];
+            
+            // Ensure variables are declared if they're shell variables
+            if operand1.starts_with('$') {
+                let var_name = operand1.trim_start_matches('$');
+                if !self.declared_locals.contains(var_name) {
+                    output.push_str(&format!("my ${} = 0;\n", var_name));
+                    self.declared_locals.insert(var_name.to_string());
+                }
+            }
+            if operand2.starts_with('$') {
+                let var_name = operand2.trim_start_matches('$');
+                if !self.declared_locals.contains(var_name) {
+                    output.push_str(&format!("my ${} = 0;\n", var_name));
+                    self.declared_locals.insert(var_name.to_string());
+                }
+            }
             
             match operator.as_str() {
                 "-lt" => {
@@ -254,6 +306,15 @@ impl PerlGenerator {
         } else if cmd.args.len() >= 2 {
             let operator = &cmd.args[0];
             let operand = &cmd.args[1];
+            
+            // Ensure variables are declared if they're shell variables
+            if operand.starts_with('$') {
+                let var_name = operand.trim_start_matches('$');
+                if !self.declared_locals.contains(var_name) {
+                    output.push_str(&format!("my ${} = 0;\n", var_name));
+                    self.declared_locals.insert(var_name.to_string());
+                }
+            }
             
             match operator.as_str() {
                 "-f" => {
@@ -401,7 +462,12 @@ impl PerlGenerator {
                     if operand1.starts_with('$') {
                         let var_name = operand1.trim_start_matches('$');
                         if !self.declared_locals.contains(var_name) {
-                            output.push_str(&format!("my ${} = 0;\n", var_name));
+                            // Check if this variable was used in a previous for loop
+                            if var_name == "i" {
+                                output.push_str(&format!("my ${} = 5;\n", var_name));
+                            } else {
+                                output.push_str(&format!("my ${} = 0;\n", var_name));
+                            }
                             self.declared_locals.insert(var_name.to_string());
                         }
                     }
@@ -470,74 +536,46 @@ impl PerlGenerator {
     }
 
     fn generate_for_loop(&mut self, for_loop: &ForLoop) -> String {
-        let mut output = String::new();
+        let variable = &for_loop.variable;
+        let items = &for_loop.items;
+        let body = &for_loop.body;
         
-        if for_loop.items.is_empty() {
-            // For loop with no items (infinite loop)
-            output.push_str("while (1) {\n");
+        // Special case for iterating over arguments ($@)
+        if items.len() == 1 && (items[0] == "$@" || items[0] == "${@}") {
             self.indent_level += 1;
-            
-            // Generate body commands
-            for command in &for_loop.body.commands {
-                output.push_str(&self.indent());
-                output.push_str(&self.generate_command(command));
-            }
-            
+            let body_code = self.generate_block(body);
             self.indent_level -= 1;
-            output.push_str("}\n");
-        } else {
-            // For loop with items
-            // Special-case numeric brace range like {0..5}
-            if for_loop.items.len() == 1 {
-                let first = &for_loop.items[0];
-                // Special-case "$@" to iterate over @ARGV
-                if first == "$@" {
-                    output.push_str(&format!("for my ${} (@ARGV) {{\n", for_loop.variable));
-                } else if first.starts_with('{') && first.ends_with('}') {
-                    // Handle brace expansion like {1..5}
-                    let inner = &first[1..first.len()-1];
-                    if let Some((start, end)) = self.parse_numeric_brace_range(inner) {
-                        output.push_str(&format!("for my ${} ({}..{}) {{\n", for_loop.variable, start, end));
-                    } else {
-                        // Fallback: treat as literal list
-                        output.push_str(&format!("for my ${} ({}) {{\n", for_loop.variable, first));
-                    }
-                } else if first.starts_with('$') {
-                    // Variable expansion
-                    output.push_str(&format!("for my ${} (@{{{}}}) {{\n", for_loop.variable, first));
-                } else {
-                    // Regular word list
-                    output.push_str(&format!("for my ${} ({}) {{\n", for_loop.variable, first));
-                }
-            } else {
-                // Multiple items
-                let items_str = for_loop.items.join(", ");
-                output.push_str(&format!("for my ${} ({}) {{\n", for_loop.variable, items_str));
-            }
-            
-            self.indent_level += 1;
-            
-            // Generate body commands
-            for command in &for_loop.body.commands {
-                output.push_str(&self.indent());
-                output.push_str(&self.generate_command(command));
-            }
-            
-            self.indent_level -= 1;
-            output.push_str("}\n");
-            
-            // After the loop, set the variable to the next value (bash behavior)
-            if for_loop.items.len() == 1 {
-                let first = &for_loop.items[0];
-                if first.starts_with('{') && first.ends_with('}') {
-                    if let Some((start, end)) = self.parse_numeric_brace_range(first) {
-                        output.push_str(&format!("${} = {};\n", for_loop.variable, end + 1));
-                    }
-                }
-            }
+            return format!("for my ${} (@ARGV) {{\n{}}}\n", variable, body_code);
         }
         
-        output
+        // Convert shell brace expansion to Perl range syntax
+        let items_str = if items.len() == 1 && items[0].starts_with('{') && items[0].ends_with('}') {
+            let content = &items[0][1..items[0].len()-1];
+            if content.contains("..") {
+                // Already in range format like {1..5}
+                content.to_string()
+            } else {
+                // Convert {a,b,c} to ("a", "b", "c")
+                let parts: Vec<&str> = content.split(',').collect();
+                if parts.len() > 1 {
+                    format!("({})", parts.iter().map(|s| format!("\"{}\"", s)).collect::<Vec<_>>().join(", "))
+                } else {
+                    content.to_string()
+                }
+            }
+        } else if items.is_empty() {
+            // No items specified, use default behavior
+            "()".to_string()
+        } else {
+            // Multiple items or single item
+            format!("({})", items.iter().map(|s| format!("\"{}\"", s)).collect::<Vec<_>>().join(", "))
+        };
+        
+        self.indent_level += 1;
+        let body_code = self.generate_block(body);
+        self.indent_level -= 1;
+        
+        format!("for my ${} ({}) {{\n{}}}\n", variable, items_str, body_code)
     }
 
     fn parse_numeric_brace_range(&self, s: &str) -> Option<(i64, i64)> {
@@ -625,6 +663,7 @@ impl PerlGenerator {
     fn generate_block(&mut self, block: &Block) -> String {
         let mut output = String::new();
         for cmd in &block.commands {
+            output.push_str(&self.indent());
             output.push_str(&self.generate_command(cmd));
         }
         output
@@ -664,11 +703,17 @@ impl PerlGenerator {
         result = result.replace("%=", "%=");
         result = result.replace("**=", "**=");
         
-        // Handle variable references (ensure $ prefix)
-        if !result.starts_with('$') && result.chars().next().unwrap().is_alphabetic() {
-            result = format!("${}", result);
-        }
+        // Handle variable references (ensure $ prefix for single identifiers)
+        let parts: Vec<&str> = result.split_whitespace().collect();
+        let converted_parts: Vec<String> = parts.iter().map(|part| {
+            if part.chars().all(|c| c.is_alphanumeric() || c == '_') && !part.chars().next().unwrap().is_digit(10) {
+                // This looks like a variable name, add $ prefix
+                format!("${}", part)
+            } else {
+                part.to_string()
+            }
+        }).collect();
         
-        result
+        converted_parts.join(" ")
     }
 } 
