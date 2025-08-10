@@ -3,7 +3,7 @@
 
 param(
     [string]$Browser = "edge",  # Can be "edge", "default", or "chrome"
-    [int]$Port = 8000
+    [int]$Port = (Get-Random -Minimum 8000 -Maximum 65535)  # Random port between 8000 and 65535
 )
 
 Write-Host "=== WASM Build and Run Script ===" -ForegroundColor Green
@@ -12,6 +12,19 @@ Write-Host ""
 # Function to check if a command exists
 function Test-Command($cmdname) {
     return [bool](Get-Command -Name $cmdname -ErrorAction SilentlyContinue)
+}
+
+# Function to check if a port is available
+function Test-Port($Port) {
+    try {
+        $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $Port)
+        $listener.Start()
+        $listener.Stop()
+        return $true
+    }
+    catch {
+        return $false
+    }
 }
 
 # Function to check if wasm-pack is installed
@@ -61,7 +74,26 @@ function Build-Wasm {
 function Start-HttpServer {
     param([int]$Port)
     
-    Write-Host "Starting HTTP server on port $Port..." -ForegroundColor Yellow
+    # Try to find an available port starting from the given one
+    $maxTries = 10
+    $currentPort = $Port
+    $portFound = $false
+    
+    for ($i = 0; $i -lt $maxTries; $i++) {
+        if (Test-Port $currentPort) {
+            $portFound = $true
+            break
+        }
+        Write-Host "Port $currentPort is in use, trying next port..." -ForegroundColor Yellow
+        $currentPort = Get-Random -Minimum 8000 -Maximum 65535
+    }
+    
+    if (-not $portFound) {
+        Write-Host "Could not find an available port after $maxTries attempts." -ForegroundColor Red
+        return $false
+    }
+    
+    Write-Host "Starting HTTP server on port $currentPort..." -ForegroundColor Yellow
     
     # Check if Python is available
     if (Test-Command "python") {
@@ -77,12 +109,14 @@ function Start-HttpServer {
     
     try {
         # Start the server in the background
-        $serverProcess = Start-Process -FilePath $pythonCmd -ArgumentList "-m", "http.server", $Port -WorkingDirectory "www" -PassThru -WindowStyle Hidden
+        $serverProcess = Start-Process -FilePath $pythonCmd -ArgumentList "-m", "http.server", $currentPort -WorkingDirectory "www" -PassThru -WindowStyle Hidden
         Write-Host "HTTP server started (PID: $($serverProcess.Id))" -ForegroundColor Green
         
         # Wait a moment for server to start
         Start-Sleep -Seconds 2
         
+        # Update the script scope port variable
+        $script:Port = $currentPort
         return $true
     }
     catch {

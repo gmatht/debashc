@@ -156,7 +156,7 @@ impl RustGenerator {
                         output.push_str("println!(\"{}\", __echo_parts.join(\" \"));\n");
                     }
                     // Ensure success status
-                    output.push_str("/* success */\n");
+                    //output.push_str("/* success */\n");
                 }
             }
         } else if cmd.name == "[[" {
