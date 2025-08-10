@@ -426,9 +426,10 @@ fn test_file_equivalence(lang: &str, filename: &str) {
             let tmp_src = "__tmp_test_output.rs";
             if let Err(e) = fs::write(tmp_src, &code) { eprintln!("Failed to write Rust temp file: {}", e); return; }
             // compile
-            let out = "__tmp_test_bin";
+            let out = if cfg!(windows) { "__tmp_test_bin.exe" } else { "__tmp_test_bin" };
+            let out_path = std::env::current_dir().unwrap_or_default().join(out);
             let compile_status = Command::new("rustc")
-                .arg("--edition=2021").arg(tmp_src).arg("-o").arg(out)
+                .arg("--edition=2021").arg(tmp_src).arg("-o").arg(&out_path)
                 .status();
             match compile_status {
                 Ok(s) if s.success() => {}
@@ -436,7 +437,7 @@ fn test_file_equivalence(lang: &str, filename: &str) {
                 Err(e) => { eprintln!("Failed to run rustc: {}", e); let _ = fs::remove_file(tmp_src); return; }
             }
             // We'll run compiled binary; remember to cleanup later
-            (tmp_src.to_string(), vec![if cfg!(windows) { "__tmp_test_bin.exe" } else { "__tmp_test_bin" }])
+            (tmp_src.to_string(), vec![out])
         }
         _ => { eprintln!("Unsupported language for --test-file: {}", lang); return; }
     };
@@ -464,10 +465,11 @@ fn test_file_equivalence(lang: &str, filename: &str) {
     let translated_output = {
         if lang == "rust" {
             // Run compiled binary directly (first arg of run_cmd)
-            let bin = run_cmd[0];
-            let mut child = match Command::new(bin).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+            let bin = if cfg!(windows) { "__tmp_test_bin.exe" } else { "__tmp_test_bin" };
+            let abs_bin = std::env::current_dir().unwrap_or_default().join(bin);
+            let mut child = match Command::new(&abs_bin).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
                 Ok(c) => c,
-                Err(e) => { eprintln!("Failed to run compiled Rust: {}", e); cleanup_tmp(lang, &tmp_file); return; }
+                Err(e) => { eprintln!("Failed to run compiled Rust: {} ({})", e, abs_bin.display()); cleanup_tmp(lang, &tmp_file); return; }
             };
             let start = std::time::Instant::now();
             let out = loop {
@@ -1019,8 +1021,8 @@ fn test_all_examples() {
                 let _stderr_handle = stderr.lock();
                 
                 // Redirect output during test
-                let temp_stdout = Vec::new();
-                let temp_stderr = Vec::new();
+                let temp_stdout: Vec<u8> = Vec::new();
+                let temp_stderr: Vec<u8> = Vec::new();
                 let mut _temp_stdout = io::Cursor::new(temp_stdout);
                 let mut _temp_stderr = io::Cursor::new(temp_stderr);
                 
@@ -1037,7 +1039,7 @@ fn test_all_examples() {
                 }
             }
             
-            results.push((example.clone(), generator.clone(), success, error_msg));
+            results.push((example.to_string(), generator.to_string(), success, error_msg));
             io::stdout().flush().unwrap();
         }
     }
@@ -1050,7 +1052,7 @@ fn test_all_examples() {
     
     if passed_tests < total_tests {
         println!("\nFailed tests:");
-        for (example, generator, success, error_msg) in results {
+        for (example, _generator, success, error_msg) in results {
             if !success {
                 println!("- {}: {}", example, error_msg);
             }

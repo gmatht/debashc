@@ -924,10 +924,60 @@ impl Parser {
         // If this is a heredoc, capture lines until the delimiter is found at start of line
         let heredoc_body = match operator {
             RedirectOperator::Heredoc | RedirectOperator::HeredocTabs => {
-                let _delim = target.clone();
-                // TODO: Implement proper heredoc parsing
-                // For now, return empty body as placeholder
-                Some(String::new())
+                let delim = target.clone();
+                let mut body = String::new();
+                let mut found_delim = false;
+
+                // Skip to the next newline token
+                while let Some(token) = self.lexer.peek() {
+                    match token {
+                        Token::Newline => {
+                            self.lexer.next(); // consume the newline
+                            break;
+                        }
+                        _ => {
+                            self.lexer.next(); // consume other tokens
+                        }
+                    }
+                }
+
+                // Collect lines until we find the delimiter at start of line
+                while let Some(token) = self.lexer.peek() {
+                    match token {
+                        Token::Newline => {
+                            self.lexer.next(); // consume the newline
+                            // Don't add newline if this is the last line (before delimiter)
+                            if let Some(Token::Identifier) = self.lexer.peek() {
+                                let next_word = self.lexer.get_current_text().unwrap_or_default();
+                                if next_word != delim {
+                                    body.push('\n');
+                                }
+                            } else {
+                                body.push('\n');
+                            }
+                        }
+                        Token::Identifier => {
+                            let word = self.get_identifier_text()?;
+                            if word == delim {
+                                found_delim = true;
+                                break;
+                            }
+                            body.push_str(&word);
+                        }
+                        _ => {
+                            // For any other token, just consume it and add to body
+                            let text = self.lexer.get_current_text().unwrap_or_default();
+                            body.push_str(&text);
+                            self.lexer.next();
+                        }
+                    }
+                }
+
+                if found_delim {
+                    Some(body)
+                } else {
+                    Some(String::new())
+                }
             }
             _ => None,
         };
@@ -1076,8 +1126,6 @@ impl Parser {
         // consume '{'
         self.lexer.next();
         let mut depth: i32 = 1;
-        let mut last_end: Option<usize> = None;
-
         loop {
             if self.lexer.is_eof() {
                 return Err(ParserError::InvalidSyntax(
@@ -1094,19 +1142,14 @@ impl Parser {
                 }
                 // consume current token
                 self.lexer.next();
-                last_end = Some(end);
 
                 if depth == 0 {
-                    break;
+                    return Ok(self.lexer.get_text(start, end));
                 }
             } else {
                 return Err(ParserError::UnexpectedEOF);
             }
         }
-
-        // Return substring including the braces
-        let end_final = last_end.unwrap_or(start);
-        Ok(self.lexer.get_text(start, end_final))
     }
 
     fn get_identifier_text(&mut self) -> Result<String, ParserError> {
@@ -1197,7 +1240,6 @@ impl Parser {
         }
         let (start, _end) = self.lexer.get_span().ok_or(ParserError::UnexpectedEOF)?;
         let mut depth: i32 = 0;
-        let mut last_end: Option<usize> = None;
         loop {
             if let Some((_, end)) = self.lexer.get_span() {
                 match self.lexer.peek() {
@@ -1205,13 +1247,10 @@ impl Parser {
                     Some(Token::ParenClose) => depth -= 1,
                     _ => {}
                 }
-                last_end = Some(end);
                 self.lexer.next();
-                if depth == 0 { break; }
+                if depth == 0 { return Ok(self.lexer.get_text(start, end)); }
             } else { return Err(ParserError::UnexpectedEOF); }
         }
-        let end_final = last_end.unwrap_or(start);
-        Ok(self.lexer.get_text(start, end_final))
     }
 
     fn capture_double_bracket_expression(&mut self) -> Result<String, ParserError> {

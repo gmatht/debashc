@@ -415,6 +415,12 @@ impl Lexer {
         self.current
     }
 
+    pub fn advance_to_position(&mut self, new_position: usize) {
+        if new_position <= self.tokens.len() {
+            self.current = new_position;
+        }
+    }
+
     pub fn get_span(&self) -> Option<(usize, usize)> {
         self.tokens.get(self.current).map(|(_, start, end)| (*start, *end))
     }

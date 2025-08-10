@@ -125,8 +125,7 @@ impl PerlGenerator {
             for redir in &cmd.redirects {
                 if matches!(redir.operator, RedirectOperator::Heredoc | RedirectOperator::HeredocTabs) {
                     if let Some(body) = &redir.heredoc_body {
-                        let escaped = body.replace("\\", "\\\\").replace("\"", "\\\"");
-                        output.push_str(&format!("print(\"{}\");\n", escaped));
+                        output.push_str(&format!("print <<'{}';\n{}\n{}\n;\n", redir.target, body, redir.target));
                         printed_any = true;
                     }
                 }

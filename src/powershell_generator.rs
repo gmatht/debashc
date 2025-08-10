@@ -45,6 +45,28 @@ impl PowerShellGenerator {
         } else if cmd.name == "shopt" {
             // Builtin: ignore
             return String::from("# builtin\n");
+        } else if cmd.name == "cat" {
+            // Special handling for cat including heredocs
+            let mut output = String::new();
+            let mut printed_any = false;
+            for redir in &cmd.redirects {
+                if matches!(redir.operator, RedirectOperator::Heredoc | RedirectOperator::HeredocTabs) {
+                    if let Some(body) = &redir.heredoc_body {
+                        // Normalize line endings to handle Windows vs Unix line endings
+                        let normalized_body = body.replace("\r\n", "\n").replace("\r", "\n");
+                        // Escape PowerShell string properly
+                        let escaped_body = normalized_body.replace("\"", "`\"").replace("$", "`$");
+                        output.push_str(&format!("Write-Output @\"\n{}\"@\n", escaped_body));
+                        printed_any = true;
+                    }
+                }
+            }
+            if !printed_any {
+                for arg in &cmd.args {
+                    return format!("Get-Content \"{}\" | Write-Output\n", arg);
+                }
+            }
+            return output;
         } else {
             if cmd.args.is_empty() { format!("{}\n", cmd.name) } else { format!("{} {}\n", cmd.name, self.quote_join(&cmd.args)) }
         }
@@ -73,7 +95,16 @@ impl PowerShellGenerator {
     }
 
     fn quote_join(&self, args: &[String]) -> String {
-        args.iter().map(|a| format!("\"{}\"", a.replace('"', "`\""))).collect::<Vec<_>>().join(" ")
+        args.iter().map(|a| self.translate_arg(a)).collect::<Vec<_>>().join(" ")
+    }
+
+    fn translate_arg(&self, arg: &str) -> String {
+        match arg {
+            "$#" => "$($args.Count)".to_string(),
+            "$@" => "$args".to_string(),
+            "$*" => "$($args -join ' ')".to_string(),
+            _ => format!("\"{}\"", arg.replace('"', "`\""))
+        }
     }
 }
 

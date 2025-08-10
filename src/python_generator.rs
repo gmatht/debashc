@@ -415,9 +415,12 @@ impl PythonGenerator {
     }
 
     fn escape_python_string(&self, s: &str) -> String {
-        // For Python, we need to handle quotes properly
-        // If the string contains both single and double quotes, we need to escape them
-        if s.contains('"') && s.contains("'") {
+        // For Python, we need to handle quotes and newlines properly
+        // If the string contains newlines, use triple quotes to avoid syntax errors
+        if s.contains('\n') {
+            // Use triple quotes for strings with newlines
+            format!("'''{}'''", s)
+        } else if s.contains('"') && s.contains("'") {
             // Use triple quotes to avoid escaping issues
             format!("'''{}'''", s)
         } else if s.contains('"') {

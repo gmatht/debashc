@@ -235,7 +235,9 @@ impl RustGenerator {
             for redir in &cmd.redirects {
                 if matches!(redir.operator, RedirectOperator::Heredoc | RedirectOperator::HeredocTabs) {
                     if let Some(body) = &redir.heredoc_body {
-                        let esc = self.escape_rust_string(body);
+                        // Normalize line endings to handle Windows vs Unix line endings
+                        let normalized_body = body.replace("\r\n", "\n").replace("\r", "\n");
+                        let esc = self.escape_rust_string(&normalized_body);
                         output.push_str(&format!("print!(\"{}\");\n", esc));
                         printed_any = true;
                     }
