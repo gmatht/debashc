@@ -1046,11 +1046,15 @@ fn test_all_examples() {
         }
     }
     
-    println!("\n\nSummary:");
-    println!("{}", "=".repeat(50));
+    // Clear screen and show prominent summary
+    println!("\n\n");
+    println!("{}", "=".repeat(80));
+    println!("                                    TEST SUMMARY");
+    println!("{}", "=".repeat(80));
     println!("Total tests: {}", total_tests);
     println!("Passed: {} ({:.1}%)", passed_tests, (passed_tests as f64 / total_tests as f64) * 100.0);
     println!("Failed: {}", total_tests - passed_tests);
+    println!("{}", "=".repeat(80));
     
     // Per-generator summary
     println!("\nResults by Generator:");
@@ -1095,11 +1099,15 @@ fn test_all_examples() {
         }
     }
     
+    // Final summary line
+    println!("\n{}", "=".repeat(80));
     if passed_tests < total_tests {
+        println!("FINAL RESULT: {} out of {} tests PASSED ({:.1}%)", passed_tests, total_tests, (passed_tests as f64 / total_tests as f64) * 100.0);
         std::process::exit(1);
     } else {
-        println!("\nAll tests passed!");
+        println!("FINAL RESULT: ALL {} tests PASSED! 🎉", total_tests);
     }
+    println!("{}", "=".repeat(80));
 }
 
 fn interactive_mode() {
