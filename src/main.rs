@@ -68,12 +68,16 @@ fn main() {
         println!("  file --test-file <perl|python|rust|lua|js|ps> <filename> - Compare outputs of .sh vs translated");
         println!("  file --run <perl|python|rust|lua|js|ps> <filename> - Generate and run from file");
         println!("  --test-file <perl|python|rust|lua|js|ps> <filename> - Same as file --test-file (top-level)");
+        println!("  --test-eq - Test all generators against all examples");
         return;
     }
     
     let command = &args[1];
     
     match command.as_str() {
+        "--test-eq" => {
+            test_all_examples();
+        }
         "lex" => {
             if args.len() < 3 {
                 println!("Error: lex command requires input");
@@ -413,7 +417,8 @@ fn test_file_equivalence(lang: &str, filename: &str) {
             let tmp = "__tmp_test_output.ps1";
             if let Err(e) = fs::write(tmp, &code) { eprintln!("Failed to write PowerShell temp file: {}", e); return; }
             let shell = if cfg!(windows) { "powershell" } else { "pwsh" };
-            (tmp.to_string(), vec![shell, "-File", tmp])
+            // Add -ExecutionPolicy Bypass to allow running unsigned scripts
+            (tmp.to_string(), vec![shell, "-ExecutionPolicy", "Bypass", "-File", tmp])
         }
         "rust" => {
             let mut gen = RustGenerator::new();
@@ -928,6 +933,131 @@ fn parse_file_to_powershell(filename: &str) {
     match fs::read_to_string(filename) {
         Ok(content) => parse_to_powershell(&content),
         Err(e) => println!("Error reading file: {}", e),
+    }
+}
+
+fn check_generator_available(generator: &str) -> bool {
+    match generator {
+        "perl" => Command::new("perl").arg("--version").output().is_ok(),
+        "python" => Command::new("python3").arg("--version").output().is_ok() || Command::new("python").arg("--version").output().is_ok(),
+        "rust" => Command::new("rustc").arg("--version").output().is_ok(),
+        "lua" => Command::new("lua").arg("-v").output().is_ok(),
+        "js" => Command::new("node").arg("--version").output().is_ok(),
+        "ps" => {
+            let shell = if cfg!(windows) { "powershell" } else { "pwsh" };
+            Command::new(shell).arg("-Command").arg("$PSVersionTable").output().is_ok()
+        },
+        _ => false
+    }
+}
+
+fn test_all_examples() {
+    let all_generators = vec!["perl", "python", "rust", "lua", "js", "ps"];
+    
+    // Filter to only available generators
+    let generators: Vec<_> = all_generators.into_iter()
+        .filter(|g| {
+            let available = check_generator_available(g);
+            if !available {
+                println!("Skipping {} tests - {} not found in PATH", g, g);
+            }
+            available
+        })
+        .collect();
+    
+    if generators.is_empty() {
+        println!("No supported generators found. Please install at least one of: perl, python3, rustc, lua, node, powershell/pwsh");
+        std::process::exit(1);
+    }
+    
+    let mut examples = Vec::new();
+    
+    // Read examples directory
+    if let Ok(entries) = fs::read_dir("examples") {
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("sh") {
+                    if let Some(path_str) = path.to_str() {
+                        examples.push(path_str.to_string());
+                    }
+                }
+            }
+        }
+    }
+    
+    // Sort examples for consistent output
+    examples.sort();
+    
+    // Test each combination
+    let mut results = Vec::new();
+    let total_tests = examples.len() * generators.len();
+    let mut passed_tests = 0;
+    let mut current_test = 0;
+    
+    println!("\nRunning {} tests across {} examples and {} generators", 
+             total_tests, examples.len(), generators.len());
+    println!("{}", "=".repeat(50));
+    
+    for example in &examples {
+        for generator in &generators {
+            current_test += 1;
+            print!("\rTest {}/{}: {} with {:<8} ", 
+                  current_test, total_tests, 
+                  example.replace("examples/", "").replace("examples\\", ""), 
+                  generator);
+            io::stdout().flush().unwrap();
+            
+            let mut success = true;
+            let mut error_msg = String::new();
+            
+            // Run the actual test
+            match std::panic::catch_unwind(|| {
+                let stdout = io::stdout();
+                let stderr = io::stderr();
+                let _stdout_handle = stdout.lock();
+                let _stderr_handle = stderr.lock();
+                
+                // Redirect output during test
+                let temp_stdout = Vec::new();
+                let temp_stderr = Vec::new();
+                let mut _temp_stdout = io::Cursor::new(temp_stdout);
+                let mut _temp_stderr = io::Cursor::new(temp_stderr);
+                
+                test_file_equivalence(generator, example);
+            }) {
+                Ok(_) => {
+                    passed_tests += 1;
+                    print!("✓");
+                }
+                Err(_) => {
+                    success = false;
+                    error_msg = format!("Test failed for {} with {}", example, generator);
+                    print!("✗");
+                }
+            }
+            
+            results.push((example.clone(), generator.clone(), success, error_msg));
+            io::stdout().flush().unwrap();
+        }
+    }
+    
+    println!("\n\nSummary:");
+    println!("{}", "=".repeat(50));
+    println!("Total tests: {}", total_tests);
+    println!("Passed: {}", passed_tests);
+    println!("Failed: {}", total_tests - passed_tests);
+    
+    if passed_tests < total_tests {
+        println!("\nFailed tests:");
+        for (example, generator, success, error_msg) in results {
+            if !success {
+                println!("- {}: {}", example, error_msg);
+            }
+        }
+        std::process::exit(1);
+    } else {
+        println!("\nAll tests passed!");
     }
 }
 

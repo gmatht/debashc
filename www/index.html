@@ -309,7 +309,7 @@
         const inputEl = document.getElementById('input');
         inputEl.addEventListener('input', () => {
             if (inputIdleTimer) clearTimeout(inputIdleTimer);
-            inputIdleTimer = setTimeout(() => executeOperation(currentOperation), 1000);
+            inputIdleTimer = setTimeout(() => executeOperation(currentOperation), 100);
         });
 
         document.getElementById('lex-btn').addEventListener('click', () => { currentOperation = 'lex'; executeOperation('lex'); });
@@ -341,6 +341,7 @@
                         document.getElementById('input').value = ex.content;
                         setOutput('');
                         document.getElementById('status').style.display = 'none';
+                        executeOperation(currentOperation);
                     });
                     div.appendChild(btn);
                     container.appendChild(div);
