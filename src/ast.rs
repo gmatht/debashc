@@ -71,6 +71,7 @@ pub struct Redirect {
     pub fd: Option<i32>,
     pub operator: RedirectOperator,
     pub target: String,
+    pub heredoc_body: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

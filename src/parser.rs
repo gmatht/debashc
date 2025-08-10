@@ -921,12 +921,18 @@ impl Parser {
         } else {
             self.parse_word()?
         };
-        
-        Ok(Redirect {
-            fd,
-            operator,
-            target,
-        })
+        // If this is a heredoc, capture lines until the delimiter is found at start of line
+        let heredoc_body = match operator {
+            RedirectOperator::Heredoc | RedirectOperator::HeredocTabs => {
+                let _delim = target.clone();
+                // TODO: Implement proper heredoc parsing
+                // For now, return empty body as placeholder
+                Some(String::new())
+            }
+            _ => None,
+        };
+
+        Ok(Redirect { fd, operator, target, heredoc_body })
     }
 
     fn parse_word(&mut self) -> Result<String, ParserError> {

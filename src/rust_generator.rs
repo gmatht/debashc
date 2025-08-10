@@ -11,13 +11,65 @@ impl RustGenerator {
 
     pub fn generate(&mut self, commands: &[Command]) -> String {
         let mut output = String::new();
-        output.push_str("use std::process::Command;\n");
-        output.push_str("use std::env;\n");
-        output.push_str("use std::fs;\n");
-        output.push_str("use std::io::{self, Write};\n");
-        output.push_str("use std::thread;\n");
-        output.push_str("use std::time::Duration;\n\n");
-        output.push_str("fn main() -> Result<(), Box<dyn std::error::Error>> {\n");
+        let mut needs_command = false;
+        let mut needs_env = false;
+        let mut needs_fs = false;
+        let mut needs_io = false;
+        let mut needs_thread = false;
+        let mut needs_duration = false;
+
+        // First pass - analyze what imports we need
+        for command in commands {
+            match command {
+                Command::Simple(cmd) => {
+                    if cmd.name != "echo" && cmd.name != "true" && cmd.name != "false" {
+                        needs_command = true;
+                    }
+                    if cmd.name == "cd" {
+                        needs_env = true;
+                    }
+                    if cmd.name == "cat" || cmd.name == "ls" || cmd.name == "grep" {
+                        needs_fs = true;
+                    }
+                    if cmd.name == "read" {
+                        needs_io = true;
+                    }
+                    if cmd.name == "sleep" {
+                        needs_thread = true;
+                        needs_duration = true;
+                    }
+                }
+                Command::Background(_) => {
+                    needs_thread = true;
+                }
+                _ => {}
+            }
+        }
+
+        // Add only needed imports
+        if needs_command {
+            output.push_str("use std::process::Command;\n");
+        }
+        if needs_env {
+            output.push_str("use std::env;\n");
+        }
+        if needs_fs {
+            output.push_str("use std::fs;\n");
+        }
+        if needs_io {
+            output.push_str("use std::io::{self, Write};\n");
+        }
+        if needs_thread {
+            output.push_str("use std::thread;\n");
+        }
+        if needs_duration {
+            output.push_str("use std::time::Duration;\n");
+        }
+        if output.ends_with('\n') {
+            output.push('\n');
+        }
+
+        output.push_str("fn main() -> std::process::ExitCode {\n");
         self.indent_level += 1;
 
         for command in commands {
@@ -26,7 +78,7 @@ impl RustGenerator {
         }
 
         self.indent_level -= 1;
-        output.push_str("    Ok(())\n");
+        output.push_str("    std::process::ExitCode::SUCCESS\n");
         output.push_str("}\n");
 
         while output.ends_with('\n') { output.pop(); }
@@ -75,17 +127,36 @@ impl RustGenerator {
                     output.push_str("let joined = std::env::args().skip(1).collect::<Vec<_>>().join(\" \" );\n");
                     output.push_str("println!(\"{}\", joined);\n");
                 } else {
-                    // Expand simple $VAR or ${VAR} references
-                    output.push_str("let mut __echo_parts: Vec<String> = Vec::new();\n");
-                    for arg in &cmd.args {
-                        if let Some(name) = Self::extract_var_name(arg) {
-                            output.push_str(&format!("__echo_parts.push(std::env::var(\"{}\").unwrap_or_default());\n", name));
-                        } else {
-                            let escaped = self.escape_rust_string(arg);
-                            output.push_str(&format!("__echo_parts.push(\"{}\".to_string());\n", escaped));
+                    // Check if we have any variables to expand
+                    let has_vars = cmd.args.iter().any(|arg| Self::extract_var_name(arg).is_some());
+                    
+                    if !has_vars && cmd.args.len() == 1 {
+                        // Simple case: single literal string
+                        let escaped = self.escape_rust_string(&cmd.args[0]);
+                        output.push_str(&format!("println!(\"{}\");\n", escaped));
+                    } else if !has_vars {
+                        // Multiple literal strings - join them with space
+                        let escaped = cmd.args.iter()
+                            .map(|arg| self.escape_rust_string(arg))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        output.push_str(&format!("println!(\"{}\");\n", escaped));
+                    } else {
+                        // Complex case with variables - use Vec approach
+                        output.push_str("let __echo_parts: Vec<String> = vec![\n");
+                        for arg in &cmd.args {
+                            if let Some(name) = Self::extract_var_name(arg) {
+                                output.push_str(&format!("    std::env::var(\"{}\").unwrap_or_default(),\n", name));
+                            } else {
+                                let escaped = self.escape_rust_string(arg);
+                                output.push_str(&format!("    \"{}\".to_string(),\n", escaped));
+                            }
                         }
+                        output.push_str("];\n");
+                        output.push_str("println!(\"{}\", __echo_parts.join(\" \"));\n");
                     }
-                    output.push_str("println!(\"{}\", __echo_parts.join(\" \"));\n");
+                    // Ensure success status
+                    output.push_str("/* success */\n");
                 }
             }
         } else if cmd.name == "[[" {
@@ -106,66 +177,115 @@ impl RustGenerator {
         } else if cmd.name == "ls" {
             // Special handling for ls
             let args = if cmd.args.is_empty() { "." } else { &cmd.args[0] };
-            output.push_str(&format!("for entry in fs::read_dir(\"{}\")? {{\n", args));
+            output.push_str(&format!("match fs::read_dir(\"{}\") {{\n", args));
             output.push_str(&self.indent());
-            output.push_str("    let entry = entry?;\n");
+            output.push_str("    Ok(entries) => {\n");
             output.push_str(&self.indent());
-            output.push_str("    let file_name = entry.file_name();\n");
+            output.push_str("        for entry in entries {\n");
             output.push_str(&self.indent());
-            output.push_str("    if let Some(name) = file_name.to_str() {\n");
+            output.push_str("            if let Ok(entry) = entry {\n");
             output.push_str(&self.indent());
-            output.push_str("        if name != \".\" && name != \"..\" {\n");
+            output.push_str("                let file_name = entry.file_name();\n");
             output.push_str(&self.indent());
-            output.push_str("            println!(\"{}\", name);\n");
+            output.push_str("                if let Some(name) = file_name.to_str() {\n");
+            output.push_str(&self.indent());
+            output.push_str("                    if name != \".\" && name != \"..\" {\n");
+            output.push_str(&self.indent());
+            output.push_str("                        println!(\"{}\", name);\n");
+            output.push_str(&self.indent());
+            output.push_str("                    }\n");
+            output.push_str(&self.indent());
+            output.push_str("                }\n");
+            output.push_str(&self.indent());
+            output.push_str("            }\n");
             output.push_str(&self.indent());
             output.push_str("        }\n");
             output.push_str(&self.indent());
             output.push_str("    }\n");
+            output.push_str(&self.indent());
+            output.push_str("    Err(_) => return std::process::ExitCode::FAILURE,\n");
             output.push_str("}\n");
         } else if cmd.name == "grep" {
             // Special handling for grep
             if cmd.args.len() >= 2 {
                 let pattern = &cmd.args[0];
                 let file = &cmd.args[1];
-                output.push_str(&format!("let content = fs::read_to_string(\"{}\")?;\n", file));
-                output.push_str("for line in content.lines() {\n");
+                output.push_str(&format!("match fs::read_to_string(\"{}\") {{\n", file));
                 output.push_str(&self.indent());
-                output.push_str(&format!("    if line.contains(\"{}\") {{\n", pattern));
+                output.push_str("    Ok(content) => {\n");
                 output.push_str(&self.indent());
-                output.push_str("        println!(\"{}\", line);\n");
+                output.push_str("        for line in content.lines() {\n");
+                output.push_str(&self.indent());
+                output.push_str(&format!("            if line.contains(\"{}\") {{\n", pattern));
+                output.push_str(&self.indent());
+                output.push_str("                println!(\"{}\", line);\n");
+                output.push_str(&self.indent());
+                output.push_str("            }\n");
+                output.push_str(&self.indent());
+                output.push_str("        }\n");
                 output.push_str(&self.indent());
                 output.push_str("    }\n");
+                output.push_str(&self.indent());
+                output.push_str("    Err(_) => return std::process::ExitCode::FAILURE,\n");
                 output.push_str("}\n");
             }
         } else if cmd.name == "cat" {
-            // Special handling for cat
-            for arg in &cmd.args {
-                output.push_str(&format!("let content = fs::read_to_string(\"{}\")?;\n", arg));
-                output.push_str("print!(\"{}\", content);\n");
+            // Special handling for cat including heredocs
+            let mut printed_any = false;
+            for redir in &cmd.redirects {
+                if matches!(redir.operator, RedirectOperator::Heredoc | RedirectOperator::HeredocTabs) {
+                    if let Some(body) = &redir.heredoc_body {
+                        let esc = self.escape_rust_string(body);
+                        output.push_str(&format!("print!(\"{}\");\n", esc));
+                        printed_any = true;
+                    }
+                }
+            }
+            if !printed_any {
+                for arg in &cmd.args {
+                    output.push_str(&format!("match fs::read_to_string(\"{}\") {{\n", arg));
+                    output.push_str(&self.indent());
+                    output.push_str("    Ok(content) => print!(\"{}\", content),\n");
+                    output.push_str(&self.indent());
+                    output.push_str("    Err(_) => return std::process::ExitCode::FAILURE,\n");
+                    output.push_str("}\n");
+                }
             }
         } else if cmd.name == "mkdir" {
             // Special handling for mkdir
             for arg in &cmd.args {
-                output.push_str(&format!("fs::create_dir_all(\"{}\")?;\n", arg));
+                output.push_str(&format!("if let Err(_) = fs::create_dir_all(\"{}\") {{\n", arg));
+                output.push_str(&self.indent());
+                output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                output.push_str("}\n");
             }
         } else if cmd.name == "rm" {
             // Special handling for rm
             for arg in &cmd.args {
-                output.push_str(&format!("fs::remove_file(\"{}\")?;\n", arg));
+                output.push_str(&format!("if let Err(_) = fs::remove_file(\"{}\") {{\n", arg));
+                output.push_str(&self.indent());
+                output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                output.push_str("}\n");
             }
         } else if cmd.name == "mv" {
             // Special handling for mv
             if cmd.args.len() >= 2 {
                 let src = &cmd.args[0];
                 let dst = &cmd.args[1];
-                output.push_str(&format!("fs::rename(\"{}\", \"{}\")?;\n", src, dst));
+                output.push_str(&format!("if let Err(_) = fs::rename(\"{}\", \"{}\") {{\n", src, dst));
+                output.push_str(&self.indent());
+                output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                output.push_str("}\n");
             }
         } else if cmd.name == "cp" {
             // Special handling for cp
             if cmd.args.len() >= 2 {
                 let src = &cmd.args[0];
                 let dst = &cmd.args[1];
-                output.push_str(&format!("fs::copy(\"{}\", \"{}\")?;\n", src, dst));
+                output.push_str(&format!("if let Err(_) = fs::copy(\"{}\", \"{}\") {{\n", src, dst));
+                output.push_str(&self.indent());
+                output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                output.push_str("}\n");
             }
         } else if cmd.name == "read" {
             // Read a line from stdin into a variable
@@ -253,13 +373,26 @@ impl RustGenerator {
             output.push_str("}\n");
         } else {
             // For loop with items
-            let items_str = for_loop.items.iter().map(|item| format!("\"{}\"", item)).collect::<Vec<_>>().join(", ");
-            output.push_str(&format!("for {} in &[{}] {{\n", for_loop.variable, items_str));
-            self.indent_level += 1;
-            output.push_str(&self.indent());
-            output.push_str(&self.generate_command(&for_loop.body));
-            self.indent_level -= 1;
-            output.push_str("}\n");
+            if for_loop.items.len() == 1 && (for_loop.items[0] == "$@" || for_loop.items[0] == "${@}") {
+                // Special case: iterate over command line arguments
+                output.push_str("for arg in std::env::args().skip(1) {\n");
+                self.indent_level += 1;
+                output.push_str(&self.indent());
+                output.push_str(&format!("let {} = arg;\n", for_loop.variable));
+                output.push_str(&self.indent());
+                output.push_str(&self.generate_command(&for_loop.body));
+                self.indent_level -= 1;
+                output.push_str("}\n");
+            } else {
+                // Regular for loop with items
+                let items_str = for_loop.items.iter().map(|item| format!("\"{}\"", item)).collect::<Vec<_>>().join(", ");
+                output.push_str(&format!("for {} in &[{}] {{\n", for_loop.variable, items_str));
+                self.indent_level += 1;
+                output.push_str(&self.indent());
+                output.push_str(&self.generate_command(&for_loop.body));
+                self.indent_level -= 1;
+                output.push_str("}\n");
+            }
         }
         
         output
@@ -362,10 +495,17 @@ impl RustGenerator {
     fn indent_block(&self, s: &str) -> String {
         let prefix = self.indent();
         let mut out = String::new();
+        let mut last_was_blank = false;
         for line in s.lines() {
+            let is_blank = line.trim().is_empty();
+            // Skip consecutive blank lines
+            if is_blank && last_was_blank {
+                continue;
+            }
             out.push_str(&prefix);
             out.push_str(line);
             out.push('\n');
+            last_was_blank = is_blank;
         }
         out
     }
@@ -374,11 +514,14 @@ impl RustGenerator {
         // First, unescape any \" sequences to " to avoid double-escaping
         let unescaped = s.replace("\\\"", "\"");
         // Then escape quotes and other characters for Rust
-        unescaped.replace("\\", "\\\\")
-                 .replace("\"", "\\\"")
-                 .replace("\n", "\\n")
-                 .replace("\r", "\\r")
-                 .replace("\t", "\\t")
+        let escaped = unescaped
+            .replace("\\", "\\\\")  // Must escape backslashes first
+            .replace("\"", "\\\"")  // Then escape quotes
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t");
+        // For single quotes, no escaping needed in Rust strings
+        escaped
     }
 }
 

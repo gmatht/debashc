@@ -108,11 +108,23 @@ impl PythonGenerator {
                 output.push_str("            print(line.rstrip())\n");
             }
         } else if cmd.name == "cat" {
-            // Special handling for cat
-            for arg in &cmd.args {
-                output.push_str(&format!("with open('{}', 'r') as f:\n", arg));
-                output.push_str(&self.indent());
-                output.push_str("    print(f.read(), end='')\n");
+            // Special handling for cat including heredocs
+            let mut printed_any = false;
+            for redir in &cmd.redirects {
+                if matches!(redir.operator, RedirectOperator::Heredoc | RedirectOperator::HeredocTabs) {
+                    if let Some(body) = &redir.heredoc_body {
+                        let escaped = self.escape_python_string(body);
+                        output.push_str(&format!("print({}, end='')\n", escaped));
+                        printed_any = true;
+                    }
+                }
+            }
+            if !printed_any {
+                for arg in &cmd.args {
+                    output.push_str(&format!("with open('{}', 'r') as f:\n", arg));
+                    output.push_str(&self.indent());
+                    output.push_str("    print(f.read(), end='')\n");
+                }
             }
         } else if cmd.name == "mkdir" {
             // Special handling for mkdir
@@ -290,8 +302,13 @@ impl PythonGenerator {
             self.indent_level -= 1;
         } else {
             // For loop with items
-            let items_str = for_loop.items.iter().map(|item| format!("'{}'", item)).collect::<Vec<_>>().join(", ");
-            output.push_str(&format!("for {} in [{}]:\n", for_loop.variable, items_str));
+            if for_loop.items.len() == 1 && (for_loop.items[0] == "$@" || for_loop.items[0] == "${@}") {
+                // Special case for iterating over arguments
+                output.push_str(&format!("for {} in sys.argv[1:]:\n", for_loop.variable));
+            } else {
+                let items_str = for_loop.items.iter().map(|item| format!("'{}'", item)).collect::<Vec<_>>().join(", ");
+                output.push_str(&format!("for {} in [{}]:\n", for_loop.variable, items_str));
+            }
             self.indent_level += 1;
             output.push_str(&self.indent());
             output.push_str(&self.generate_command(&for_loop.body));

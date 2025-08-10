@@ -431,6 +431,10 @@ impl Lexer {
 }
 
 impl Lexer {
+    pub fn get_input(&self) -> &str {
+        &self.input
+    }
+
     pub fn offset_to_line_col(&self, offset: usize) -> (usize, usize) {
         if self.line_starts.is_empty() {
             return (1, offset + 1);

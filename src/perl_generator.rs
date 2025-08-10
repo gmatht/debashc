@@ -119,13 +119,26 @@ impl PerlGenerator {
                 output.push_str("close($fh);\n");
             }
         } else if cmd.name == "cat" {
-            // Special handling for cat
-            for arg in &cmd.args {
-                output.push_str(&format!("open(my $fh, '<', '{}') or die \"Cannot open file: $!\\n\";\n", arg));
-                output.push_str("while (my $line = <$fh>) {\n");
-                output.push_str("    print($line);\n");
-                output.push_str("}\n");
-                output.push_str("close($fh);\n");
+            // Special handling for cat including heredocs
+            // If there are heredoc redirects attached, emit their bodies inline
+            let mut printed_any = false;
+            for redir in &cmd.redirects {
+                if matches!(redir.operator, RedirectOperator::Heredoc | RedirectOperator::HeredocTabs) {
+                    if let Some(body) = &redir.heredoc_body {
+                        let escaped = body.replace("\\", "\\\\").replace("\"", "\\\"");
+                        output.push_str(&format!("print(\"{}\");\n", escaped));
+                        printed_any = true;
+                    }
+                }
+            }
+            if !printed_any {
+                for arg in &cmd.args {
+                    output.push_str(&format!("open(my $fh, '<', '{}') or die \"Cannot open file: $!\\n\";\n", arg));
+                    output.push_str("while (my $line = <$fh>) {\n");
+                    output.push_str("    print($line);\n");
+                    output.push_str("}\n");
+                    output.push_str("close($fh);\n");
+                }
             }
         } else if cmd.name == "mkdir" {
             // Special handling for mkdir
