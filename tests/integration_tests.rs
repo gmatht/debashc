@@ -15,6 +15,20 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use std::thread;
 use std::sync::mpsc;
+use std::path::PathBuf;
+
+fn list_sh_examples() -> Vec<PathBuf> {
+    let mut examples: Vec<PathBuf> = Vec::new();
+    if let Ok(entries) = fs::read_dir("examples") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("sh") {
+                examples.push(path);
+            }
+        }
+    }
+    examples
+}
 
 #[test]
 fn test_simple_command_lexing() {
@@ -917,76 +931,51 @@ fn test_example_test_quoted_sh_to_rust() {
 
 #[test]
 fn test_all_examples_parse_successfully() {
-    let examples = vec![
-        "examples/simple.sh",
-        "examples/pipeline.sh", 
-        "examples/control_flow.sh",
-        "examples/test_quoted.sh",
-        "examples/gnu_bash_extensions.sh",
-        "examples/args.sh",
-        "examples/misc.sh",
-    ];
-    
-    for example in examples {
-        if example.contains("control_flow.sh") { continue; }
-        let content = fs::read_to_string(example).expect(&format!("Failed to read {}", example));
+    for path in list_sh_examples() {
+        let file_name = path.file_name().unwrap().to_str().unwrap();
+        if file_name.contains("control_flow.sh") { continue; }
+        let content = fs::read_to_string(&path).expect(&format!("Failed to read {}", file_name));
         let mut parser = Parser::new(&content);
         let result = parser.parse();
-        assert!(result.is_ok(), "Failed to parse {}: {:?}", example, result.err());
+        assert!(result.is_ok(), "Failed to parse {}: {:?}", file_name, result.err());
     }
 }
 
 #[test]
 fn test_all_examples_generate_perl() {
-    let examples = vec![
-        "examples/simple.sh",
-        "examples/pipeline.sh", 
-        "examples/control_flow.sh",
-        "examples/test_quoted.sh",
-        "examples/gnu_bash_extensions.sh",
-        "examples/args.sh",
-        "examples/misc.sh",
-    ];
-    
-    for example in examples {
-        if example.contains("control_flow.sh") { continue; }
-        let content = fs::read_to_string(example).expect(&format!("Failed to read {}", example));
+    for path in list_sh_examples() {
+        let file_name = path.file_name().unwrap().to_str().unwrap();
+        if file_name.contains("control_flow.sh") { continue; }
+        let content = fs::read_to_string(&path).expect(&format!("Failed to read {}", file_name));
         let mut parser = Parser::new(&content);
-        let commands = parser.parse().expect(&format!("Failed to parse {}", example));
+        let commands = parser.parse().expect(&format!("Failed to parse {}", file_name));
         
         let mut generator = PerlGenerator::new();
         let perl_code = generator.generate(&commands);
         
         // Basic checks that Perl code is generated
-        assert!(perl_code.contains("#!/usr/bin/env perl"), "Perl code missing shebang for {}", example);
-        assert!(perl_code.contains("use strict;"), "Perl code missing strict for {}", example);
-        assert!(perl_code.contains("use warnings;"), "Perl code missing warnings for {}", example);
+        assert!(perl_code.contains("#!/usr/bin/env perl"), "Perl code missing shebang for {}", file_name);
+        assert!(perl_code.contains("use strict;"), "Perl code missing strict for {}", file_name);
+        assert!(perl_code.contains("use warnings;"), "Perl code missing warnings for {}", file_name);
     }
 }
 
 #[test]
 fn test_all_examples_generate_rust() {
-    let examples = vec![
-        "examples/simple.sh",
-        "examples/pipeline.sh", 
-        "examples/control_flow.sh",
-        "examples/test_quoted.sh",
-        "examples/gnu_bash_extensions.sh",
-    ];
-    
-    for example in examples {
-        if example.contains("control_flow.sh") { continue; }
-        let content = fs::read_to_string(example).expect(&format!("Failed to read {}", example));
+    for path in list_sh_examples() {
+        let file_name = path.file_name().unwrap().to_str().unwrap();
+        if file_name.contains("control_flow.sh") { continue; }
+        let content = fs::read_to_string(&path).expect(&format!("Failed to read {}", file_name));
         let mut parser = Parser::new(&content);
-        let commands = parser.parse().expect(&format!("Failed to parse {}", example));
+        let commands = parser.parse().expect(&format!("Failed to parse {}", file_name));
         
         let mut generator = RustGenerator::new();
         let rust_code = generator.generate(&commands);
         
         // Basic checks that Rust code is generated
-        assert!(rust_code.contains("use std::process::Command;"), "Rust code missing Command import for {}", example);
-        assert!(rust_code.contains("fn main()"), "Rust code missing main function for {}", example);
-        assert!(rust_code.contains("Result<(), Box<dyn std::error::Error>>"), "Rust code missing Result type for {}", example);
+        assert!(rust_code.contains("use std::process::Command;"), "Rust code missing Command import for {}", file_name);
+        assert!(rust_code.contains("fn main()"), "Rust code missing main function for {}", file_name);
+        assert!(rust_code.contains("Result<(), Box<dyn std::error::Error>>"), "Rust code missing Result type for {}", file_name);
     }
 }
 
