@@ -1068,7 +1068,7 @@ fn test_examples_output_equivalence() {
             .expect("Failed to spawn shell script");
         let start = std::time::Instant::now();
         let shell_output = loop {
-            if let Some(status) = shell_child.try_wait().expect("wait on shell child failed") {
+            if let Some(_status) = shell_child.try_wait().expect("wait on shell child failed") {
                 let output = shell_child.wait_with_output().expect("read shell output");
                 break Ok(output);
             }

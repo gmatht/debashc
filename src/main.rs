@@ -14,7 +14,7 @@ mod powershell_generator;
 
 use lexer::*;
 use parser::*;
-use ast::*;
+// use ast::*; // not needed at top-level
 use perl_generator::*;
 use rust_generator::*;
 use python_generator::*;
@@ -289,10 +289,24 @@ fn run_generated(lang: &str, input: &str) {
             let tmp = "__tmp_run.rs";
             if fs::write(tmp, &code).is_ok() {
                 let out = "__tmp_run_bin";
-                let compile = std::process::Command::new("rustc").arg("--edition=2021").arg(tmp).arg("-o").arg(out).status();
+                let compile = std::process::Command::new("rustc")
+                    .arg("--edition=2021").arg(tmp).arg("-o").arg(out)
+                    .status();
                 if compile.map(|s| s.success()).unwrap_or(false) {
-                    let _ = std::process::Command::new(if cfg!(windows) { format!("{}.exe", out) } else { out.to_string() }).status();
-                    if cfg!(windows) { let _ = fs::remove_file(format!("{}.exe", out)); } else { let _ = fs::remove_file(out); }
+                    let abs = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                        .join(out);
+                    match std::process::Command::new(&abs).output() {
+                        Ok(child_out) => {
+                            if !child_out.stdout.is_empty() { let _ = std::io::stdout().write_all(&child_out.stdout); }
+                            if !child_out.stderr.is_empty() { let _ = std::io::stderr().write_all(&child_out.stderr); }
+                        }
+                        Err(e) => { eprintln!("Failed to run compiled Rust binary: {}", e); }
+                    }
+                    let _ = fs::remove_file(out);
+                    if cfg!(windows) {
+                        let _ = fs::remove_file(format!("{}.exe", out));
+                        let _ = fs::remove_file(format!("{}.pdb", out));
+                    }
                 }
                 let _ = fs::remove_file(tmp);
             }

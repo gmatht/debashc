@@ -163,6 +163,7 @@ pub enum Token {
     DollarAtSimple,
     #[token("$*")]
     DollarStarSimple,
+    // Backtick token not currently used
     #[token("`", priority = 1)]
     Backtick,
     #[token("${#")]

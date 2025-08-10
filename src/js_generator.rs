@@ -1,13 +1,9 @@
 use crate::ast::*;
 
-pub struct JsGenerator {
-    indent_level: usize,
-}
+pub struct JsGenerator {}
 
 impl JsGenerator {
-    pub fn new() -> Self {
-        Self { indent_level: 0 }
-    }
+    pub fn new() -> Self { Self {} }
 
     pub fn generate(&mut self, commands: &[Command]) -> String {
         let mut output = String::new();

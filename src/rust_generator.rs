@@ -75,9 +75,17 @@ impl RustGenerator {
                     output.push_str("let joined = std::env::args().skip(1).collect::<Vec<_>>().join(\" \" );\n");
                     output.push_str("println!(\"{}\", joined);\n");
                 } else {
-                    let args = cmd.args.join(" ");
-                    let escaped_args = self.escape_rust_string(&args);
-                    output.push_str(&format!("println!(\"{}\");\n", escaped_args));
+                    // Expand simple $VAR or ${VAR} references
+                    output.push_str("let mut __echo_parts: Vec<String> = Vec::new();\n");
+                    for arg in &cmd.args {
+                        if let Some(name) = Self::extract_var_name(arg) {
+                            output.push_str(&format!("__echo_parts.push(std::env::var(\"{}\").unwrap_or_default());\n", name));
+                        } else {
+                            let escaped = self.escape_rust_string(arg);
+                            output.push_str(&format!("__echo_parts.push(\"{}\".to_string());\n", escaped));
+                        }
+                    }
+                    output.push_str("println!(\"{}\", __echo_parts.join(\" \"));\n");
                 }
             }
         } else if cmd.name == "[[" {
@@ -270,12 +278,20 @@ impl RustGenerator {
 
     fn generate_subshell(&mut self, command: &Command) -> String {
         let mut output = String::new();
-        // Run subshell inline (foreground)
+        // Emulate subshell by snapshotting and restoring environment
         output.push_str("{\n");
+        output.push_str("    let __backup_env: std::collections::HashMap<String,String> = std::env::vars().collect();\n");
         self.indent_level += 1;
         let inner_chunk = self.generate_command(command);
         output.push_str(&self.indent_block(&inner_chunk));
         self.indent_level -= 1;
+        output.push_str("    {\n");
+        output.push_str("        use std::collections::{HashMap, HashSet};\n");
+        output.push_str("        let __current_keys: HashSet<String> = std::env::vars().map(|(k, _)| k).collect();\n");
+        output.push_str("        let __backup_keys: HashSet<String> = __backup_env.keys().cloned().collect();\n");
+        output.push_str("        for k in __current_keys.difference(&__backup_keys) { std::env::remove_var(k); }\n");
+        output.push_str("        for (k,v) in __backup_env.into_iter() { std::env::set_var(k, v); }\n");
+        output.push_str("    }\n");
         output.push_str("}\n");
         output
     }
@@ -360,6 +376,20 @@ impl RustGenerator {
                  .replace("\n", "\\n")
                  .replace("\r", "\\r")
                  .replace("\t", "\\t")
+    }
+}
+
+impl RustGenerator {
+    fn extract_var_name(arg: &str) -> Option<String> {
+        if let Some(stripped) = arg.strip_prefix("$") {
+            if stripped.starts_with('{') && stripped.ends_with('}') && stripped.len() >= 3 {
+                return Some(stripped[1..stripped.len()-1].to_string());
+            }
+            if !stripped.is_empty() {
+                return Some(stripped.to_string());
+            }
+        }
+        None
     }
 }
 

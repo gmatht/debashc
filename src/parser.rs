@@ -1070,7 +1070,7 @@ impl Parser {
         // consume '{'
         self.lexer.next();
         let mut depth: i32 = 1;
-        let mut last_end = start;
+        let mut last_end: Option<usize> = None;
 
         loop {
             if self.lexer.is_eof() {
@@ -1088,7 +1088,7 @@ impl Parser {
                 }
                 // consume current token
                 self.lexer.next();
-                last_end = end;
+                last_end = Some(end);
 
                 if depth == 0 {
                     break;
@@ -1099,7 +1099,8 @@ impl Parser {
         }
 
         // Return substring including the braces
-        Ok(self.lexer.get_text(start, last_end))
+        let end_final = last_end.unwrap_or(start);
+        Ok(self.lexer.get_text(start, end_final))
     }
 
     fn get_identifier_text(&mut self) -> Result<String, ParserError> {
@@ -1190,7 +1191,7 @@ impl Parser {
         }
         let (start, _end) = self.lexer.get_span().ok_or(ParserError::UnexpectedEOF)?;
         let mut depth: i32 = 0;
-        let mut last_end = start;
+        let mut last_end: Option<usize> = None;
         loop {
             if let Some((_, end)) = self.lexer.get_span() {
                 match self.lexer.peek() {
@@ -1198,12 +1199,13 @@ impl Parser {
                     Some(Token::ParenClose) => depth -= 1,
                     _ => {}
                 }
-                last_end = end;
+                last_end = Some(end);
                 self.lexer.next();
                 if depth == 0 { break; }
             } else { return Err(ParserError::UnexpectedEOF); }
         }
-        Ok(self.lexer.get_text(start, last_end))
+        let end_final = last_end.unwrap_or(start);
+        Ok(self.lexer.get_text(start, end_final))
     }
 
     fn capture_double_bracket_expression(&mut self) -> Result<String, ParserError> {
