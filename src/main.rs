@@ -42,7 +42,6 @@ struct TestResult {
     translated_stderr: String,
     shell_exit: i32,
     translated_exit: i32,
-    error_msg: Option<String>,
 }
 
 fn main() {
@@ -267,7 +266,7 @@ fn main() {
                 }
                 let lang = &args[3];
                 let filename = &args[4];
-                test_file_equivalence(lang, filename);
+                let _ = test_file_equivalence(lang, filename);
             } else if args.len() >= 3 && args[2] == "--run" {
                 if args.len() < 5 {
                     println!("Error: file --run <perl|python|rust|lua|js|ps> <filename>");
@@ -288,7 +287,7 @@ fn main() {
             }
             let lang = &args[2];
             let filename = &args[3];
-            test_file_equivalence(lang, filename);
+            let _ = test_file_equivalence(lang, filename);
         }
         "interactive" => {
             interactive_mode();
@@ -709,12 +708,6 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str) -> Result<TestResu
     let trans_success = translated_output.status.success();
 
     let success = shell_success == trans_success && shell_stdout == trans_stdout && shell_stderr == trans_stderr;
-    
-    let error_msg = if !success {
-        Some(format!("Mismatch detected (lang: {}, file: {})", lang, filename))
-    } else {
-        None
-    };
 
     Ok(TestResult {
         success,
@@ -724,7 +717,6 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str) -> Result<TestResu
         translated_stderr: trans_stderr,
         shell_exit: shell_output.status.code().unwrap_or(-1),
         translated_exit: translated_output.status.code().unwrap_or(-1),
-        error_msg,
     })
 }
 
@@ -1298,6 +1290,20 @@ fn test_all_examples() {
     println!("{}", "=".repeat(80));
 }
 
+/// Truncate output to specified number of lines, adding ellipsis if truncated
+fn truncate_output(output: &str, max_lines: usize) -> String {
+    let lines: Vec<&str> = output.lines().collect();
+    if lines.len() <= max_lines {
+        output.to_string()
+    } else {
+        let mut result = lines[..max_lines].join("\n");
+        result.push_str("\n... (truncated, showing first ");
+        result.push_str(&max_lines.to_string());
+        result.push_str(" lines)");
+        result
+    }
+}
+
 fn test_all_examples_next_fail() {
     let all_generators = vec!["perl", "python", "rust", "lua", "js", "ps"];
     
@@ -1380,16 +1386,16 @@ fn test_all_examples_next_fail() {
                         // Show stdout diff
                         println!("\nSTDOUT Comparison:");
                         println!("Shell script stdout:");
-                        println!("{}", result.shell_stdout);
+                        println!("{}", truncate_output(&result.shell_stdout, 10));
                         println!("\nTranslated code stdout:");
-                        println!("{}", result.translated_stdout);
+                        println!("{}", truncate_output(&result.translated_stdout, 10));
                         
                         // Show stderr diff
                         println!("\nSTDERR Comparison:");
                         println!("Shell script stderr:");
-                        println!("{}", result.shell_stderr);
+                        println!("{}", truncate_output(&result.shell_stderr, 10));
                         println!("\nTranslated code stderr:");
-                        println!("{}", result.translated_stderr);
+                        println!("{}", truncate_output(&result.translated_stderr, 10));
                         
                         // Show summary
                         println!("\n{}", "=".repeat(80));
