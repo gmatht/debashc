@@ -678,6 +678,67 @@ fn test_generators_double_bracket_is_builtin() {
 }
 
 #[test]
+fn test_generators_shopt_is_builtin_no_output() {
+    let input = "shopt -s nocasematch";
+
+    // Perl
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    let mut perl = PerlGenerator::new();
+    let perl_code = perl.generate(&commands);
+    assert!(!perl_code.to_lowercase().contains("shopt"), "Perl should not emit shopt: {}", perl_code);
+
+    // Python
+    let mut parser2 = Parser::new(input);
+    let commands2 = parser2.parse().unwrap();
+    let mut py = PythonGenerator::new();
+    let py_code = py.generate(&commands2);
+    assert!(!py_code.to_lowercase().contains("shopt"), "Python should not emit shopt: {}", py_code);
+
+    // Rust
+    let mut parser3 = Parser::new(input);
+    let commands3 = parser3.parse().unwrap();
+    let mut rs = RustGenerator::new();
+    let rs_code = rs.generate(&commands3);
+    assert!(!rs_code.to_lowercase().contains("shopt"), "Rust should not emit shopt: {}", rs_code);
+
+    // C
+    let mut parser4 = Parser::new(input);
+    let commands4 = parser4.parse().unwrap();
+    let mut cgen = CGenerator::new();
+    let c_code = cgen.generate(&commands4);
+    assert!(!c_code.to_lowercase().contains("shopt"), "C should not emit shopt: {}", c_code);
+
+    // JS
+    let mut parser5 = Parser::new(input);
+    let commands5 = parser5.parse().unwrap();
+    let mut jsg = JsGenerator::new();
+    let js_code = jsg.generate(&commands5);
+    assert!(!js_code.to_lowercase().contains("shopt"), "JS should not emit shopt: {}", js_code);
+
+    // Lua
+    let mut parser6 = Parser::new(input);
+    let commands6 = parser6.parse().unwrap();
+    let mut luag = LuaGenerator::new();
+    let lua_code = luag.generate(&commands6);
+    assert!(!lua_code.to_lowercase().contains("shopt"), "Lua should not emit shopt: {}", lua_code);
+
+    // Batch
+    let mut parser7 = Parser::new(input);
+    let commands7 = parser7.parse().unwrap();
+    let mut batg = BatchGenerator::new();
+    let bat_code = batg.generate(&commands7);
+    assert!(!bat_code.to_lowercase().contains("shopt"), "Batch should not emit shopt: {}", bat_code);
+
+    // PowerShell
+    let mut parser8 = Parser::new(input);
+    let commands8 = parser8.parse().unwrap();
+    let mut psg = PowerShellGenerator::new();
+    let ps_code = psg.generate(&commands8);
+    assert!(!ps_code.to_lowercase().contains("shopt"), "PowerShell should not emit shopt: {}", ps_code);
+}
+
+#[test]
 fn test_python_generator_args_handling() {
     let input = "echo $#";
     let mut parser = Parser::new(input);
@@ -954,7 +1015,7 @@ fn test_example_test_quoted_sh_to_rust() {
 fn test_all_examples_parse_successfully() {
     for path in list_sh_examples() {
         let file_name = path.file_name().unwrap().to_str().unwrap();
-        if file_name.contains("control_flow.sh") { continue; }
+        //if file_name.contains("control_flow.sh") { continue; }
         let content = fs::read_to_string(&path).expect(&format!("Failed to read {}", file_name));
         let mut parser = Parser::new(&content);
         let result = parser.parse();
@@ -966,7 +1027,7 @@ fn test_all_examples_parse_successfully() {
 fn test_all_examples_generate_perl() {
     for path in list_sh_examples() {
         let file_name = path.file_name().unwrap().to_str().unwrap();
-        if file_name.contains("control_flow.sh") { continue; }
+        //if file_name.contains("control_flow.sh") { continue; }
         let content = fs::read_to_string(&path).expect(&format!("Failed to read {}", file_name));
         let mut parser = Parser::new(&content);
         let commands = parser.parse().expect(&format!("Failed to parse {}", file_name));
@@ -985,7 +1046,7 @@ fn test_all_examples_generate_perl() {
 fn test_all_examples_generate_rust() {
     for path in list_sh_examples() {
         let file_name = path.file_name().unwrap().to_str().unwrap();
-        if file_name.contains("control_flow.sh") { continue; }
+        //if file_name.contains("control_flow.sh") { continue; }
         let content = fs::read_to_string(&path).expect(&format!("Failed to read {}", file_name));
         let mut parser = Parser::new(&content);
         let commands = parser.parse().expect(&format!("Failed to parse {}", file_name));
@@ -1047,9 +1108,9 @@ fn test_examples_output_equivalence() {
         };
         
         // Parse and generate Perl code (skip control_flow, GNU extensions, local.sh)
-        if file_name == "control_flow.sh"
-            || file_name == "gnu_bash_extensions.sh"
-            || file_name == "local.sh" { continue; }
+        //if file_name == "control_flow.sh"
+        //    || file_name == "gnu_bash_extensions.sh"
+        //    || file_name == "local.sh" { continue; }
         let mut parser = Parser::new(&shell_content);
         let commands = match parser.parse() {
             Ok(commands) => commands,
