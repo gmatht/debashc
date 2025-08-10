@@ -48,8 +48,8 @@ impl PythonGenerator {
         }
 
         // Generate the command
-        if cmd.name == "true" {
-            // Builtin true: successful no-op
+        if cmd.name == "true" && cmd.env_vars.is_empty() {
+            // Builtin true: successful no-op (only when no env vars)
             output.push_str("pass\n");
         } else if cmd.name == "false" {
             // Builtin false: represent failure by exiting non-zero
@@ -164,8 +164,12 @@ impl PythonGenerator {
             self.generate_test_command(cmd, &mut output);
         } else {
             // Generic command
-            let args_str = cmd.args.iter().map(|arg| format!("'{}'", arg)).collect::<Vec<_>>().join(", ");
-            output.push_str(&format!("subprocess.run(['{}', {}])\n", cmd.name, args_str));
+            if cmd.args.is_empty() {
+                output.push_str(&format!("subprocess.run(['{}'])\n", cmd.name));
+            } else {
+                let args_str = cmd.args.iter().map(|arg| format!("'{}'", arg)).collect::<Vec<_>>().join(", ");
+                output.push_str(&format!("subprocess.run(['{}', {}])\n", cmd.name, args_str));
+            }
         }
 
         output
@@ -364,7 +368,10 @@ impl PythonGenerator {
         self.indent_level += 1;
         output.push_str(&self.indent());
         output.push_str("print(f'Error: {e}', file=sys.stderr)\n");
-        self.indent_level -= 2;
+        self.indent_level -= 1;
+        output.push_str(&self.indent());
+        output.push_str("pass\n");
+        self.indent_level -= 1;
         output.push_str("t = threading.Thread(target=_bg_body, daemon=True)\n");
         output.push_str("t.start()\n");
         output

@@ -792,13 +792,13 @@ fn test_generators_true_false_are_builtins() {
     assert!(!py_code.contains("subprocess.run(['true'"), "Python should not spawn true: {}", py_code);
     assert!(!py_code.contains("subprocess.run(['false'"), "Python should not spawn false: {}", py_code);
 
-    // Rust: true => comment/No-Op; false => early return Err; and no Command::new("true"/"false")
+    // Rust: true => comment/No-Op; false => early return ExitCode::FAILURE; and no Command::new("true"/"false")
     let mut parser3 = Parser::new(input);
     let commands3 = parser3.parse().unwrap();
     let mut rs = RustGenerator::new();
     let rs_code = rs.generate(&commands3);
     assert!(rs_code.contains("/* true */"), "Rust true should be a no-op: {}", rs_code);
-    assert!(rs_code.contains("return Err(\"false builtin\".into());"), "Rust false should early return error: {}", rs_code);
+    assert!(rs_code.contains("return std::process::ExitCode::FAILURE;"), "Rust false should early return ExitCode::FAILURE: {}", rs_code);
     assert!(!rs_code.contains("Command::new(\"true\")"), "Rust should not spawn true: {}", rs_code);
     assert!(!rs_code.contains("Command::new(\"false\")"), "Rust should not spawn false: {}", rs_code);
 }

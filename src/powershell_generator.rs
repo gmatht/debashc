@@ -84,11 +84,50 @@ impl PowerShellGenerator {
 
     fn if_stmt(&self, i: &IfStatement) -> String {
         let mut out = String::new();
-        out.push_str("# if condition\n");
+        // For now, implement a simple condition check
+        match &*i.condition {
+            Command::Simple(cmd) if cmd.name == "[" || cmd.name == "test" => {
+                if let Some(test_op) = cmd.args.get(0) {
+                    match test_op.as_str() {
+                        "-f" => {
+                            if let Some(file) = cmd.args.get(1) {
+                                out.push_str(&format!("if (Test-Path '{}' -PathType Leaf) {{\n", file));
+                            } else {
+                                out.push_str("if ($false) {\n");
+                            }
+                        }
+                        "-d" => {
+                            if let Some(dir) = cmd.args.get(1) {
+                                out.push_str(&format!("if (Test-Path '{}' -PathType Container) {{\n", dir));
+                            } else {
+                                out.push_str("if ($false) {\n");
+                            }
+                        }
+                        "-e" => {
+                            if let Some(path) = cmd.args.get(1) {
+                                out.push_str(&format!("if (Test-Path '{}') {{\n", path));
+                            } else {
+                                out.push_str("if ($false) {\n");
+                            }
+                        }
+                        _ => {
+                            out.push_str("if ($true) {\n");
+                        }
+                    }
+                } else {
+                    out.push_str("if ($true) {\n");
+                }
+            }
+            _ => {
+                out.push_str("if ($true) {\n");
+            }
+        }
         out.push_str(&self.emit(&i.then_branch));
         if let Some(e) = &i.else_branch {
-            out.push_str("else {\n");
+            out.push_str("} else {\n");
             out.push_str(&self.emit(e));
+            out.push_str("}\n");
+        } else {
             out.push_str("}\n");
         }
         out
@@ -103,7 +142,15 @@ impl PowerShellGenerator {
             "$#" => "$($args.Count)".to_string(),
             "$@" => "$args".to_string(),
             "$*" => "$($args -join ' ')".to_string(),
-            _ => format!("\"{}\"", arg.replace('"', "`\""))
+            _ => {
+                // Handle strings with quotes more carefully
+                if arg.contains('"') || arg.contains('$') {
+                    // Use single quotes to avoid escaping issues
+                    format!("'{}'", arg.replace("'", "''"))
+                } else {
+                    format!("\"{}\"", arg)
+                }
+            }
         }
     }
 }

@@ -17,18 +17,22 @@ impl RustGenerator {
         let mut needs_io = false;
         let mut needs_thread = false;
         let mut needs_duration = false;
+        let mut has_early_return = false;
 
-        // First pass - analyze what imports we need
+        // First pass - analyze what imports we need and check for early returns
         for command in commands {
             match command {
                 Command::Simple(cmd) => {
+                    if cmd.name == "false" {
+                        has_early_return = true;
+                    }
                     if cmd.name != "echo" && cmd.name != "true" && cmd.name != "false" {
                         needs_command = true;
                     }
-                    if cmd.name == "cd" {
+                    if cmd.name == "cd" || !cmd.env_vars.is_empty() {
                         needs_env = true;
                     }
-                    if cmd.name == "cat" || cmd.name == "ls" || cmd.name == "grep" {
+                    if cmd.name == "cat" || cmd.name == "ls" || cmd.name == "grep" || cmd.name == "wc" || cmd.name == "sort" || cmd.name == "uniq" || cmd.name == "find" || cmd.name == "xargs" {
                         needs_fs = true;
                     }
                     if cmd.name == "read" {
@@ -39,8 +43,22 @@ impl RustGenerator {
                         needs_duration = true;
                     }
                 }
+                Command::If(_) => {
+                    needs_fs = true; // If statements often use file tests
+                }
+                Command::While(_) => {
+                    needs_env = true; // While loops often use variables
+                }
+                Command::For(_) => {
+                    needs_env = true; // For loops often use variables
+                }
+                Command::Pipeline(_) => {
+                    needs_command = true; // Pipelines use external commands
+                    needs_fs = true; // Pipelines often involve file operations
+                }
                 Command::Background(_) => {
                     needs_thread = true;
+                    needs_duration = true; // Background commands often use sleep
                 }
                 _ => {}
             }
@@ -78,7 +96,10 @@ impl RustGenerator {
         }
 
         self.indent_level -= 1;
-        output.push_str("    std::process::ExitCode::SUCCESS\n");
+        // Only add success return if there's no early return
+        if !has_early_return {
+            output.push_str("    std::process::ExitCode::SUCCESS\n");
+        }
         output.push_str("}\n");
 
         while output.ends_with('\n') { output.pop(); }
@@ -107,6 +128,17 @@ impl RustGenerator {
         for (var, value) in &cmd.env_vars {
             output.push_str(&format!("env::set_var(\"{}\", \"{}\");\n", var, value));
         }
+        
+        // Handle variable assignments (e.g., i=5)
+        if cmd.name.contains('=') {
+            let parts: Vec<&str> = cmd.name.splitn(2, '=').collect();
+            if parts.len() == 2 {
+                let var_name = parts[0];
+                let var_value = parts[1];
+                output.push_str(&format!("env::set_var(\"{}\", \"{}\");\n", var_name, var_value));
+                return output;
+            }
+        }
 
         // Generate the command
         if cmd.name == "true" {
@@ -114,7 +146,7 @@ impl RustGenerator {
             output.push_str("/* true */\n");
         } else if cmd.name == "false" {
             // Builtin false: early return with error to reflect non-zero status
-            output.push_str("return Err(\"false builtin\".into());\n");
+            output.push_str("return std::process::ExitCode::FAILURE;\n");
         } else if cmd.name == "echo" {
             // Special handling for echo
             if cmd.args.is_empty() {
@@ -173,7 +205,10 @@ impl RustGenerator {
             // Special handling for cd
             let empty_string = "".to_string();
             let dir = cmd.args.first().unwrap_or(&empty_string);
-            output.push_str(&format!("env::set_current_dir(\"{}\")?;\n", dir));
+            output.push_str(&format!("if let Err(_) = env::set_current_dir(\"{}\") {{\n", dir));
+            output.push_str(&self.indent());
+            output.push_str("    return std::process::ExitCode::FAILURE;\n");
+            output.push_str("}\n");
         } else if cmd.name == "ls" {
             // Special handling for ls
             let args = if cmd.args.is_empty() { "." } else { &cmd.args[0] };
@@ -293,17 +328,32 @@ impl RustGenerator {
             // Read a line from stdin into a variable
             if let Some(var) = cmd.args.get(0) {
                 output.push_str(&format!("let mut {} = String::new();\n", var));
-                output.push_str(&format!("io::stdin().read_line(&mut {})?;\n", var));
+                output.push_str(&format!("if let Err(_) = io::stdin().read_line(&mut {}) {{\n", var));
+                output.push_str(&self.indent());
+                output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                output.push_str("}\n");
                 output.push_str(&format!("let {v} = {v}.trim().to_string();\n", v = var));
             }
         } else {
             // Generic command
-            let args_str = cmd.args.iter().map(|arg| format!("\"{}\"", arg)).collect::<Vec<_>>().join(", ");
-            output.push_str(&format!("Command::new(\"{}\")\n", cmd.name));
-            output.push_str(&self.indent());
-            output.push_str(&format!("    .args(&[{}])\n", args_str));
-            output.push_str(&self.indent());
-            output.push_str("    .status()?;\n");
+            if cmd.args.is_empty() {
+                output.push_str(&format!("if let Err(_) = Command::new(\"{}\")\n", cmd.name));
+                output.push_str(&self.indent());
+                output.push_str("    .status() {\n");
+                output.push_str(&self.indent());
+                output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                output.push_str("}\n");
+            } else {
+                let args_str = cmd.args.iter().map(|arg| format!("\"{}\"", arg)).collect::<Vec<_>>().join(", ");
+                output.push_str(&format!("if let Err(_) = Command::new(\"{}\")\n", cmd.name));
+                output.push_str(&self.indent());
+                output.push_str(&format!("    .args(&[{}])\n", args_str));
+                output.push_str(&self.indent());
+                output.push_str("    .status() {\n");
+                output.push_str(&self.indent());
+                output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                output.push_str("}\n");
+            }
         }
 
         output
@@ -348,6 +398,22 @@ impl RustGenerator {
     fn generate_while_loop(&mut self, while_loop: &WhileLoop) -> String {
         let mut output = String::new();
         
+        // Extract variable name from condition if it's a test command
+        let mut var_name = None;
+        if let Command::Simple(cmd) = &*while_loop.condition {
+            if cmd.name == "[" || cmd.name == "test" {
+                if let Some(test_op) = cmd.args.get(0) {
+                    if test_op == "-lt" || test_op == "-gt" || test_op == "-eq" || test_op == "-ne" {
+                        if let Some(var) = cmd.args.get(1) {
+                            if let Some(stripped) = var.strip_prefix("$") {
+                                var_name = Some(stripped.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
         output.push_str("while ");
         output.push_str(&self.generate_condition(&while_loop.condition));
         output.push_str(" {\n");
@@ -386,8 +452,17 @@ impl RustGenerator {
                 self.indent_level -= 1;
                 output.push_str("}\n");
             } else {
-                // Regular for loop with items
-                let items_str = for_loop.items.iter().map(|item| format!("\"{}\"", item)).collect::<Vec<_>>().join(", ");
+                // Regular for loop with items - handle brace expansion
+                let mut expanded_items = Vec::new();
+                for item in &for_loop.items {
+                    if let Some(expanded) = self.expand_brace_expression(item) {
+                        expanded_items.extend(expanded);
+                    } else {
+                        expanded_items.push(item.clone());
+                    }
+                }
+                
+                let items_str = expanded_items.iter().map(|item| format!("\"{}\"", item)).collect::<Vec<_>>().join(", ");
                 output.push_str(&format!("for {} in &[{}] {{\n", for_loop.variable, items_str));
                 self.indent_level += 1;
                 output.push_str(&self.indent());
@@ -403,12 +478,11 @@ impl RustGenerator {
     fn generate_function(&mut self, func: &Function) -> String {
         let mut output = String::new();
         
-        output.push_str(&format!("fn {}() -> Result<(), Box<dyn std::error::Error>> {{\n", func.name));
+        output.push_str(&format!("fn {}() {{\n", func.name));
         self.indent_level += 1;
         let body_chunk = self.generate_command(&func.body);
         output.push_str(&self.indent_block(&body_chunk));
         self.indent_level -= 1;
-        output.push_str("    Ok(())\n");
         output.push_str("}\n");
         
         output
@@ -480,6 +554,42 @@ impl RustGenerator {
                                     return format!("fs::metadata(\"{}\").is_ok()", path);
                                 }
                             }
+                            "-lt" => {
+                                if let Some(var) = cmd.args.get(1) {
+                                    if let Some(num) = cmd.args.get(2) {
+                                        if let Some(stripped) = var.strip_prefix("$") {
+                                            return format!("env::var(\"{}\").unwrap_or_default().parse::<i32>().unwrap_or(0) < {}", stripped, num);
+                                        }
+                                    }
+                                }
+                            }
+                            "-gt" => {
+                                if let Some(var) = cmd.args.get(1) {
+                                    if let Some(num) = cmd.args.get(2) {
+                                        if let Some(stripped) = var.strip_prefix("$") {
+                                            return format!("env::var(\"{}\").unwrap_or_default().parse::<i32>().unwrap_or(0) > {}", stripped, num);
+                                        }
+                                    }
+                                }
+                            }
+                            "-eq" => {
+                                if let Some(var) = cmd.args.get(1) {
+                                    if let Some(num) = cmd.args.get(2) {
+                                        if let Some(stripped) = var.strip_prefix("$") {
+                                            return format!("env::var(\"{}\").unwrap_or_default().parse::<i32>().unwrap_or(0) == {}", stripped, num);
+                                        }
+                                    }
+                                }
+                            }
+                            "-ne" => {
+                                if let Some(var) = cmd.args.get(1) {
+                                    if let Some(num) = cmd.args.get(2) {
+                                        if let Some(stripped) = var.strip_prefix("$") {
+                                            return format!("env::var(\"{}\").unwrap_or_default().parse::<i32>().unwrap_or(0) != {}", stripped, num);
+                                        }
+                                    }
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -524,6 +634,54 @@ impl RustGenerator {
             .replace("\t", "\\t");
         // For single quotes, no escaping needed in Rust strings
         escaped
+    }
+    
+    fn expand_brace_expression(&self, s: &str) -> Option<Vec<String>> {
+        // Handle simple numeric ranges like {1..5}
+        if let Some(range) = s.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+            if let Some((start, end)) = range.split_once("..") {
+                if let (Ok(start_num), Ok(end_num)) = (start.parse::<i32>(), end.parse::<i32>()) {
+                    let mut result = Vec::new();
+                    for i in start_num..=end_num {
+                        result.push(i.to_string());
+                    }
+                    return Some(result);
+                }
+            }
+            // Handle alphabetic ranges like {a..c}
+            if let Some((start, end)) = range.split_once("..") {
+                if start.len() == 1 && end.len() == 1 {
+                    if let (Some(start_char), Some(end_char)) = (start.chars().next(), end.chars().next()) {
+                        if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                            let mut result = Vec::new();
+                            for c in start_char..=end_char {
+                                result.push(c.to_string());
+                            }
+                            return Some(result);
+                        }
+                    }
+                }
+            }
+            // Handle step ranges like {00..04..2}
+            if let Some((range_part, step_part)) = range.split_once("..") {
+                if let Some((start, end)) = range_part.split_once("..") {
+                    if let (Ok(start_num), Ok(end_num), Ok(step)) = (
+                        start.parse::<i32>(), 
+                        end.parse::<i32>(), 
+                        step_part.parse::<i32>()
+                    ) {
+                        let mut result = Vec::new();
+                        let mut i = start_num;
+                        while i <= end_num {
+                            result.push(format!("{:02}", i)); // Zero-pad to 2 digits
+                            i += step;
+                        }
+                        return Some(result);
+                    }
+                }
+            }
+        }
+        None
     }
 }
 

@@ -192,8 +192,8 @@ impl PerlGenerator {
         } else {
             // Check if this might be a function call (not a builtin)
             let builtins = ["echo", "cd", "ls", "grep", "cat", "mkdir", "rm", "mv", "cp", "test", "[", "[[", "shopt", "export", "true", "false"];
-            if builtins.contains(&cmd.name.as_str()) {
-                // Builtin command - use system()
+            if !builtins.contains(&cmd.name.as_str()) {
+                // Non-builtin command - use system()
                 let name = self.perl_string_literal(&cmd.name);
                 let args = cmd
                     .args
@@ -294,13 +294,19 @@ impl PerlGenerator {
         if pipeline.commands.len() == 1 {
             output.push_str(&self.generate_command(&pipeline.commands[0]));
         } else if has_pipe {
-            // For now, handle simple pipelines
+            // For now, handle simple pipelines using system calls
             output.push_str("my $output;\n");
             for (i, command) in pipeline.commands.iter().enumerate() {
                 if i == 0 {
-                    output.push_str(&format!("$output = `{}`;\n", self.command_to_string(command)));
+                    // First command - capture output
+                    output.push_str(&format!("$output = qx({});\n", self.command_to_string(command)));
                 } else {
-                    output.push_str(&format!("$output = `echo \"$output\" | {}`;\n", self.command_to_string(command)));
+                    // Subsequent commands - pipe through, but handle quotes carefully
+                    let cmd_str = self.command_to_string(command);
+                    // For qx, we need to handle the command string very carefully
+                    // Use single quotes around the entire command to avoid shell interpretation
+                    let escaped_cmd = cmd_str.replace("'", "'\"'\"'"); // Escape single quotes properly
+                    output.push_str(&format!("$output = qx('echo \"$output\" | {}');\n", escaped_cmd));
                 }
             }
             output.push_str("print($output);\n");
@@ -386,14 +392,34 @@ impl PerlGenerator {
             Command::Simple(cmd) if cmd.name == "[" || cmd.name == "test" => {
                 // For test commands, generate a simple while loop
                 // Initialize any variables used in test conditions
-                if cmd.args.len() >= 1 {
+                if cmd.args.len() >= 3 {
+                    // Check both operands for variables that need initialization
+                    let operand1 = &cmd.args[0];
+                    let operand2 = &cmd.args[2];
+                    
+                    // Initialize first operand if it's a variable
+                    if operand1.starts_with('$') {
+                        let var_name = operand1.trim_start_matches('$');
+                        if !self.declared_locals.contains(var_name) {
+                            output.push_str(&format!("my ${} = 0;\n", var_name));
+                            self.declared_locals.insert(var_name.to_string());
+                        }
+                    }
+                    
+                    // Initialize second operand if it's a variable
+                    if operand2.starts_with('$') {
+                        let var_name = operand2.trim_start_matches('$');
+                        if !self.declared_locals.contains(var_name) {
+                            output.push_str(&format!("my ${} = 0;\n", var_name));
+                            self.declared_locals.insert(var_name.to_string());
+                        }
+                    }
+                } else if cmd.args.len() >= 1 {
+                    // Handle single argument test conditions
                     let var_name = cmd.args[0].trim_start_matches('$');
                     if !self.declared_locals.contains(var_name) {
                         output.push_str(&format!("my ${} = 0;\n", var_name));
                         self.declared_locals.insert(var_name.to_string());
-                    } else {
-                        // Variable already declared, just initialize it
-                        output.push_str(&format!("${} = 0;\n", var_name));
                     }
                 }
                 output.push_str("while (");
@@ -477,7 +503,7 @@ impl PerlGenerator {
                     output.push_str(&format!("my ${};\n", for_loop.variable));
                     self.declared_locals.insert(for_loop.variable.clone());
                     output.push_str(&format!(
-                        "foreach ${} ({}..{}) {{\n",
+                        "foreach my ${} ({}..{}) {{\n",
                         for_loop.variable, start, end
                     ));
                     self.indent_level += 1;
@@ -485,13 +511,15 @@ impl PerlGenerator {
                     output.push_str(&self.generate_command(&for_loop.body));
                     self.indent_level -= 1;
                     output.push_str("}\n");
+                    // After the loop, set the variable to the next value (bash behavior)
+                    output.push_str(&format!("${} = {};\n", for_loop.variable, end + 1));
                     return output;
                 } else if let Some((start, end)) = self.parse_seq_command(first) {
                     // Always declare variable at the start
                     output.push_str(&format!("my ${};\n", for_loop.variable));
                     self.declared_locals.insert(for_loop.variable.clone());
                     output.push_str(&format!(
-                        "foreach ${} ({}..{}) {{\n",
+                        "foreach my ${} ({}..{}) {{\n",
                         for_loop.variable, start, end
                     ));
                     self.indent_level += 1;
@@ -499,6 +527,8 @@ impl PerlGenerator {
                     output.push_str(&self.generate_command(&for_loop.body));
                     self.indent_level -= 1;
                     output.push_str("}\n");
+                    // After the loop, set the variable to the next value (bash behavior)
+                    output.push_str(&format!("${} = {};\n", for_loop.variable, end + 1));
                     return output;
                 }
             }
@@ -507,7 +537,7 @@ impl PerlGenerator {
             output.push_str(&format!("my ${};\n", for_loop.variable));
             self.declared_locals.insert(for_loop.variable.clone());
             output.push_str(&format!(
-                "foreach ${} (qw({})) {{\n",
+                "foreach my ${} (qw({})) {{\n",
                 for_loop.variable,
                 for_loop.items.join(" ")
             ));
@@ -516,6 +546,10 @@ impl PerlGenerator {
             output.push_str(&self.generate_command(&for_loop.body));
             self.indent_level -= 1;
             output.push_str("}\n");
+            // After the loop, set the variable to the last value (bash behavior)
+            if let Some(last_item) = for_loop.items.last() {
+                output.push_str(&format!("${} = {};\n", for_loop.variable, last_item));
+            }
         }
         
         output
