@@ -1,5 +1,6 @@
 use wasm_bindgen::prelude::*;
 use crate::{Lexer, Parser, PerlGenerator, RustGenerator, PythonGenerator, LuaGenerator, CGenerator, JsGenerator, EnglishGenerator, FrenchGenerator, BatchGenerator, PowerShellGenerator};
+use serde::Serialize;
 
 #[wasm_bindgen]
 pub struct Debashc;
@@ -157,6 +158,32 @@ impl Debashc {
             Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
         }
     }
+}
+
+#[derive(Serialize)]
+struct ExampleEntry {
+    name: &'static str,
+    content: &'static str,
+}
+
+fn all_examples() -> Vec<ExampleEntry> {
+    vec![
+        ExampleEntry { name: "args.sh", content: include_str!("../examples/args.sh") },
+        ExampleEntry { name: "control_flow.sh", content: include_str!("../examples/control_flow.sh") },
+        ExampleEntry { name: "gnu_bash_extensions.sh", content: include_str!("../examples/gnu_bash_extensions.sh") },
+        ExampleEntry { name: "grep_params.sh", content: include_str!("../examples/grep_params.sh") },
+        ExampleEntry { name: "local.sh", content: include_str!("../examples/local.sh") },
+        ExampleEntry { name: "misc.sh", content: include_str!("../examples/misc.sh") },
+        ExampleEntry { name: "pipeline.sh", content: include_str!("../examples/pipeline.sh") },
+        ExampleEntry { name: "simple.sh", content: include_str!("../examples/simple.sh") },
+        ExampleEntry { name: "subprocess.sh", content: include_str!("../examples/subprocess.sh") },
+        ExampleEntry { name: "test_quoted.sh", content: include_str!("../examples/test_quoted.sh") },
+    ]
+}
+
+#[wasm_bindgen]
+pub fn examples_json() -> String {
+    serde_json::to_string(&all_examples()).unwrap_or_else(|_| "[]".to_string())
 }
 
 #[wasm_bindgen]

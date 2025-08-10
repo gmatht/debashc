@@ -29,6 +29,9 @@ use powershell_generator::*;
 use std::env;
 use std::fs;
 use std::io::{self, Write};
+use std::process::{Command, Stdio};
+use std::time::Duration;
+use std::thread;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -62,7 +65,9 @@ fn main() {
         println!("  file --comment <filename> - Output original SH with English pseudocode comments");
         println!("  file --bat <filename> - Convert shell script file to Windows Batch");
         println!("  file --ps <filename> - Convert shell script file to PowerShell");
+        println!("  file --test-file <perl|python|rust|lua|js|ps> <filename> - Compare outputs of .sh vs translated");
         println!("  file --run <perl|python|rust|lua|js|ps> <filename> - Generate and run from file");
+        println!("  --test-file <perl|python|rust|lua|js|ps> <filename> - Same as file --test-file (top-level)");
         return;
     }
     
@@ -235,6 +240,14 @@ fn main() {
                 if args.len() < 4 { println!("Error: file --ps command requires filename"); return; }
                 let filename = &args[3];
                 parse_file_to_powershell(filename);
+            } else if args.len() >= 3 && args[2] == "--test-file" {
+                if args.len() < 5 {
+                    println!("Error: file --test-file <perl|python|rust|lua|js|ps> <filename>");
+                    return;
+                }
+                let lang = &args[3];
+                let filename = &args[4];
+                test_file_equivalence(lang, filename);
             } else if args.len() >= 3 && args[2] == "--run" {
                 if args.len() < 5 {
                     println!("Error: file --run <perl|python|rust|lua|js|ps> <filename>");
@@ -247,6 +260,15 @@ fn main() {
                 let filename = &args[2];
                 parse_file(filename);
             }
+        }
+        "--test-file" | "test-file" => {
+            if args.len() < 4 {
+                println!("Error: --test-file <perl|python|rust|lua|js|ps> <filename>");
+                return;
+            }
+            let lang = &args[2];
+            let filename = &args[3];
+            test_file_equivalence(lang, filename);
         }
         "interactive" => {
             interactive_mode();
@@ -340,6 +362,175 @@ fn run_generated(lang: &str, input: &str) {
             }
         }
         _ => println!("Unsupported language for --run: {}", lang),
+    }
+}
+
+fn test_file_equivalence(lang: &str, filename: &str) {
+    // Read shell script content
+    let shell_content = match fs::read_to_string(filename) {
+        Ok(c) => c,
+        Err(e) => { eprintln!("Failed to read {}: {}", filename, e); return; }
+    };
+
+    // Parse and generate target language code
+    let commands = match Parser::new(&shell_content).parse() {
+        Ok(c) => c,
+        Err(e) => { eprintln!("Failed to parse {}: {:?}", filename, e); return; }
+    };
+
+    let (tmp_file, run_cmd) = match lang {
+        "perl" => {
+            let mut gen = PerlGenerator::new();
+            let code = gen.generate(&commands);
+            let tmp = "__tmp_test_output.pl";
+            if let Err(e) = fs::write(tmp, &code) { eprintln!("Failed to write Perl temp file: {}", e); return; }
+            (tmp.to_string(), vec![if cfg!(windows) { "perl" } else { "perl" }, tmp])
+        }
+        "python" => {
+            let mut gen = PythonGenerator::new();
+            let code = gen.generate(&commands);
+            let tmp = "__tmp_test_output.py";
+            if let Err(e) = fs::write(tmp, &code) { eprintln!("Failed to write Python temp file: {}", e); return; }
+            (tmp.to_string(), vec!["python3", tmp])
+        }
+        "lua" => {
+            let mut gen = LuaGenerator::new();
+            let code = gen.generate(&commands);
+            let tmp = "__tmp_test_output.lua";
+            if let Err(e) = fs::write(tmp, &code) { eprintln!("Failed to write Lua temp file: {}", e); return; }
+            (tmp.to_string(), vec!["lua", tmp])
+        }
+        "js" => {
+            let mut gen = JsGenerator::new();
+            let code = gen.generate(&commands);
+            let tmp = "__tmp_test_output.js";
+            if let Err(e) = fs::write(tmp, &code) { eprintln!("Failed to write JS temp file: {}", e); return; }
+            (tmp.to_string(), vec!["node", tmp])
+        }
+        "ps" => {
+            let mut gen = PowerShellGenerator::new();
+            let code = gen.generate(&commands);
+            let tmp = "__tmp_test_output.ps1";
+            if let Err(e) = fs::write(tmp, &code) { eprintln!("Failed to write PowerShell temp file: {}", e); return; }
+            let shell = if cfg!(windows) { "powershell" } else { "pwsh" };
+            (tmp.to_string(), vec![shell, "-File", tmp])
+        }
+        "rust" => {
+            let mut gen = RustGenerator::new();
+            let code = gen.generate(&commands);
+            let tmp_src = "__tmp_test_output.rs";
+            if let Err(e) = fs::write(tmp_src, &code) { eprintln!("Failed to write Rust temp file: {}", e); return; }
+            // compile
+            let out = "__tmp_test_bin";
+            let compile_status = Command::new("rustc")
+                .arg("--edition=2021").arg(tmp_src).arg("-o").arg(out)
+                .status();
+            match compile_status {
+                Ok(s) if s.success() => {}
+                Ok(_) => { eprintln!("Rust compilation failed"); let _ = fs::remove_file(tmp_src); return; }
+                Err(e) => { eprintln!("Failed to run rustc: {}", e); let _ = fs::remove_file(tmp_src); return; }
+            }
+            // We'll run compiled binary; remember to cleanup later
+            (tmp_src.to_string(), vec![if cfg!(windows) { "__tmp_test_bin.exe" } else { "__tmp_test_bin" }])
+        }
+        _ => { eprintln!("Unsupported language for --test-file: {}", lang); return; }
+    };
+
+    // Run shell script
+    let shell_output = {
+        let mut child = match Command::new("sh").arg(filename).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+            Ok(c) => c,
+            Err(e) => { eprintln!("Failed to spawn sh: {}", e); cleanup_tmp(lang, &tmp_file); return; }
+        };
+        let start = std::time::Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break child.wait_with_output().unwrap(),
+                Ok(None) => {
+                    if start.elapsed() > Duration::from_millis(1000) { let _ = child.kill(); break child.wait_with_output().unwrap(); }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break child.wait_with_output().unwrap(),
+            }
+        }
+    };
+
+    // Run translated program
+    let translated_output = {
+        if lang == "rust" {
+            // Run compiled binary directly (first arg of run_cmd)
+            let bin = run_cmd[0];
+            let mut child = match Command::new(bin).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+                Ok(c) => c,
+                Err(e) => { eprintln!("Failed to run compiled Rust: {}", e); cleanup_tmp(lang, &tmp_file); return; }
+            };
+            let start = std::time::Instant::now();
+            let out = loop {
+                match child.try_wait() {
+                    Ok(Some(_)) => break child.wait_with_output().unwrap(),
+                    Ok(None) => {
+                        if start.elapsed() > Duration::from_millis(1000) { let _ = child.kill(); break child.wait_with_output().unwrap(); }
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => break child.wait_with_output().unwrap(),
+                }
+            };
+            out
+        } else {
+            let mut cmd = Command::new(run_cmd[0]);
+            for a in &run_cmd[1..] { cmd.arg(a); }
+            let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+                Ok(c) => c,
+                Err(e) => { eprintln!("Failed to run translated program: {}", e); cleanup_tmp(lang, &tmp_file); return; }
+            };
+            let start = std::time::Instant::now();
+            let out = loop {
+                match child.try_wait() {
+                    Ok(Some(_)) => break child.wait_with_output().unwrap(),
+                    Ok(None) => {
+                        if start.elapsed() > Duration::from_millis(1000) { let _ = child.kill(); break child.wait_with_output().unwrap(); }
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => break child.wait_with_output().unwrap(),
+                }
+            };
+            out
+        }
+    };
+
+    // Cleanup temp files
+    cleanup_tmp(lang, &tmp_file);
+
+    // Normalize and compare
+    let shell_stdout = String::from_utf8_lossy(&shell_output.stdout).to_string().replace("\r\n", "\n").trim().to_string();
+    let shell_stderr = String::from_utf8_lossy(&shell_output.stderr).to_string().replace("\r\n", "\n").trim().to_string();
+    let trans_stdout = String::from_utf8_lossy(&translated_output.stdout).to_string().replace("\r\n", "\n").trim().to_string();
+    let trans_stderr = String::from_utf8_lossy(&translated_output.stderr).to_string().replace("\r\n", "\n").trim().to_string();
+    let shell_success = shell_output.status.success();
+    let trans_success = translated_output.status.success();
+
+    println!("Shell exit: {} | Translated exit: {}", shell_output.status, translated_output.status);
+    println!("Shell stdout: {:?}", shell_stdout);
+    println!("Translated stdout: {:?}", trans_stdout);
+    println!("Shell stderr: {:?}", shell_stderr);
+    println!("Translated stderr: {:?}", trans_stderr);
+
+    if shell_success != trans_success || shell_stdout != trans_stdout || shell_stderr != trans_stderr {
+        eprintln!("Mismatch detected (lang: {}, file: {})", lang, filename);
+        std::process::exit(1);
+    } else {
+        println!("Outputs match (lang: {}, file: {})", lang, filename);
+    }
+}
+
+fn cleanup_tmp(lang: &str, tmp_file: &str) {
+    let _ = fs::remove_file(tmp_file);
+    if lang == "rust" {
+        let _ = fs::remove_file("__tmp_test_bin");
+        if cfg!(windows) {
+            let _ = fs::remove_file("__tmp_test_bin.exe");
+            let _ = fs::remove_file("__tmp_test_bin.pdb");
+        }
     }
 }
 

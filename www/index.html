@@ -185,18 +185,7 @@
             </div>
             <div class="examples">
                 <h4>Examples:</h4>
-                <div class="example-item">
-                    <button class="example-btn" onclick="loadExample('simple')">Simple Commands</button>
-                </div>
-                <div class="example-item">
-                    <button class="example-btn" onclick="loadExample('pipeline')">Pipeline</button>
-                </div>
-                <div class="example-item">
-                    <button class="example-btn" onclick="loadExample('control')">Control Flow</button>
-                </div>
-                <div class="example-item">
-                    <button class="example-btn" onclick="loadExample('quoted')">Quoted Strings</button>
-                </div>
+                <div id="examples-list"></div>
             </div>
         </div>
         
@@ -208,7 +197,7 @@
     </div>
 
     <script type="module">
-        import init, { Debashc, init_panic_hook } from './pkg/debashc.js';
+        import init, { Debashc, init_panic_hook, examples_json } from './pkg/debashc.js';
 
         let debashc;
         let currentOperation = 'parse';
@@ -224,6 +213,7 @@
                 debashc = new Debashc();
                 console.log('Debashc instance created');
                 showStatus('Ready! Enter a shell script to get started.', 'info');
+                populateExamples();
             } catch (error) {
                 console.error('WASM initialization failed:', error);
                 showStatus('Failed to initialize WASM module: ' + error, 'error');
@@ -336,39 +326,33 @@
         document.getElementById('bat-btn').addEventListener('click', () => { currentOperation = 'bat'; executeOperation('bat'); });
         document.getElementById('ps-btn').addEventListener('click', () => { currentOperation = 'ps'; executeOperation('ps'); });
 
+        function populateExamples() {
+            try {
+                const data = JSON.parse(examples_json());
+                const container = document.getElementById('examples-list');
+                container.innerHTML = '';
+                data.forEach(ex => {
+                    const div = document.createElement('div');
+                    div.className = 'example-item';
+                    const btn = document.createElement('button');
+                    btn.className = 'example-btn';
+                    btn.textContent = ex.name;
+                    btn.addEventListener('click', () => {
+                        document.getElementById('input').value = ex.content;
+                        setOutput('');
+                        document.getElementById('status').style.display = 'none';
+                    });
+                    div.appendChild(btn);
+                    container.appendChild(div);
+                });
+            } catch (e) {
+                console.error('Failed to load examples:', e);
+            }
+        }
+
         // Initialize the application
         initialize();
     </script>
 
-    <script>
-        // Example functions
-        function loadExample(type) {
-            const examples = {
-                simple: `echo "Hello, World!"
-ls -la
-mkdir testdir
-rm testfile`,
-                pipeline: `ls | grep .sh
-cat file.txt | wc -l
-find . -name "*.txt" | head -5`,
-                control: `if [ -f file.txt ]; then
-    echo "File exists"
-else
-    echo "File not found"
-fi
-
-for i in {1..5}; do
-    echo "Number: $i"
-done`,
-                quoted: `echo "Hello, World!"
-echo 'Single quoted string'
-echo "String with \"escaped\" quotes"
-echo "Multi-line
-string"`
-            };
-            
-            document.getElementById('input').value = examples[type] || '';
-        }
-    </script>
 </body>
 </html>
