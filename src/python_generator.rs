@@ -144,6 +144,9 @@ impl PythonGenerator {
             if let Some(var) = cmd.args.get(0) {
                 output.push_str(&format!("{} = input()\n", var));
             }
+        } else if cmd.name == "shopt" {
+            // Builtin: ignore; treat as success
+            output.push_str("pass\n");
         } else if cmd.name == "[" {
             // Special handling for test commands
             self.generate_test_command(cmd, &mut output);

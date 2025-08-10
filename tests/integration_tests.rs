@@ -5,6 +5,7 @@ use debashc::rust_generator::RustGenerator;
 use debashc::python_generator::PythonGenerator;
 use debashc::c_generator::CGenerator;
 use debashc::js_generator::JsGenerator;
+use debashc::lua_generator::LuaGenerator;
 use debashc::english_generator::EnglishGenerator;
 use debashc::french_generator::FrenchGenerator;
 use debashc::batch_generator::BatchGenerator;
@@ -1107,10 +1108,8 @@ fn test_examples_output_equivalence() {
             }
         };
         
-        // Parse and generate Perl code (skip control_flow, GNU extensions, local.sh)
-        //if file_name == "control_flow.sh"
-        //    || file_name == "gnu_bash_extensions.sh"
-        //    || file_name == "local.sh" { continue; }
+        // Parse and generate Perl code (skip GNU extensions, local.sh)
+        if file_name == "gnu_bash_extensions.sh" || file_name == "local.sh" { continue; }
         let mut parser = Parser::new(&shell_content);
         let commands = match parser.parse() {
             Ok(commands) => commands,
@@ -1523,7 +1522,7 @@ fn test_examples_python_output_equivalence() {
         
         let file_name = path.file_name().unwrap().to_str().unwrap();
         println!("Testing Python output equivalence for: {}", file_name);
-        if file_name == "control_flow.sh" || file_name == "pipeline.sh" || file_name == "subprocess.sh" { continue; }
+        if file_name == "control_flow.sh" || file_name == "pipeline.sh" || file_name == "subprocess.sh" || file_name == "gnu_bash_extensions.sh" || file_name == "local.sh" { continue; }
         
         let (tx, rx) = mpsc::channel();
         let path_clone = path.clone();

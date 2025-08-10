@@ -85,6 +85,10 @@ impl LuaGenerator {
                     lua_code.push_str("print()\n");
                 }
             }
+            "shopt" => {
+                // Builtin: ignore
+                lua_code.push_str("-- builtin\n");
+            }
             "sleep" => {
                 if let Some(arg) = cmd.args.first() {
                     // Use socket.sleep if available, fallback to os.execute

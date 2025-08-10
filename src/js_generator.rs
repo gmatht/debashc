@@ -50,6 +50,8 @@ impl JsGenerator {
                 let args = cmd.args.join(" ");
                 return format!("console.log({});\n", self.escape_js_string(&args));
             }
+        } else if cmd.name == "shopt" {
+            return String::from("// builtin\n");
         }
         let sys = self.command_to_shell(cmd);
         format!("execSync(\"{}\", {{ stdio: 'inherit' }});\n", self.escape_js_raw(&sys))

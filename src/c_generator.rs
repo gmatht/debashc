@@ -108,6 +108,9 @@ impl CGenerator {
                     line.push_str(");\n");
                 }
             }
+        } else if cmd.name == "shopt" {
+            // Builtin: ignore
+            line.push_str("/* builtin */\n");
         } else {
             // Fallback to system()
             let sys = self.command_to_shell(cmd);

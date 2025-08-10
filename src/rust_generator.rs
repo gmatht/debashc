@@ -91,6 +91,9 @@ impl RustGenerator {
         } else if cmd.name == "[[" {
             // Builtin [[ test: succeed (no-op)
             output.push_str("/* [[ test */\n");
+        } else if cmd.name == "shopt" {
+            // Builtin shopt: ignore
+            output.push_str("/* builtin */\n");
         } else if cmd.name == "sleep" {
             // Use std::thread::sleep
             let dur = cmd.args.get(0).cloned().unwrap_or_else(|| "1".to_string());
