@@ -49,6 +49,7 @@ fn main() {
         println!("  parse --comment <input> - Output original SH with English pseudocode comments");
         println!("  parse --bat <input> - Convert shell script to Windows Batch");
         println!("  parse --ps <input> - Convert shell script to PowerShell");
+        println!("  parse --run <perl|python|rust|lua|js|ps> <input> - Generate and run code");
         println!("  file <filename> - Parse shell script from file");
         println!("  file --perl <filename> - Convert shell script file to Perl");
         println!("  file --rust <filename> - Convert shell script file to Rust");
@@ -61,6 +62,7 @@ fn main() {
         println!("  file --comment <filename> - Output original SH with English pseudocode comments");
         println!("  file --bat <filename> - Convert shell script file to Windows Batch");
         println!("  file --ps <filename> - Convert shell script file to PowerShell");
+        println!("  file --run <perl|python|rust|lua|js|ps> <filename> - Generate and run from file");
         return;
     }
     
@@ -150,6 +152,15 @@ fn main() {
                 if args.len() < 4 { println!("Error: parse --ps command requires input"); return; }
                 let input = &args[3];
                 parse_to_powershell(input);
+            } else if args.len() >= 3 && args[2] == "--run" {
+                // parse --run <lang> <input>
+                if args.len() < 5 {
+                    println!("Error: parse --run <perl|python|rust|lua|js|ps> <input>");
+                    return;
+                }
+                let lang = &args[3];
+                let input = &args[4];
+                run_generated(lang, input);
             } else {
                 let input = &args[2];
                 // If looks like a filename or the path exists, treat as file
@@ -224,6 +235,14 @@ fn main() {
                 if args.len() < 4 { println!("Error: file --ps command requires filename"); return; }
                 let filename = &args[3];
                 parse_file_to_powershell(filename);
+            } else if args.len() >= 3 && args[2] == "--run" {
+                if args.len() < 5 {
+                    println!("Error: file --run <perl|python|rust|lua|js|ps> <filename>");
+                    return;
+                }
+                let lang = &args[3];
+                let filename = &args[4];
+                run_generated(lang, filename);
             } else {
                 let filename = &args[2];
                 parse_file(filename);
@@ -237,6 +256,79 @@ fn main() {
         }
     }
 }
+fn run_generated(lang: &str, input: &str) {
+    let source = if input.ends_with(".sh") || std::path::Path::new(input).exists() {
+        fs::read_to_string(input).unwrap_or_else(|_| input.to_string())
+    } else { input.to_string() };
+    let commands = match Parser::new(&source).parse() {
+        Ok(c) => c,
+        Err(e) => { println!("Parse error: {}", e); return; }
+    };
+    match lang {
+        "perl" => {
+            let mut gen = PerlGenerator::new();
+            let code = gen.generate(&commands);
+            let tmp = "__tmp_run.pl";
+            if fs::write(tmp, &code).is_ok() {
+                let _ = std::process::Command::new("perl").arg(tmp).status();
+                let _ = fs::remove_file(tmp);
+            }
+        }
+        "python" => {
+            let mut gen = PythonGenerator::new();
+            let code = gen.generate(&commands);
+            let tmp = "__tmp_run.py";
+            if fs::write(tmp, &code).is_ok() {
+                let _ = std::process::Command::new("python3").arg(tmp).status();
+                let _ = fs::remove_file(tmp);
+            }
+        }
+        "rust" => {
+            let mut gen = RustGenerator::new();
+            let code = gen.generate(&commands);
+            let tmp = "__tmp_run.rs";
+            if fs::write(tmp, &code).is_ok() {
+                let out = "__tmp_run_bin";
+                let compile = std::process::Command::new("rustc").arg("--edition=2021").arg(tmp).arg("-o").arg(out).status();
+                if compile.map(|s| s.success()).unwrap_or(false) {
+                    let _ = std::process::Command::new(if cfg!(windows) { format!("{}.exe", out) } else { out.to_string() }).status();
+                    if cfg!(windows) { let _ = fs::remove_file(format!("{}.exe", out)); } else { let _ = fs::remove_file(out); }
+                }
+                let _ = fs::remove_file(tmp);
+            }
+        }
+        "lua" => {
+            let mut gen = LuaGenerator::new();
+            let code = gen.generate(&commands);
+            let tmp = "__tmp_run.lua";
+            if fs::write(tmp, &code).is_ok() {
+                let _ = std::process::Command::new("lua").arg(tmp).status();
+                let _ = fs::remove_file(tmp);
+            }
+        }
+        "js" => {
+            let mut gen = JsGenerator::new();
+            let code = gen.generate(&commands);
+            let tmp = "__tmp_run.js";
+            if fs::write(tmp, &code).is_ok() {
+                let _ = std::process::Command::new("node").arg(tmp).status();
+                let _ = fs::remove_file(tmp);
+            }
+        }
+        "ps" => {
+            let mut gen = PowerShellGenerator::new();
+            let code = gen.generate(&commands);
+            let tmp = "__tmp_run.ps1";
+            if fs::write(tmp, &code).is_ok() {
+                let shell = if cfg!(windows) { "powershell" } else { "pwsh" };
+                let _ = std::process::Command::new(shell).arg("-File").arg(tmp).status();
+                let _ = fs::remove_file(tmp);
+            }
+        }
+        _ => println!("Unsupported language for --run: {}", lang),
+    }
+}
+
 
 fn lex_input(input: &str) {
     println!("Tokenizing: {}", input);

@@ -1,13 +1,16 @@
 use crate::ast::*;
+use std::collections::HashSet;
 // HashMap import removed as it's not used
 
 pub struct PerlGenerator {
     indent_level: usize,
+    declared_locals: HashSet<String>,
+    subshell_depth: usize,
 }
 
 impl PerlGenerator {
     pub fn new() -> Self {
-        Self { indent_level: 0 }
+        Self { indent_level: 0, declared_locals: HashSet::new(), subshell_depth: 0 }
     }
 
     pub fn generate(&mut self, commands: &[Command]) -> String {
@@ -39,17 +42,32 @@ impl PerlGenerator {
         }
     }
 
-    fn generate_simple_command(&self, cmd: &SimpleCommand) -> String {
+    fn generate_simple_command(&mut self, cmd: &SimpleCommand) -> String {
         let mut output = String::new();
-        
-        // Handle environment variables
-        for (var, value) in &cmd.env_vars {
-            let val = self.perl_string_literal(value);
-            output.push_str(&format!("$ENV{{{}}} = {};\n", var, val));
+        let has_env = !cmd.env_vars.is_empty() && cmd.name != "true";
+        if has_env {
+            output.push_str("{\n");
+            for (var, value) in &cmd.env_vars {
+                let val = self.perl_string_literal(value);
+                output.push_str(&format!("local $ENV{{{}}} = {};;\n", var, val));
+            }
         }
 
         // Generate the command
-        if cmd.name == "true" {
+        if cmd.name == "true" && !cmd.env_vars.is_empty() && cmd.args.is_empty() {
+            // Assignment-only shell locals: e.g., a=1
+            for (var, value) in &cmd.env_vars {
+                let val = self.perl_string_literal(value);
+                if self.subshell_depth > 0 || !self.declared_locals.contains(var) {
+                    output.push_str(&format!("my ${} = {};;\n", var, val));
+                } else {
+                    output.push_str(&format!("${} = {};;\n", var, val));
+                }
+                if self.subshell_depth == 0 {
+                    self.declared_locals.insert(var.clone());
+                }
+            }
+        } else if cmd.name == "true" {
             // Builtin true: successful no-op
             output.push_str("1;\n");
         } else if cmd.name == "false" {
@@ -143,6 +161,15 @@ impl PerlGenerator {
         } else if cmd.name == "shopt" {
             // Builtin: ignore; treat as success
             output.push_str("1;\n");
+        } else if cmd.name == "export" {
+            // Persistently set environment variables provided as VAR=VAL pairs
+            for arg in &cmd.args {
+                if let Some(eq_idx) = arg.find('=') {
+                    let (k, v) = arg.split_at(eq_idx);
+                    let v2 = if v.len() > 0 { &v[1..] } else { "" };
+                    output.push_str(&format!("$ENV{{{}}} = {};;\n", k, self.perl_string_literal(v2)));
+                }
+            }
         } else {
             // Generic command execution with proper escaping
             let name = self.perl_string_literal(&cmd.name);
@@ -154,7 +181,7 @@ impl PerlGenerator {
                 .join(", ");
             output.push_str(&format!("system({}, {});\n", name, args));
         }
-
+        if has_env { output.push_str("}\n"); }
         output
     }
 
@@ -422,10 +449,12 @@ impl PerlGenerator {
     fn generate_subshell(&mut self, command: &Command) -> String {
         let mut output = String::new();
         
-        output.push_str("my $result = do {\n");
+        output.push_str("do {\n");
         self.indent_level += 1;
+        self.subshell_depth += 1;
         output.push_str(&self.indent());
         output.push_str(&self.generate_command(command));
+        if self.subshell_depth > 0 { self.subshell_depth -= 1; }
         self.indent_level -= 1;
         output.push_str("};\n");
         
@@ -463,7 +492,6 @@ impl PerlGenerator {
         // Then escape quotes and other characters for Perl
         unescaped.replace("\\", "\\\\")
                  .replace("\"", "\\\"")
-                 .replace("$", "\\$")
                  .replace("\n", "\\n")
                  .replace("\r", "\\r")
                  .replace("\t", "\\t")
