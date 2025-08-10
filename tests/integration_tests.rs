@@ -638,6 +638,32 @@ fn test_perl_generator_shopt_builtin_and_boolean_operators() {
 }
 
 #[test]
+fn test_generators_double_bracket_is_builtin() {
+    let input = "[[ $x == y ]]";
+
+    // Perl
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().unwrap();
+    let mut perl = PerlGenerator::new();
+    let perl_code = perl.generate(&commands);
+    assert!(!perl_code.contains("system('[[')"), "Perl should not call system for [[ : {}", perl_code);
+
+    // Python
+    let mut parser2 = Parser::new(input);
+    let commands2 = parser2.parse().unwrap();
+    let mut py = PythonGenerator::new();
+    let py_code = py.generate(&commands2);
+    assert!(!py_code.contains("subprocess.run(['[[')"), "Python should not call subprocess for [[ : {}", py_code);
+
+    // Rust
+    let mut parser3 = Parser::new(input);
+    let commands3 = parser3.parse().unwrap();
+    let mut rs = RustGenerator::new();
+    let rs_code = rs.generate(&commands3);
+    assert!(!rs_code.contains("Command::new(\"[[\")"), "Rust should not spawn [[ : {}", rs_code);
+}
+
+#[test]
 fn test_python_generator_args_handling() {
     let input = "echo $#";
     let mut parser = Parser::new(input);

@@ -82,6 +82,9 @@ impl RustGenerator {
                     output.push_str(&format!("println!(\"{}\");\n", escaped_args));
                 }
             }
+        } else if cmd.name == "[[" {
+            // Builtin [[ test: succeed (no-op)
+            output.push_str("/* [[ test */\n");
         } else if cmd.name == "sleep" {
             // Use std::thread::sleep
             let dur = cmd.args.get(0).cloned().unwrap_or_else(|| "1".to_string());

@@ -138,6 +138,9 @@ impl PerlGenerator {
         } else if cmd.name == "test" || cmd.name == "[" {
             // Special handling for test
             self.generate_test_command(cmd, &mut output);
+        } else if cmd.name == "[[" {
+            // Builtin [[ ... ]]: treat as success no-op for now
+            output.push_str("1;\n");
         } else if cmd.name == "shopt" {
             // Builtin: ignore; treat as success
             output.push_str("1;\n");

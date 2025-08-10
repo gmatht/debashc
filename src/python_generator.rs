@@ -74,6 +74,9 @@ impl PythonGenerator {
                     output.push_str(&format!("print({})\n", escaped_args));
                 }
             }
+        } else if cmd.name == "[[" {
+            // Builtin double-bracket test: treat as no-op (success)
+            output.push_str("pass\n");
         } else if cmd.name == "sleep" {
             // Use time.sleep
             output.push_str("import time\n");
