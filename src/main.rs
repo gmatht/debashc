@@ -48,6 +48,55 @@ struct TestResult {
     lexer_output: String,
 }
 
+#[derive(Debug, Clone)]
+struct AstFormatOptions {
+    compact: bool,
+    indent: bool,
+    newlines: bool,
+}
+
+impl Default for AstFormatOptions {
+    fn default() -> Self {
+        Self {
+            compact: true,  // Default to compact for --next-fail
+            indent: false,  // Default to no indentation
+            newlines: false, // Default to no extra newlines
+        }
+    }
+}
+
+impl AstFormatOptions {
+    fn format_ast(&self, commands: &[crate::ast::Command]) -> String {
+        if self.compact {
+            // Use compact format without pretty printing
+            format!("{:?}", commands)
+        } else {
+            // Use pretty format with indentation
+            format!("{:#?}", commands)
+        }
+    }
+    
+    fn format_ast_with_options(&self, commands: &[crate::ast::Command]) -> String {
+        if self.compact {
+            // Use compact format without pretty printing
+            format!("{:?}", commands)
+        } else if self.indent {
+            // Use pretty format with indentation
+            format!("{:#?}", commands)
+        } else {
+            // Use compact format but with some basic formatting
+            let mut result = format!("{:?}", commands);
+            
+            if self.newlines {
+                // Add newlines after commas for better readability
+                result = result.replace(", ", ",\n");
+            }
+            
+            result
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     
@@ -62,6 +111,56 @@ fn main() {
         show_help(&args[0]);
         return;
     }
+    
+    // Parse AST formatting options
+    let mut ast_options = AstFormatOptions::default();
+    let mut i = 2;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--ast-pretty" => {
+                ast_options.compact = false;
+                ast_options.indent = true;
+                ast_options.newlines = true;
+                println!("DEBUG: Set --ast-pretty: compact={}, indent={}, newlines={}", 
+                        ast_options.compact, ast_options.indent, ast_options.newlines);
+            }
+            "--ast-compact" => {
+                ast_options.compact = true;
+                ast_options.indent = false;
+                ast_options.newlines = false;
+                println!("DEBUG: Set --ast-compact: compact={}, indent={}, newlines={}", 
+                        ast_options.compact, ast_options.indent, ast_options.newlines);
+            }
+            "--ast-indent" => {
+                ast_options.indent = true;
+                println!("DEBUG: Set --ast-indent: compact={}, indent={}, newlines={}", 
+                        ast_options.compact, ast_options.indent, ast_options.newlines);
+            }
+            "--ast-no-indent" => {
+                ast_options.indent = false;
+                println!("DEBUG: Set --ast-no-indent: compact={}, indent={}, newlines={}", 
+                        ast_options.compact, ast_options.indent, ast_options.newlines);
+            }
+            "--ast-newlines" => {
+                ast_options.newlines = true;
+                println!("DEBUG: Set --ast-newlines: compact={}, indent={}, newlines={}", 
+                        ast_options.compact, ast_options.indent, ast_options.newlines);
+            }
+            "--ast-no-newlines" => {
+                ast_options.newlines = false;
+                println!("DEBUG: Set --ast-no-newlines: compact={}, indent={}, newlines={}", 
+                        ast_options.compact, ast_options.indent, ast_options.newlines);
+            }
+            _ => {
+                // This might be a filename or other argument
+                break;
+            }
+        }
+        i += 1;
+    }
+    
+    println!("DEBUG: Final AST options: compact={}, indent={}, newlines={}", 
+            ast_options.compact, ast_options.indent, ast_options.newlines);
     
     let command = &args[1];
     
@@ -539,7 +638,7 @@ fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn test_file_equivalence_detailed(lang: &str, filename: &str) -> Result<TestResult, String> {
+fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Option<AstFormatOptions>) -> Result<TestResult, String> {
     // Read shell script content
     let shell_content = match fs::read_to_string(filename) {
         Ok(c) => c,
@@ -575,8 +674,9 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str) -> Result<TestResu
         }
     };
 
-    // Capture AST for output
-    let ast = format!("{:#?}", commands);
+    // Capture AST for output using the provided formatting options
+    let ast_options = ast_options.unwrap_or_default();
+    let ast = ast_options.format_ast_with_options(&commands);
 
     let (tmp_file, run_cmd, translated_code) = match lang {
         "perl" => {
@@ -798,11 +898,21 @@ fn parse_file(filename: &str) {
 }
 
 fn parse_to_perl(input: &str) {
+    // Check if input looks like a filename and read it if so
+    let content = if input.ends_with(".sh") || std::path::Path::new(input).exists() {
+        match fs::read_to_string(input) {
+            Ok(content) => content,
+            Err(_) => input.to_string(),
+        }
+    } else {
+        input.to_string()
+    };
+    
     println!("Converting to Perl: {}", input);
     println!("Perl Code:");
     println!("{}", "=".repeat(50));
     
-    match Parser::new(input).parse() {
+    match Parser::new(&content).parse() {
         Ok(commands) => {
             let mut generator = PerlGenerator::new();
             let perl_code = generator.generate(&commands);
@@ -830,11 +940,21 @@ fn parse_file_to_perl(filename: &str) {
 }
 
 fn parse_to_rust(input: &str) {
+    // Check if input looks like a filename and read it if so
+    let content = if input.ends_with(".sh") || std::path::Path::new(input).exists() {
+        match fs::read_to_string(input) {
+            Ok(content) => content,
+            Err(_) => input.to_string(),
+        }
+    } else {
+        input.to_string()
+    };
+    
     println!("Converting to Rust: {}", input);
     println!("Rust Code:");
     println!("{}", "=".repeat(50));
     
-    match Parser::new(input).parse() {
+    match Parser::new(&content).parse() {
         Ok(commands) => {
             let mut generator = RustGenerator::new();
             let rust_code = generator.generate(&commands);
@@ -862,11 +982,21 @@ fn parse_file_to_rust(filename: &str) {
 }
 
 fn parse_to_python(input: &str) {
+    // Check if input looks like a filename and read it if so
+    let content = if input.ends_with(".sh") || std::path::Path::new(input).exists() {
+        match fs::read_to_string(input) {
+            Ok(content) => content,
+            Err(_) => input.to_string(),
+        }
+    } else {
+        input.to_string()
+    };
+    
     println!("Converting to Python: {}", input);
     println!("Python Code:");
     println!("{}", "=".repeat(50));
     
-    let mut parser = Parser::new(input);
+    let mut parser = Parser::new(&content);
     match parser.parse() {
         Ok(commands) => {
             let mut generator = PythonGenerator::new();
@@ -876,7 +1006,7 @@ fn parse_to_python(input: &str) {
         Err(e) => {
             if let Some((line, col)) = extract_line_col(&e) {
                 println!("Parse error at {}:{}: {:?}", line, col, e);
-                if let Some(snippet) = caret_snippet(input, line, col) {
+                if let Some(snippet) = caret_snippet(&content, line, col) {
                     println!("{}", snippet);
                 }
             } else {
@@ -1370,7 +1500,7 @@ fn test_all_examples_next_fail() {
             io::stdout().flush().unwrap();
             
             // Run the actual test
-            match test_file_equivalence_detailed(generator, example) {
+            match test_file_equivalence_detailed(generator, example, Some(AstFormatOptions::default())) {
                 Ok(result) => {
                     if result.success {
                         passed_tests += 1;
@@ -1596,6 +1726,16 @@ fn show_help(program_name: &str) {
     println!("  file --test-file <lang> <filename> - Same as above");
     println!("  --test-eq                      - Test all generators against all examples");
     println!("  --next-fail                    - Test all generators, exit after first failure");
+    println!();
+    println!("AST FORMATTING OPTIONS (for --next-fail):");
+    println!();
+    println!("  --ast-pretty                   - Use pretty-printed AST with indentation and newlines");
+    println!("  --ast-compact                  - Use compact AST format (default for --next-fail)");
+    println!("  --ast-indent                   - Enable indentation in AST output");
+    println!("  --ast-no-indent                - Disable indentation in AST output");
+    println!("  --ast-newlines                 - Enable extra newlines in AST output");
+    println!("  --ast-no-newlines              - Disable extra newlines in AST output");
+    println!("  Note: --next-fail uses compact AST format by default for cleaner output");
     println!();
     println!("EXAMPLES:");
     println!();

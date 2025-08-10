@@ -922,14 +922,16 @@ fn test_example_simple_sh_to_rust() {
     let rust_code = generator.generate(&commands);
     
     // Check that the Rust code contains expected elements
-    assert!(rust_code.contains("use std::process::Command;") || rust_code.contains("use std::fs;"));
-    assert!(rust_code.contains("fn main()"));
+    assert!(rust_code.contains("use std::fs;"), "Missing fs import");
+    assert!(rust_code.contains("fn main()"), "Missing main function");
     assert!(
         rust_code.contains("println!(\"Hello, World!\");") ||
         rust_code.contains("\"Hello, World!\"")
-    );
-    assert!(rust_code.contains("Command::new(\"ls\")") || rust_code.contains("read_dir("));
-    assert!(rust_code.contains("Command::new(\"grep\")") || rust_code.contains("read_to_string("));
+    , "Missing Hello, World! output");
+    assert!(rust_code.contains("fs::metadata(\"test.txt\").is_ok()"), "Missing file test");
+    assert!(rust_code.contains("println!(\"File exists\");"), "Missing File exists output");
+    assert!(rust_code.contains("for i in &[\"1\", \"2\", \"3\", \"4\", \"5\"]"), "Missing for loop");
+    assert!(rust_code.contains("println!(\"{}\", i);"), "Missing loop variable output");
 }
 
 #[test]

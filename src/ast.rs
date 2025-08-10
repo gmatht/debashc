@@ -82,6 +82,7 @@ pub enum RedirectOperator {
     InputOutput, // <>
     Heredoc,   // <<
     HeredocTabs, // <<-
+    HereString, // <<<
 }
 
 // New AST nodes for expressions

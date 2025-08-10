@@ -317,8 +317,7 @@ impl Parser {
                     args.push(self.parse_variable_expansion()?);
                 }
                 Token::Arithmetic => {
-                    let txt = self.capture_arithmetic_text()?;
-                    args.push(Word::Literal(txt));
+                    args.push(self.parse_arithmetic_expression()?);
                 }
                 Token::Minus => {
                     // Handle arguments starting with minus (like -la, -v, etc.)
@@ -426,7 +425,7 @@ impl Parser {
                 Token::OlderThan => { self.lexer.next(); args.push(Word::Literal("-ot".to_string())); }
                 Token::SameFile => { self.lexer.next(); args.push(Word::Literal("-ef".to_string())); }
                 Token::Zero => { self.lexer.next(); args.push(Word::Literal("-z".to_string())); }
-                Token::RedirectAppend | Token::RedirectInOut | Token::Heredoc | Token::HeredocTabs => {
+                Token::RedirectAppend | Token::RedirectInOut | Token::Heredoc | Token::HeredocTabs | Token::HereString => {
                     redirects.push(self.parse_redirect()?);
                 }
                 Token::Newline | Token::Semicolon | Token::CarriageReturn => {
@@ -854,6 +853,7 @@ impl Parser {
             Some(Token::RedirectInOut) => RedirectOperator::InputOutput,
             Some(Token::Heredoc) => RedirectOperator::Heredoc,
             Some(Token::HeredocTabs) => RedirectOperator::HeredocTabs,
+            Some(Token::HereString) => RedirectOperator::HereString,
             _ => return Err(ParserError::InvalidSyntax("Invalid redirect operator".to_string())),
         };
         // Here-string: '<<< word' often lexes as '<<' '<' then word; accept optional extra '<'
@@ -864,7 +864,11 @@ impl Parser {
         self.skip_whitespace_and_comments();
 
         // Process substitution as redirect target, allowing an optional extra '<' before '('
-        let target = if matches!(self.lexer.peek(), Some(Token::RedirectIn)) && matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) {
+        // For here-strings, we don't need a target - the string content follows immediately
+        let target = if matches!(operator, RedirectOperator::HereString) {
+            // For here-strings, create a placeholder target since we'll get the content from heredoc_body
+            Word::Literal("".to_string())
+        } else if matches!(self.lexer.peek(), Some(Token::RedirectIn)) && matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) {
             // consume the extra '<' and capture ( ... )
             self.lexer.next();
             Word::Literal(self.capture_parenthetical_text()?)
@@ -874,6 +878,7 @@ impl Parser {
             self.parse_word()?
         };
         // If this is a heredoc, capture lines until the delimiter is found at start of line
+        // If this is a here-string, the target is the string content
         let heredoc_body = match operator {
             RedirectOperator::Heredoc | RedirectOperator::HeredocTabs => {
                 let delim = match &target {
@@ -932,6 +937,27 @@ impl Parser {
                     Some(body)
                 } else {
                     Some(String::new())
+                }
+            }
+            RedirectOperator::HereString => {
+                // For here-strings, the target is the string content
+                // We need to extract the string content from the target
+                match &target {
+                    Word::Literal(s) => Some(s.clone()),
+                    Word::StringInterpolation(interp) => {
+                        // Convert string interpolation to a string
+                        let mut result = String::new();
+                        for part in &interp.parts {
+                            match part {
+                                StringPart::Literal(s) => result.push_str(s),
+                                StringPart::Variable(var) => result.push_str(&format!("${}", var)),
+                                StringPart::Arithmetic(expr) => result.push_str(&expr.expression),
+                                StringPart::CommandSubstitution(_) => result.push_str("$(...)"),
+                            }
+                        }
+                        Some(result)
+                    }
+                    _ => None,
                 }
             }
             _ => None,
@@ -1009,10 +1035,8 @@ impl Parser {
                 Ok(Word::Variable(var_name))
             }
             Some(Token::DollarParen) => {
-                self.lexer.next();
                 // Parse command substitution: capture until matching ')'
-                let command = self.parse_command_substitution()?;
-                Ok(Word::CommandSubstitution(Box::new(command)))
+                self.parse_command_substitution()
             }
             _ => {
                 let (line, col) = self
@@ -1320,18 +1344,48 @@ impl Parser {
                     // Variable
                     i += 1; // Skip $
                     let mut var_name = String::new();
-                    // Handle special shell variables like $# and $@
-                    if i < quoted_content.len() {
-                        let next_char = quoted_content.chars().nth(i).unwrap_or(' ');
-                        if next_char == '#' || next_char == '@' {
-                            // Special shell variables
-                            var_name.push(next_char);
+                    
+                    // Check for braced variable syntax like ${arr[1]} or ${#arr[@]}
+                    if quoted_content[i..].starts_with('{') {
+                        i += 1; // Skip {
+                        let mut brace_depth = 1;
+                        let mut brace_content = String::new();
+                        
+                        while i < quoted_content.len() && brace_depth > 0 {
+                            let ch = quoted_content.chars().nth(i).unwrap_or(' ');
+                            if ch == '{' {
+                                brace_depth += 1;
+                            } else if ch == '}' {
+                                brace_depth -= 1;
+                            }
+                            if brace_depth > 0 {
+                                brace_content.push(ch);
+                            }
                             i += 1;
+                        }
+                        
+                        // Check if this is a special shell array syntax like #arr[@]
+                        if brace_content.starts_with('#') && brace_content.contains('[') {
+                            // This is ${#arr[@]} - array length
+                            var_name = brace_content;
                         } else {
-                            // Regular alphanumeric variables
-                            while i < quoted_content.len() && quoted_content.chars().nth(i).unwrap_or(' ').is_alphanumeric() {
-                                var_name.push(quoted_content.chars().nth(i).unwrap_or(' '));
+                            // Regular braced variable like ${arr[1]}
+                            var_name = brace_content;
+                        }
+                    } else {
+                        // Handle special shell variables like $# and $@
+                        if i < quoted_content.len() {
+                            let next_char = quoted_content.chars().nth(i).unwrap_or(' ');
+                            if next_char == '#' || next_char == '@' {
+                                // Special shell variables
+                                var_name.push(next_char);
                                 i += 1;
+                            } else {
+                                // Regular alphanumeric variables
+                                while i < quoted_content.len() && quoted_content.chars().nth(i).unwrap_or(' ').is_alphanumeric() {
+                                    var_name.push(quoted_content.chars().nth(i).unwrap_or(' '));
+                                    i += 1;
+                                }
                             }
                         }
                     }
@@ -1388,8 +1442,11 @@ impl Parser {
         Ok(var_name)
     }
 
-    fn parse_command_substitution(&mut self) -> Result<Command, ParserError> {
+    fn parse_command_substitution(&mut self) -> Result<Word, ParserError> {
         // Parse command substitution $(...)
+        // We're already at the DollarParen token, so consume it
+        self.lexer.next();
+        
         let mut depth = 1; // We start after the opening (
         let mut command_text = String::new();
         
@@ -1403,6 +1460,8 @@ impl Parser {
                     Some(Token::ParenClose) => {
                         depth -= 1;
                         if depth == 0 {
+                            // Consume the closing parenthesis before breaking
+                            self.lexer.next();
                             break;
                         } else {
                             command_text.push_str(&self.lexer.get_text(start, end));
@@ -1418,14 +1477,15 @@ impl Parser {
             }
         }
         
-        // For now, create a simple command. In a full implementation,
-        // you'd want to parse the command_text as a proper command
-        Ok(Command::Simple(SimpleCommand {
+        // Create a simple command from the captured text and wrap it in CommandSubstitution
+        let command = Command::Simple(SimpleCommand {
             name: Word::Literal("command_substitution".to_string()),
             args: vec![Word::Literal(command_text)],
             redirects: Vec::new(),
             env_vars: HashMap::new(),
-        }))
+        });
+        
+        Ok(Word::CommandSubstitution(Box::new(command)))
     }
 
     fn get_identifier_text(&mut self) -> Result<String, ParserError> {
@@ -1797,5 +1857,23 @@ mod tests {
         } else {
             panic!("Expected Simple command");
         }
+    }
+
+    #[test]
+    fn test_debug_simple_command_substitution() {
+        let input = "echo $(ls)";
+        println!("Input: '{}'", input);
+        println!("Input length: {}", input.len());
+        println!("Input bytes: {:?}", input.as_bytes());
+        
+        let mut parser = Parser::new(input);
+        let commands = parser.parse().unwrap();
+        
+        println!("Number of commands: {}", commands.len());
+        for (i, cmd) in commands.iter().enumerate() {
+            println!("Command {}: {:?}", i, cmd);
+        }
+        
+        assert_eq!(commands.len(), 1);
     }
 } 

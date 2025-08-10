@@ -5,12 +5,13 @@ use std::collections::HashSet;
 pub struct PerlGenerator {
     indent_level: usize,
     declared_locals: HashSet<String>,
+    declared_functions: HashSet<String>,
     subshell_depth: usize,
 }
 
 impl PerlGenerator {
     pub fn new() -> Self {
-        Self { indent_level: 0, declared_locals: HashSet::new(), subshell_depth: 0 }
+        Self { indent_level: 0, declared_locals: HashSet::new(), declared_functions: HashSet::new(), subshell_depth: 0 }
     }
 
     pub fn generate(&mut self, commands: &[Command]) -> String {
@@ -64,6 +65,25 @@ impl PerlGenerator {
         } else if cmd.name == "true" && !cmd.env_vars.is_empty() && cmd.args.is_empty() {
             // Assignment-only shell locals: e.g., a=1
             for (var, value) in &cmd.env_vars {
+                if let Word::Literal(literal) = value {
+                    if literal.starts_with("(") && literal.ends_with(")") {
+                        // Handle array assignment: arr=(one two three) -> @arr = ("one", "two", "three")
+                        let content = &literal[1..literal.len()-1];
+                        let elements: Vec<String> = content.split_whitespace()
+                            .map(|s| self.perl_string_literal(s))
+                            .collect();
+                        if self.subshell_depth > 0 || !self.declared_locals.contains(var) {
+                            output.push_str(&format!("my @{} = ({});\n", var, elements.join(", ")));
+                        } else {
+                            output.push_str(&format!("@{} = ({});\n", var, elements.join(", ")));
+                        }
+                        if self.subshell_depth == 0 {
+                            self.declared_locals.insert(var.clone());
+                        }
+                        continue; // Skip the regular assignment below
+                    }
+                }
+                
                 let val = match value {
                     Word::Arithmetic(arithmetic) => {
                         // Handle shell arithmetic: $((i + 1)) -> $i + 1
@@ -103,70 +123,106 @@ impl PerlGenerator {
         } else if cmd.name == "false" {
             // Builtin false: no-op; semantic failure not modeled in this simplified generator
             output.push_str("0;\n");
+        } else if cmd.name == "printf" {
+            // Handle printf command
+            if cmd.args.is_empty() {
+                output.push_str("printf(\"\\n\");\n");
+            } else {
+                let format_str = &cmd.args[0];
+                let args = &cmd.args[1..];
+                if args.is_empty() {
+                    output.push_str(&format!("printf({});\n", self.perl_string_literal(format_str)));
+                } else {
+                    let perl_args = args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>();
+                    output.push_str(&format!("printf({}, {});\n", 
+                        self.perl_string_literal(format_str), 
+                        perl_args.join(", ")));
+                }
+            }
         } else if cmd.name == "echo" {
             // Special handling for echo
             if cmd.args.is_empty() {
                 output.push_str("print(\"\\n\");\n");
-            } else {
-                // Support special variables like $# (argc)
-                if cmd.args.len() == 1 {
-                    let arg = &cmd.args[0];
-                    if matches!(arg, Word::Variable(var) if var == "#") {
-                        output.push_str("print(scalar(@ARGV) . \"\\n\");\n");
-                    } else if matches!(arg, Word::Variable(var) if var == "@") {
-                        output.push_str("print(join(\" \", @ARGV) . \"\\n\");\n");
-                    } else if let Word::StringInterpolation(interp) = arg {
-                        // Handle string interpolation like "$#"
-                        if interp.parts.len() == 1 {
-                            if let StringPart::Variable(var) = &interp.parts[0] {
-                                if var == "#" {
-                                    output.push_str("print(scalar(@ARGV) . \"\\n\");\n");
-                                } else if var == "@" {
-                                    output.push_str("print(join(\" \", @ARGV) . \"\\n\");\n");
-                                } else {
-                                    // Handle other variables in string interpolation
-                                    let converted = self.convert_string_interpolation_to_perl(interp);
-                                    output.push_str(&format!("print(\"{}\\n\");\n", converted));
-                                }
+            } else if cmd.args.len() == 1 {
+                // Handle single argument
+                let arg = &cmd.args[0];
+                if matches!(arg, Word::Variable(var) if var == "#") {
+                    output.push_str("print(scalar(@ARGV) . \"\\n\");\n");
+                } else if matches!(arg, Word::Variable(var) if var == "@") {
+                    output.push_str("print(join(\" \", @ARGV) . \"\\n\");\n");
+                } else if let Word::StringInterpolation(interp) = arg {
+                    // Handle string interpolation like "$#"
+                    if interp.parts.len() == 1 {
+                        if let StringPart::Variable(var) = &interp.parts[0] {
+                            if var == "#" {
+                                output.push_str("print(scalar(@ARGV) . \"\\n\");\n");
+                            } else if var == "@" {
+                                output.push_str("print(join(\" \", @ARGV) . \"\\n\");\n");
                             } else {
-                                // Handle other string parts
+                                // Handle other variables in string interpolation
                                 let converted = self.convert_string_interpolation_to_perl(interp);
                                 output.push_str(&format!("print(\"{}\\n\");\n", converted));
                             }
                         } else {
-                            // Handle multiple parts in string interpolation
+                            // Handle other string parts
                             let converted = self.convert_string_interpolation_to_perl(interp);
                             output.push_str(&format!("print(\"{}\\n\");\n", converted));
                         }
                     } else {
-                        // Handle direct variable references like $# or $@
-                        let arg_str = arg.to_string();
-                        if arg_str == "$#" {
-                            output.push_str("print(scalar(@ARGV) . \"\\n\");\n");
-                        } else if arg_str == "$@" {
-                            output.push_str("print(join(\" \", @ARGV) . \"\\n\");\n");
-                        } else {
-                            let args = cmd.args.join(" ");
-                            // Convert shell positional parameters to Perl equivalents
-                            let converted_args = args.replace("$1", "$_[0]")
-                                                   .replace("$2", "$_[1]")
-                                                   .replace("$3", "$_[2]")
-                                                   .replace("$4", "$_[3]")
-                                                   .replace("$5", "$_[4]")
-                                                   .replace("$6", "$_[5]")
-                                                   .replace("$7", "$_[6]")
-                                                   .replace("$8", "$_[7]")
-                                                   .replace("$9", "$_[8]");
-                            let escaped_args = self.escape_perl_string(&converted_args);
-                            // Allow interpolation ($var) intentionally by not escaping '$'
-                            output.push_str(&format!("print(\"{}\\n\");\n", escaped_args));
-                        }
+                        // Handle multiple parts in string interpolation
+                        let converted = self.convert_string_interpolation_to_perl(interp);
+                        output.push_str(&format!("print(\"{}\\n\");\n", converted));
                     }
                 } else {
-                    // Handle multiple arguments or no arguments
-                    let args = cmd.args.join(" ");
-                    // Convert shell positional parameters to Perl equivalents
-                    let converted_args = args.replace("$1", "$_[0]")
+                    // Handle direct variable references like $# or $@
+                    let arg_str = arg.to_string();
+                    if arg_str == "$#" {
+                        output.push_str("print(scalar(@ARGV) . \"\\n\");\n");
+                    } else if arg_str == "$@" {
+                        output.push_str("print(join(\" \", @ARGV) . \"\\n\");\n");
+                    } else {
+                        let args = cmd.args.join(" ");
+                        // Convert shell positional parameters to Perl equivalents
+                        let converted_args = args.replace("$1", "$_[0]")
+                                               .replace("$2", "$_[1]")
+                                               .replace("$3", "$_[2]")
+                                               .replace("$4", "$_[3]")
+                                               .replace("$5", "$_[4]")
+                                               .replace("$6", "$_[5]")
+                                               .replace("$7", "$_[6]")
+                                               .replace("$8", "$_[7]")
+                                               .replace("$9", "$_[8]");
+                        let escaped_args = self.escape_perl_string(&converted_args);
+                        // Allow interpolation ($var) intentionally by not escaping '$'
+                        output.push_str(&format!("print(\"{}\\n\");\n", escaped_args));
+                    }
+                }
+            } else {
+                // Handle multiple arguments
+                let args = cmd.args.iter().map(|arg| {
+                    // Convert each argument to its Perl representation
+                    match arg {
+                        Word::Literal(s) => s.clone(),
+                        Word::Variable(var) => format!("${}", var),
+                        Word::StringInterpolation(interp) => {
+                            // For string interpolation, extract the literal content
+                            if interp.parts.len() == 1 {
+                                if let StringPart::Literal(s) = &interp.parts[0] {
+                                    s.clone()
+                                } else {
+                                    arg.to_string()
+                                }
+                            } else {
+                                arg.to_string()
+                            }
+                        }
+                        _ => arg.to_string(),
+                    }
+                }).collect::<Vec<_>>();
+                
+                let args_str = args.join(" ");
+                // Convert shell positional parameters to Perl equivalents
+                let converted_args = args_str.replace("$1", "$_[0]")
                                            .replace("$2", "$_[1]")
                                            .replace("$3", "$_[2]")
                                            .replace("$4", "$_[3]")
@@ -175,10 +231,9 @@ impl PerlGenerator {
                                            .replace("$7", "$_[6]")
                                            .replace("$8", "$_[7]")
                                            .replace("$9", "$_[8]");
-                    let escaped_args = self.escape_perl_string(&converted_args);
-                    // Allow interpolation ($var) intentionally by not escaping '$'
-                    output.push_str(&format!("print(\"{}\\n\");\n", escaped_args));
-                }
+                let escaped_args = self.escape_perl_string(&converted_args);
+                // Allow interpolation ($var) intentionally by not escaping '$'
+                output.push_str(&format!("print(\"{}\\n\");\n", escaped_args));
             }
         } else if cmd.name == "cd" {
             // Special handling for cd
@@ -204,11 +259,25 @@ impl PerlGenerator {
             if cmd.args.len() >= 2 {
                 let pattern = &cmd.args[0];
                 let file = &cmd.args[1];
-                output.push_str(&format!("open(my $fh, '<', '{}') or die \"Cannot open file: $!\\n\";\n", file));
-                output.push_str(&format!("while (my $line = <$fh>) {{\n"));
-                output.push_str(&format!("    print($line) if $line =~ /{}/;\n", pattern));
-                output.push_str("}\n");
-                output.push_str("close($fh);\n");
+                
+                // Check for -o flag (only matching part)
+                let only_matching = cmd.args.iter().any(|arg| arg == "-o");
+                
+                if only_matching {
+                    output.push_str(&format!("open(my $fh, '<', '{}') or die \"Cannot open file: $!\\n\";\n", file));
+                    output.push_str(&format!("while (my $line = <$fh>) {{\n"));
+                    output.push_str(&format!("    if ($line =~ /({})/g) {{\n", pattern));
+                    output.push_str("        print \"$1\\n\";\n");
+                    output.push_str("    }\n");
+                    output.push_str("}\n");
+                    output.push_str("close($fh);\n");
+                } else {
+                    output.push_str(&format!("open(my $fh, '<', '{}') or die \"Cannot open file: $!\\n\";\n", file));
+                    output.push_str(&format!("while (my $line = <$fh>) {{\n"));
+                    output.push_str(&format!("    print($line) if $line =~ /{}/;\n", pattern));
+                    output.push_str("}\n");
+                    output.push_str("close($fh);\n");
+                }
             }
         } else if cmd.name == "cat" {
             // Special handling for cat including heredocs
@@ -256,15 +325,111 @@ impl PerlGenerator {
                 output.push_str(&format!("use File::Copy;\n"));
                 output.push_str(&format!("copy('{}', '{}') or die \"Cannot copy file: $!\\n\";\n", src, dst));
             }
+        } else if cmd.name == "mapfile" {
+            // Handle mapfile command for reading lines into an array
+            if cmd.args.len() >= 2 && cmd.args[0] == "-t" {
+                let array_name = &cmd.args[1];
+                output.push_str(&format!("my @{} = ();\n", array_name));
+                output.push_str(&format!("while (my $line = <STDIN>) {{\n"));
+                output.push_str(&format!("    chomp $line;\n"));
+                output.push_str(&format!("    push @{}, $line;\n", array_name));
+                output.push_str("}\n");
+                if self.subshell_depth == 0 {
+                    self.declared_locals.insert(array_name.to_string());
+                }
+            }
+        } else if cmd.name == "comm" {
+            // Handle comm command for comparing sorted files
+            if cmd.args.len() >= 3 {
+                let flag = &cmd.args[0];
+                let file1 = &cmd.args[1];
+                let file2 = &cmd.args[2];
+                output.push_str(&format!("# comm {} {} {}\n", flag, file1, file2));
+                output.push_str("system('comm', ");
+                output.push_str(&format!("{}, {}, {});\n", 
+                    self.perl_string_literal(flag),
+                    self.perl_string_literal(file1),
+                    self.perl_string_literal(file2)));
+            }
         } else if cmd.name == "test" || cmd.name == "[" {
             // Special handling for test
             self.generate_test_command(cmd, &mut output);
         } else if cmd.name == "[[" {
-            // Builtin [[ ... ]]: treat as success no-op for now
-            output.push_str("1;\n");
+            // Handle [[ ... ]] test command with pattern matching and regex
+            if cmd.args.len() >= 3 {
+                let left = &cmd.args[0];
+                let operator = &cmd.args[1];
+                let right = &cmd.args[2];
+                
+                match operator.as_str() {
+                    "==" => {
+                        // Pattern matching: [[ $var == pattern ]]
+                        output.push_str(&format!("if (${} =~ /{}/) {{\n", left, right));
+                        output.push_str("    # Pattern match succeeded\n");
+                        output.push_str("}\n");
+                    }
+                    "=~" => {
+                        // Regex matching: [[ $var =~ regex ]]
+                        output.push_str(&format!("if (${} =~ /{}/) {{\n", left, right));
+                        output.push_str("    # Regex match succeeded\n");
+                        output.push_str("}\n");
+                    }
+                    _ => {
+                        // Other operators not yet implemented
+                        output.push_str(&format!("# [[ {} {} {} ]] not implemented\n", left, operator, right));
+                        output.push_str("1;\n");
+                    }
+                }
+            } else {
+                // Simple [[ ... ]] without enough args
+                output.push_str("1;\n");
+            }
         } else if cmd.name == "shopt" {
-            // Builtin: ignore; treat as success
+            // Handle shopt command for shell options
+            if cmd.args.len() >= 2 && cmd.args[0] == "-s" {
+                let option = &cmd.args[1];
+                if option == "extglob" {
+                    output.push_str("# extglob option enabled\n");
+                } else if option == "nocasematch" {
+                    output.push_str("# nocasematch option enabled\n");
+                } else {
+                    output.push_str(&format!("# shopt -s {} not implemented\n", option));
+                }
+            } else {
+                // Other shopt options not yet implemented
+                output.push_str("# shopt option not implemented\n");
+            }
+            // shopt commands always succeed (return true)
             output.push_str("1;\n");
+        } else if cmd.name == "set" {
+            // Handle set command for shell options
+            if cmd.args.len() >= 1 {
+                let options = &cmd.args[0];
+                if options.contains('e') {
+                    output.push_str("$SIG{__DIE__} = sub { die @_; };\n");
+                }
+                if options.contains('u') {
+                    output.push_str("use strict;\n");
+                }
+                if options.contains('o') {
+                    // Handle -o pipefail
+                    if cmd.args.len() >= 2 && cmd.args[1] == "pipefail" {
+                        output.push_str("# pipefail option not implemented in Perl\n");
+                    }
+                }
+            }
+        } else if cmd.name == "declare" {
+            // Handle declare command for associative arrays
+            if cmd.args.len() >= 2 && cmd.args[0] == "-A" {
+                let array_name = &cmd.args[1];
+                output.push_str(&format!("my %{} = ();\n", array_name));
+                if self.subshell_depth == 0 {
+                    self.declared_locals.insert(array_name.to_string());
+                }
+            } else {
+                // Other declare options not yet implemented
+                output.push_str(&format!("# declare {:?} not yet implemented\n", cmd.args));
+            }
         } else if cmd.name == "export" {
             // Persistently set environment variables provided as VAR=VAL pairs
             for arg in &cmd.args {
@@ -276,11 +441,20 @@ impl PerlGenerator {
             }
         } else {
             // Check if this might be a function call (not a builtin)
-            let builtins = ["echo", "cd", "ls", "grep", "cat", "mkdir", "rm", "mv", "cp", "test", "[", "[[", "shopt", "export", "true", "false"];
+            let builtins = ["echo", "cd", "ls", "grep", "cat", "mkdir", "rm", "mv", "cp", "test", "[", "[[", "shopt", "export", "declare", "true", "false"];
             if !builtins.contains(&cmd.name.as_str()) {
-                // Check if this looks like a function call (no file extension, no path separators)
-                if !cmd.name.contains('.') && !cmd.name.contains('/') && !cmd.name.contains('\\') {
-                    // Assume it's a function call
+                // Check if this is an array assignment like map[foo]=bar
+                if cmd.name.contains('[') && cmd.name.ends_with(']') {
+                    if let Some(bracket_start) = cmd.name.find('[') {
+                        let array_name = &cmd.name[..bracket_start];
+                        let key = &cmd.name[bracket_start + 1..cmd.name.len() - 1];
+                        if let Some(value) = cmd.args.first() {
+                            let perl_value = self.word_to_perl(value);
+                            output.push_str(&format!("${}[{}] = {};\n", array_name, key, perl_value));
+                        }
+                    }
+                } else if self.declared_functions.contains(&cmd.name.to_string()) {
+                    // This is a call to a defined function
                     let args = cmd
                         .args
                         .iter()
@@ -292,15 +466,18 @@ impl PerlGenerator {
                         output.push_str(&format!("{}({});\n", cmd.name, args.join(", ")));
                     }
                 } else {
-                    // Non-builtin command - use system()
+                    // Non-builtin command - use system() for external commands
                     let name = self.perl_string_literal(&cmd.name);
                     let args = cmd
                         .args
                         .iter()
                         .map(|arg| self.perl_string_literal(arg))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    output.push_str(&format!("system({}, {});\n", name, args));
+                        .collect::<Vec<_>>();
+                    if args.is_empty() {
+                        output.push_str(&format!("system({});\n", name));
+                    } else {
+                        output.push_str(&format!("system({}, {});\n", name, args.join(", ")));
+                    }
                 }
             } else {
                 // Builtin command - handle as before
@@ -316,6 +493,66 @@ impl PerlGenerator {
                 }
             }
         }
+        
+        // Handle redirects
+        for redir in &cmd.redirects {
+            match redir.operator {
+                RedirectOperator::Input => {
+                    // Input redirection: command < file
+                    if let Some(fd) = redir.fd {
+                        output.push_str(&format!("open(STDIN, '<', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
+                    } else {
+                        output.push_str(&format!("open(STDIN, '<', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
+                    }
+                }
+                RedirectOperator::Output => {
+                    // Output redirection: command > file
+                    if let Some(fd) = redir.fd {
+                        output.push_str(&format!("open(STDOUT, '>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
+                    } else {
+                        output.push_str(&format!("open(STDOUT, '>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
+                    }
+                }
+                RedirectOperator::Append => {
+                    // Append redirection: command >> file
+                    if let Some(fd) = redir.fd {
+                        output.push_str(&format!("open(STDOUT, '>>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
+                    } else {
+                        output.push_str(&format!("open(STDOUT, '>>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
+                    }
+                }
+                RedirectOperator::HereString => {
+                    // Here-string: command <<< "string"
+                    if let Some(body) = &redir.heredoc_body {
+                        // Create a temporary file with the string content
+                        output.push_str(&format!("my $temp_content = {};\n", self.perl_string_literal(body)));
+                        output.push_str("open(my $temp_fh, '>', '/tmp/here_string_temp') or die \"Cannot create temp file: $!\\n\";\n");
+                        output.push_str("print $temp_fh $temp_content;\n");
+                        output.push_str("close($temp_fh);\n");
+                        output.push_str("open(STDIN, '<', '/tmp/here_string_temp') or die \"Cannot open temp file: $!\\n\";\n");
+                    }
+                }
+                RedirectOperator::Heredoc | RedirectOperator::HeredocTabs => {
+                    // Heredoc: command << delimiter
+                    // Skip heredoc handling for 'cat' command since it's handled specially in the cat command handler
+                    if cmd.name != "cat" {
+                        if let Some(body) = &redir.heredoc_body {
+                            // Create a temporary file with the heredoc content
+                            output.push_str(&format!("my $temp_content = {};\n", self.perl_string_literal(body)));
+                            output.push_str("open(my $temp_fh, '>', '/tmp/heredoc_temp') or die \"Cannot create temp file: $!\\n\";\n");
+                            output.push_str("print $temp_fh $temp_content;\n");
+                            output.push_str("close($temp_fh);\n");
+                            output.push_str("open(STDIN, '<', '/tmp/heredoc_temp') or die \"Cannot open temp file: $!\\n\";\n");
+                        }
+                    }
+                }
+                _ => {
+                    // Other redirects not yet implemented
+                    output.push_str(&format!("# Redirect {:?} not yet implemented\n", redir.operator));
+                }
+            }
+        }
+        
         if has_env { output.push_str("}\n"); }
         output
     }
@@ -421,14 +658,14 @@ impl PerlGenerator {
             for (i, command) in pipeline.commands.iter().enumerate() {
                 if i == 0 {
                     // First command - capture output
-                    output.push_str(&format!("$output = qx({});\n", self.command_to_string(command)));
+                    output.push_str(&format!("$output = `{}`;\n", self.command_to_string(command)));
                 } else {
                     // Subsequent commands - pipe through, but handle quotes carefully
                     let cmd_str = self.command_to_string(command);
-                    // For qx, we need to handle the command string very carefully
+                    // For backticks, we need to handle the command string very carefully
                     // Use single quotes around the entire command to avoid shell interpretation
                     let escaped_cmd = cmd_str.replace("'", "'\"'\"'"); // Escape single quotes properly
-                    output.push_str(&format!("$output = qx('echo \"$output\" | {}');\n", escaped_cmd));
+                    output.push_str(&format!("$output = `echo \"$output\" | {}`;\n", escaped_cmd));
                 }
             }
             output.push_str("print($output);\n");
@@ -669,6 +906,44 @@ impl PerlGenerator {
                         }
                     }
                 }
+                Word::StringInterpolation(interp) => {
+                    // Handle string interpolation specially for for loops
+                    if interp.parts.len() == 1 {
+                        if let StringPart::Variable(var) = &interp.parts[0] {
+                            if var.ends_with("[@]") {
+                                // This is arr[@] - convert to @arr without quotes
+                                let array_name = &var[..var.len()-3];
+                                format!("@{}", array_name)
+                            } else if var.starts_with('#') && var.contains('[') {
+                                // This is #arr[@] - convert to scalar(@arr) without quotes
+                                if let Some(bracket_start) = var.find('[') {
+                                    let array_name = &var[1..bracket_start];
+                                    format!("scalar(@{})", array_name)
+                                } else {
+                                    format!("${}", var)
+                                }
+                            } else if var.contains('[') && var.ends_with(']') {
+                                // This is arr[1] - convert to $arr[1] without quotes
+                                if let Some(bracket_start) = var.find('[') {
+                                    let array_name = &var[..bracket_start];
+                                    let key = &var[bracket_start..];
+                                    format!("${}{}", array_name, key)
+                                } else {
+                                    format!("${}", var)
+                                }
+                            } else {
+                                // Regular variable - wrap in quotes
+                                format!("\"${}\"", var)
+                            }
+                        } else {
+                            // Other parts - wrap in quotes
+                            format!("\"{}\"", items[0])
+                        }
+                    } else {
+                        // Multiple parts - wrap in quotes
+                        format!("\"{}\"", items[0])
+                    }
+                }
                 _ => {
                     // Other word types
                     format!("\"{}\"", items[0])
@@ -725,8 +1000,58 @@ impl PerlGenerator {
         None
     }
 
+    fn expand_brace_expression(&self, expr: &str) -> String {
+        // Handle simple numeric ranges like {1..5}
+        if let Some(range) = self.parse_numeric_brace_range(expr) {
+            let (start, end) = range;
+            let values: Vec<String> = (start..=end).map(|i| i.to_string()).collect();
+            return format!("({})", values.join(", "));
+        }
+        
+        // Handle character ranges like {a..c}
+        if expr.contains("..") {
+            let parts: Vec<&str> = expr.split("..").collect();
+            if parts.len() == 2 {
+                if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), parts[1].chars().next()) {
+                                            if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                            let start = start_char as u8;
+                            let end = end_char as u8;
+                            if start <= end {
+                                let values: Vec<String> = (start..=end)
+                                    .map(|c| format!("'{}'", char::from(c)))
+                                    .collect();
+                                return format!("({})", values.join(", "));
+                            }
+                        }
+                }
+            }
+        }
+        
+        // Handle step ranges like {00..04..2}
+        if expr.matches("..").count() == 2 {
+            let parts: Vec<&str> = expr.split("..").collect();
+            if parts.len() == 3 {
+                if let (Ok(start), Ok(end), Ok(step)) = (parts[0].parse::<i64>(), parts[2].parse::<i64>(), parts[1].parse::<i64>()) {
+                    let mut values = Vec::new();
+                    let mut current = start;
+                    while current <= end {
+                        values.push(current.to_string());
+                        current += step;
+                    }
+                    return format!("({})", values.join(", "));
+                }
+            }
+        }
+        
+        // If no expansion possible, return as literal
+        format!("'{}'", expr)
+    }
+
     fn generate_function(&mut self, func: &Function) -> String {
         let mut output = String::new();
+        
+        // Track that this function is defined
+        self.declared_functions.insert(func.name.clone());
         
         output.push_str(&format!("sub {} {{\n", func.name));
         self.indent_level += 1;
@@ -863,8 +1188,32 @@ impl PerlGenerator {
                     } else if var == "9" {
                         result.push_str("$_[8]");
                     } else {
-                        // For simple variable names, use $var instead of ${var}
-                        result.push_str(&format!("${}", var));
+                        // Check for special shell array syntax
+                        if var.starts_with('#') && var.contains('[') {
+                            // This is #arr[@] - convert to scalar(@arr) in Perl
+                            if let Some(bracket_start) = var.find('[') {
+                                let array_name = &var[1..bracket_start]; // Skip the # prefix
+                                result.push_str(&format!("scalar(@{})", array_name));
+                            } else {
+                                result.push_str(&format!("${}", var));
+                            }
+                        } else if var.ends_with("[@]") {
+                            // This is arr[@] - convert to @arr in Perl
+                            let array_name = &var[..var.len()-3]; // Remove [@] suffix
+                            result.push_str(&format!("@{}", array_name));
+                        } else if var.contains('[') && var.ends_with(']') {
+                            // This is arr[1] - convert to $arr[1] in Perl
+                            if let Some(bracket_start) = var.find('[') {
+                                let array_name = &var[..bracket_start];
+                                let key = &var[bracket_start..];
+                                result.push_str(&format!("${}{}", array_name, key));
+                            } else {
+                                result.push_str(&format!("${}", var));
+                            }
+                        } else {
+                            // For simple variable names, use $var instead of ${var}
+                            result.push_str(&format!("${}", var));
+                        }
                     }
                 }
                 StringPart::Arithmetic(arith) => {
@@ -929,7 +1278,10 @@ impl PerlGenerator {
 
     fn word_to_perl_for_test(&self, word: &Word) -> String {
         match word {
-            Word::Literal(s) => self.perl_string_literal(s),
+            Word::Literal(s) => {
+                // For test commands, use single quotes to match test expectations
+                format!("'{}'", self.escape_perl_string(s))
+            },
             Word::Variable(var) => format!("${}", var),
             Word::Arithmetic(expr) => self.convert_arithmetic_to_perl(&expr.expression),
             Word::BraceExpansion(expansion) => {
@@ -939,18 +1291,18 @@ impl PerlGenerator {
                         BraceItem::Range(range) => {
                             format!("({}..{})", range.start, range.end)
                         }
-                        BraceItem::Literal(s) => self.perl_string_literal(s),
+                        BraceItem::Literal(s) => format!("'{}'", self.escape_perl_string(s)),
                         BraceItem::Sequence(seq) => {
-                            format!("({})", seq.iter().map(|s| self.perl_string_literal(s)).collect::<Vec<_>>().join(", "))
+                            format!("({})", seq.iter().map(|s| format!("'{}'", self.escape_perl_string(s))).collect::<Vec<_>>().join(", "))
                         }
                     }
                 } else {
                     // Multiple items
                     let parts: Vec<String> = expansion.items.iter().map(|item| {
                         match item {
-                            BraceItem::Literal(s) => self.perl_string_literal(s),
+                            BraceItem::Literal(s) => format!("'{}'", self.escape_perl_string(s)),
                             BraceItem::Range(range) => format!("({}..{})", range.start, range.end),
-                            BraceItem::Sequence(seq) => format!("({})", seq.iter().map(|s| self.perl_string_literal(s)).collect::<Vec<_>>().join(", ")),
+                            BraceItem::Sequence(seq) => format!("({})", seq.iter().map(|s| format!("'{}'", self.escape_perl_string(s))).collect::<Vec<_>>().join(", ")),
                         }
                     }).collect();
                     format!("({})", parts.join(", "))
@@ -961,7 +1313,7 @@ impl PerlGenerator {
                 // For test commands, simple literal strings need to be quoted
                 if interp.parts.len() == 1 {
                     if let StringPart::Literal(s) = &interp.parts[0] {
-                        return format!("\"{}\"", self.escape_perl_string(s));
+                        return format!("'{}'", self.escape_perl_string(s));
                     }
                 }
                 self.convert_string_interpolation_to_perl(interp)

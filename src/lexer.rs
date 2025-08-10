@@ -141,6 +141,8 @@ pub enum Token {
     Heredoc,
     #[token("<<-")]
     HeredocTabs,
+    #[token("<<<")]
+    HereString,
     #[token(">&")]
     RedirectOutErr,
     #[token("<&")]
@@ -186,7 +188,7 @@ pub enum Token {
     DollarBraceBangAt,
 
     // Arithmetic
-    #[token("$((")]
+    #[token("$((", priority = 1)]
     Arithmetic,
     #[token("$[")]
     ArithmeticBracket,

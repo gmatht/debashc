@@ -165,12 +165,38 @@ impl RustGenerator {
                     
                     if !has_vars && cmd.args.len() == 1 {
                         // Simple case: single literal string
-                        let escaped = self.escape_rust_string(&cmd.args[0]);
-                        output.push_str(&format!("println!(\"{}\");\n", escaped));
+                        match &cmd.args[0] {
+                            Word::Variable(var) => {
+                                output.push_str(&format!("println!(\"{{}}\", {});\n", var));
+                            }
+                            _ => {
+                                let arg_str = cmd.args[0].to_string();
+                                let clean_str = if arg_str.starts_with('"') && arg_str.ends_with('"') {
+                                    &arg_str[1..arg_str.len()-1]
+                                } else {
+                                    &arg_str
+                                };
+                                let escaped = self.escape_rust_string(clean_str);
+                                output.push_str(&format!("println!(\"{}\");\n", escaped));
+                            }
+                        }
                     } else if !has_vars {
                         // Multiple literal strings - join them with space
                         let escaped = cmd.args.iter()
-                            .map(|arg| self.escape_rust_string(arg))
+                            .map(|arg| {
+                                match arg {
+                                    Word::Variable(var) => format!("{{{}}}", var),
+                                    _ => {
+                                        let arg_str = arg.to_string();
+                                        let clean_str = if arg_str.starts_with('"') && arg_str.ends_with('"') {
+                                            &arg_str[1..arg_str.len()-1]
+                                        } else {
+                                            &arg_str
+                                        };
+                                        self.escape_rust_string(clean_str)
+                                    }
+                                }
+                            })
                             .collect::<Vec<_>>()
                             .join(" ");
                         output.push_str(&format!("println!(\"{}\");\n", escaped));
@@ -178,11 +204,20 @@ impl RustGenerator {
                         // Complex case with variables - use Vec approach
                         output.push_str("let __echo_parts: Vec<String> = vec![\n");
                         for arg in &cmd.args {
-                            if let Some(name) = Self::extract_var_name(arg) {
-                                output.push_str(&format!("    std::env::var(\"{}\").unwrap_or_default(),\n", name));
-                            } else {
-                                let escaped = self.escape_rust_string(arg);
-                                output.push_str(&format!("    \"{}\".to_string(),\n", escaped));
+                            match arg {
+                                Word::Variable(var) => {
+                                    output.push_str(&format!("    {}.to_string(),\n", var));
+                                }
+                                _ => {
+                                    let arg_str = arg.to_string();
+                                    let clean_str = if arg_str.starts_with('"') && arg_str.ends_with('"') {
+                                        &arg_str[1..arg_str.len()-1]
+                                    } else {
+                                        &arg_str
+                                    };
+                                    let escaped = self.escape_rust_string(clean_str);
+                                    output.push_str(&format!("    \"{}\".to_string(),\n", escaped));
+                                }
                             }
                         }
                         output.push_str("];\n");
@@ -545,17 +580,35 @@ impl RustGenerator {
                         match test_op.as_str() {
                             "-f" => {
                                 if let Some(file) = cmd.args.get(1) {
-                                    return format!("fs::metadata(\"{}\").is_ok()", file);
+                                    let file_str = file.to_string();
+                                    let clean_file = if file_str.starts_with('"') && file_str.ends_with('"') {
+                                        &file_str[1..file_str.len()-1]
+                                    } else {
+                                        &file_str
+                                    };
+                                    return format!("fs::metadata(\"{}\").is_ok()", clean_file);
                                 }
                             }
                             "-d" => {
                                 if let Some(dir) = cmd.args.get(1) {
-                                    return format!("fs::metadata(\"{}\").map(|m| m.is_dir()).unwrap_or(false)", dir);
+                                    let dir_str = dir.to_string();
+                                    let clean_dir = if dir_str.starts_with('"') && dir_str.ends_with('"') {
+                                        &dir_str[1..dir_str.len()-1]
+                                    } else {
+                                        &dir_str
+                                    };
+                                    return format!("fs::metadata(\"{}\").map(|m| m.is_dir()).unwrap_or(false)", clean_dir);
                                 }
                             }
                             "-e" => {
                                 if let Some(path) = cmd.args.get(1) {
-                                    return format!("fs::metadata(\"{}\").is_ok()", path);
+                                    let path_str = path.to_string();
+                                    let clean_path = if path_str.starts_with('"') && path_str.ends_with('"') {
+                                        &path_str[1..path_str.len()-1]
+                                    } else {
+                                        &path_str
+                                    };
+                                    return format!("fs::metadata(\"{}\").is_ok()", clean_path);
                                 }
                             }
                             "-lt" => {
