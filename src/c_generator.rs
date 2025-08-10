@@ -176,7 +176,7 @@ impl CGenerator {
                 self.indent_level += 1;
                 self.loop_vars.push((var.clone(), LoopVarType::Integer));
                 out.push_str(&self.indent());
-                out.push_str(&self.generate_command(&for_loop.body));
+                out.push_str(&self.generate_block(&for_loop.body));
                 self.loop_vars.pop();
                 self.indent_level -= 1;
                 out.push_str(&self.indent());
@@ -205,7 +205,7 @@ impl CGenerator {
                     out.push_str(&format!("const char* {} = {}[__idx_{}];\n", var, arr_name, var));
                     self.loop_vars.push((var.clone(), LoopVarType::String));
                     out.push_str(&self.indent());
-                    out.push_str(&self.generate_command(&for_loop.body));
+                    out.push_str(&self.generate_block(&for_loop.body));
                     self.loop_vars.pop();
                     self.indent_level -= 1;
                     out.push_str(&self.indent());

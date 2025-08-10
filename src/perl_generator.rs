@@ -442,9 +442,11 @@ impl PerlGenerator {
         
         self.indent_level += 1;
         
-        // Generate body
-        output.push_str(&self.indent());
-        output.push_str(&self.generate_command(&while_loop.body));
+        // Generate body commands
+        for command in &while_loop.body.commands {
+            output.push_str(&self.indent());
+            output.push_str(&self.generate_command(command));
+        }
         
         self.indent_level -= 1;
         output.push_str("}\n");
@@ -474,8 +476,13 @@ impl PerlGenerator {
             // For loop with no items (infinite loop)
             output.push_str("while (1) {\n");
             self.indent_level += 1;
-            output.push_str(&self.indent());
-            output.push_str(&self.generate_command(&for_loop.body));
+            
+            // Generate body commands
+            for command in &for_loop.body.commands {
+                output.push_str(&self.indent());
+                output.push_str(&self.generate_command(command));
+            }
+            
             self.indent_level -= 1;
             output.push_str("}\n");
         } else {
@@ -484,71 +491,49 @@ impl PerlGenerator {
             if for_loop.items.len() == 1 {
                 let first = &for_loop.items[0];
                 // Special-case "$@" to iterate over @ARGV
-                if first == "$@" || first == "${@}" {
-                    output.push_str(&format!("my ${};\n", for_loop.variable));
-                    self.declared_locals.insert(for_loop.variable.clone());
-                    output.push_str(&format!(
-                        "foreach ${} (@ARGV) {{\n",
-                        for_loop.variable
-                    ));
-                    self.indent_level += 1;
-                    output.push_str(&self.indent());
-                    output.push_str(&self.generate_command(&for_loop.body));
-                    self.indent_level -= 1;
-                    output.push_str("}\n");
-                    return output;
+                if first == "$@" {
+                    output.push_str(&format!("for my ${} (@ARGV) {{\n", for_loop.variable));
+                } else if first.starts_with('{') && first.ends_with('}') {
+                    // Handle brace expansion like {1..5}
+                    let inner = &first[1..first.len()-1];
+                    if let Some((start, end)) = self.parse_numeric_brace_range(inner) {
+                        output.push_str(&format!("for my ${} ({}..{}) {{\n", for_loop.variable, start, end));
+                    } else {
+                        // Fallback: treat as literal list
+                        output.push_str(&format!("for my ${} ({}) {{\n", for_loop.variable, first));
+                    }
+                } else if first.starts_with('$') {
+                    // Variable expansion
+                    output.push_str(&format!("for my ${} (@{{{}}}) {{\n", for_loop.variable, first));
+                } else {
+                    // Regular word list
+                    output.push_str(&format!("for my ${} ({}) {{\n", for_loop.variable, first));
                 }
-                if let Some((start, end)) = self.parse_numeric_brace_range(first) {
-                    // Always declare variable at the start
-                    output.push_str(&format!("my ${};\n", for_loop.variable));
-                    self.declared_locals.insert(for_loop.variable.clone());
-                    output.push_str(&format!(
-                        "foreach my ${} ({}..{}) {{\n",
-                        for_loop.variable, start, end
-                    ));
-                    self.indent_level += 1;
-                    output.push_str(&self.indent());
-                    output.push_str(&self.generate_command(&for_loop.body));
-                    self.indent_level -= 1;
-                    output.push_str("}\n");
-                    // After the loop, set the variable to the next value (bash behavior)
-                    output.push_str(&format!("${} = {};\n", for_loop.variable, end + 1));
-                    return output;
-                } else if let Some((start, end)) = self.parse_seq_command(first) {
-                    // Always declare variable at the start
-                    output.push_str(&format!("my ${};\n", for_loop.variable));
-                    self.declared_locals.insert(for_loop.variable.clone());
-                    output.push_str(&format!(
-                        "foreach my ${} ({}..{}) {{\n",
-                        for_loop.variable, start, end
-                    ));
-                    self.indent_level += 1;
-                    output.push_str(&self.indent());
-                    output.push_str(&self.generate_command(&for_loop.body));
-                    self.indent_level -= 1;
-                    output.push_str("}\n");
-                    // After the loop, set the variable to the next value (bash behavior)
-                    output.push_str(&format!("${} = {};\n", for_loop.variable, end + 1));
-                    return output;
-                }
+            } else {
+                // Multiple items
+                let items_str = for_loop.items.join(", ");
+                output.push_str(&format!("for my ${} ({}) {{\n", for_loop.variable, items_str));
             }
-
-            // Always declare variable at the start
-            output.push_str(&format!("my ${};\n", for_loop.variable));
-            self.declared_locals.insert(for_loop.variable.clone());
-            output.push_str(&format!(
-                "foreach my ${} (qw({})) {{\n",
-                for_loop.variable,
-                for_loop.items.join(" ")
-            ));
+            
             self.indent_level += 1;
-            output.push_str(&self.indent());
-            output.push_str(&self.generate_command(&for_loop.body));
+            
+            // Generate body commands
+            for command in &for_loop.body.commands {
+                output.push_str(&self.indent());
+                output.push_str(&self.generate_command(command));
+            }
+            
             self.indent_level -= 1;
             output.push_str("}\n");
-            // After the loop, set the variable to the last value (bash behavior)
-            if let Some(last_item) = for_loop.items.last() {
-                output.push_str(&format!("${} = {};\n", for_loop.variable, last_item));
+            
+            // After the loop, set the variable to the next value (bash behavior)
+            if for_loop.items.len() == 1 {
+                let first = &for_loop.items[0];
+                if first.starts_with('{') && first.ends_with('}') {
+                    if let Some((start, end)) = self.parse_numeric_brace_range(first) {
+                        output.push_str(&format!("${} = {};\n", for_loop.variable, end + 1));
+                    }
+                }
             }
         }
         
@@ -596,8 +581,13 @@ impl PerlGenerator {
         
         output.push_str(&format!("sub {} {{\n", func.name));
         self.indent_level += 1;
-        output.push_str(&self.indent());
-        output.push_str(&self.generate_command(&func.body));
+        
+        // Generate body commands
+        for command in &func.body.commands {
+            output.push_str(&self.indent());
+            output.push_str(&self.generate_command(command));
+        }
+        
         self.indent_level -= 1;
         output.push_str("}\n");
         

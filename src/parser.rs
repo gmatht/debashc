@@ -640,10 +640,13 @@ impl Parser {
             self.lexer.next();
         }
 
-        // Parse body (first command)
-        let body = Box::new(self.parse_command()?);
+        // Parse body commands into a Block
+        let mut body_commands = Vec::new();
+        
+        // Parse first command
+        body_commands.push(self.parse_command()?);
 
-        // Consume additional commands in body until 'done' (discard for now)
+        // Parse additional commands in body until 'done'
         loop {
             // Skip separators
             while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn | Token::Semicolon)) {
@@ -652,12 +655,11 @@ impl Parser {
             match self.lexer.peek() {
                 Some(Token::Done) | None => break,
                 _ => {
-                    // Parse and discard extra commands in the loop body
+                    // Parse and add command to body
                     let pre_pos = self.lexer.current_position();
-                    let _ = self.parse_command()?;
-                    // Progress guard
+                    let command = self.parse_command()?;
+                    body_commands.push(command);
                     if self.lexer.current_position() == pre_pos {
-                        // Consume one token to avoid infinite loop
                         if self.lexer.next().is_none() { break; }
                     }
                 }
@@ -667,16 +669,23 @@ impl Parser {
         // Allow optional separator after body before 'done'
         loop {
             match self.lexer.peek() {
-                Some(Token::Space) | Some(Token::Tab) | Some(Token::Comment) | Some(Token::Newline) | Some(Token::CarriageReturn) => { self.lexer.next(); continue; }
-                Some(Token::Semicolon) => { self.lexer.next(); continue; }
+                Some(Token::Space) | Some(Token::Tab) | Some(Token::Comment) | Some(Token::Newline | Token::CarriageReturn) => {
+                    self.lexer.next();
+                    continue;
+                }
+                Some(Token::Semicolon) => {
+                    self.lexer.next();
+                    // consume any following whitespace/newlines as well
+                    continue;
+                }
                 _ => {}
             }
             break;
         }
 
-        // Expect 'done'
         self.lexer.consume(Token::Done)?;
         
+        let body = Block { commands: body_commands };
         Ok(Command::While(WhileLoop { condition, body }))
     }
 
@@ -731,9 +740,14 @@ impl Parser {
             self.lexer.next();
         }
         self.lexer.consume(Token::Do)?;
-        let body = Box::new(self.parse_command()?);
+        
+        // Parse body commands into a Block
+        let mut body_commands = Vec::new();
+        
+        // Parse first command
+        body_commands.push(self.parse_command()?);
 
-        // Consume additional commands in body until 'done' (discard for now)
+        // Parse additional commands in body until 'done'
         loop {
             // Skip separators
             while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn | Token::Semicolon)) {
@@ -742,9 +756,10 @@ impl Parser {
             match self.lexer.peek() {
                 Some(Token::Done) | None => break,
                 _ => {
-                    // Parse and discard extra commands in the loop body
+                    // Parse and add command to body
                     let pre_pos = self.lexer.current_position();
-                    let _ = self.parse_command()?;
+                    let command = self.parse_command()?;
+                    body_commands.push(command);
                     if self.lexer.current_position() == pre_pos {
                         if self.lexer.next().is_none() { break; }
                     }
@@ -755,7 +770,7 @@ impl Parser {
         // Allow optional separator after body before 'done'
         loop {
             match self.lexer.peek() {
-                Some(Token::Space) | Some(Token::Tab) | Some(Token::Comment) | Some(Token::Newline) | Some(Token::CarriageReturn) => {
+                Some(Token::Space) | Some(Token::Tab) | Some(Token::Comment) | Some(Token::Newline | Token::CarriageReturn) => {
                     self.lexer.next();
                     continue;
                 }
@@ -771,6 +786,7 @@ impl Parser {
 
         self.lexer.consume(Token::Done)?;
         
+        let body = Block { commands: body_commands };
         Ok(Command::For(ForLoop {
             variable,
             items,
@@ -818,33 +834,39 @@ impl Parser {
             while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
                 self.lexer.next();
             }
-            // Parse first command as the body node
-            let first = Box::new(self.parse_command()?);
+            
+            // Parse body commands into a Block
+            let mut body_commands = Vec::new();
+            
+            // Parse first command
+            body_commands.push(self.parse_command()?);
 
-            // Consume any additional commands inside the block (ignored for now)
-        loop {
+            // Parse additional commands inside the block
+            loop {
                 // Skip separators
                 while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon)) {
                     self.lexer.next();
                 }
                 match self.lexer.peek() {
                     Some(Token::BraceClose) | None => break,
-                _ => {
-                    let pre_pos = self.lexer.current_position();
-                    let _ = self.parse_command()?;
-                    if self.lexer.current_position() == pre_pos {
-                        if self.lexer.next().is_none() { break; }
+                    _ => {
+                        let pre_pos = self.lexer.current_position();
+                        let command = self.parse_command()?;
+                        body_commands.push(command);
+                        if self.lexer.current_position() == pre_pos {
+                            if self.lexer.next().is_none() { break; }
+                        }
                     }
-                }
                 }
             }
 
             // Expect closing '}'
             self.lexer.consume(Token::BraceClose)?;
-            first
+            Block { commands: body_commands }
         } else {
             // Fallback: parse next as a single command body
-            Box::new(self.parse_command()?)
+            let command = self.parse_command()?;
+            Block { commands: vec![command] }
         };
         
         Ok(Command::Function(Function { name, body }))

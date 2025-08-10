@@ -45,20 +45,20 @@ pub struct IfStatement {
 #[derive(Debug, Clone, PartialEq)]
 pub struct WhileLoop {
     pub condition: Box<Command>,
-    pub body: Box<Command>,
+    pub body: Block,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForLoop {
     pub variable: String,
     pub items: Vec<String>,
-    pub body: Box<Command>,
+    pub body: Block,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: String,
-    pub body: Box<Command>,
+    pub body: Block,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -213,7 +213,7 @@ impl LuaGenerator {
         lua_code.push_str(" do\n");
         
         self.indent_level += 1;
-        lua_code.push_str(&self.generate_command(&while_loop.body));
+        lua_code.push_str(&self.generate_block(&while_loop.body));
         self.indent_level -= 1;
         
         lua_code.push_str("end\n");
@@ -228,7 +228,7 @@ impl LuaGenerator {
             for_loop.items.join(", ")));
         
         self.indent_level += 1;
-        lua_code.push_str(&self.generate_command(&for_loop.body));
+        lua_code.push_str(&self.generate_block(&for_loop.body));
         self.indent_level -= 1;
         
         lua_code.push_str("end\n");
@@ -241,7 +241,7 @@ impl LuaGenerator {
         lua_code.push_str(&format!("function {}(...)\n", func.name));
         
         self.indent_level += 1;
-        lua_code.push_str(&self.generate_command(&func.body));
+        lua_code.push_str(&self.generate_block(&func.body));
         self.indent_level -= 1;
         
         lua_code.push_str("end\n");

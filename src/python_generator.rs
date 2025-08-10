@@ -287,7 +287,7 @@ impl PythonGenerator {
         
         // Generate body
         output.push_str(&self.indent());
-        output.push_str(&self.generate_command(&while_loop.body));
+        output.push_str(&self.generate_block(&while_loop.body));
         
         self.indent_level -= 1;
         
@@ -302,7 +302,7 @@ impl PythonGenerator {
             output.push_str("while True:\n");
             self.indent_level += 1;
             output.push_str(&self.indent());
-            output.push_str(&self.generate_command(&for_loop.body));
+            output.push_str(&self.generate_block(&for_loop.body));
             self.indent_level -= 1;
         } else {
             // For loop with items
@@ -315,7 +315,7 @@ impl PythonGenerator {
             }
             self.indent_level += 1;
             output.push_str(&self.indent());
-            output.push_str(&self.generate_command(&for_loop.body));
+            output.push_str(&self.generate_block(&for_loop.body));
             self.indent_level -= 1;
         }
         
@@ -328,7 +328,7 @@ impl PythonGenerator {
         output.push_str(&format!("def {}():\n", func.name));
         self.indent_level += 1;
         output.push_str(&self.indent());
-        output.push_str(&self.generate_command(&func.body));
+        output.push_str(&self.generate_block(&func.body));
         self.indent_level -= 1;
         
         output

@@ -419,8 +419,9 @@ impl RustGenerator {
         output.push_str(" {\n");
         
         self.indent_level += 1;
-        let body_chunk = self.generate_command(&while_loop.body);
-        output.push_str(&self.indent_block(&body_chunk));
+        // Generate the body
+        let body_chunk = self.generate_block(&while_loop.body);
+        output.push_str(&body_chunk);
         self.indent_level -= 1;
         
         output.push_str("}\n");
@@ -435,7 +436,7 @@ impl RustGenerator {
             // Infinite loop
             output.push_str("loop {\n");
             self.indent_level += 1;
-            let body_chunk = self.generate_command(&for_loop.body);
+            let body_chunk = self.generate_block(&for_loop.body);
             output.push_str(&self.indent_block(&body_chunk));
             self.indent_level -= 1;
             output.push_str("}\n");
@@ -448,7 +449,7 @@ impl RustGenerator {
                 output.push_str(&self.indent());
                 output.push_str(&format!("let {} = arg;\n", for_loop.variable));
                 output.push_str(&self.indent());
-                output.push_str(&self.generate_command(&for_loop.body));
+                output.push_str(&self.generate_block(&for_loop.body));
                 self.indent_level -= 1;
                 output.push_str("}\n");
             } else {
@@ -466,7 +467,9 @@ impl RustGenerator {
                 output.push_str(&format!("for {} in &[{}] {{\n", for_loop.variable, items_str));
                 self.indent_level += 1;
                 output.push_str(&self.indent());
-                output.push_str(&self.generate_command(&for_loop.body));
+                // Generate the body
+                let body_chunk = self.generate_block(&for_loop.body);
+                output.push_str(&body_chunk);
                 self.indent_level -= 1;
                 output.push_str("}\n");
             }
@@ -480,7 +483,7 @@ impl RustGenerator {
         
         output.push_str(&format!("fn {}() {{\n", func.name));
         self.indent_level += 1;
-        let body_chunk = self.generate_command(&func.body);
+        let body_chunk = self.generate_block(&func.body);
         output.push_str(&self.indent_block(&body_chunk));
         self.indent_level -= 1;
         output.push_str("}\n");
