@@ -29,9 +29,7 @@ impl RustGenerator {
         output.push_str("    Ok(())\n");
         output.push_str("}\n");
 
-        // Normalize trailing newlines: ensure at most one
-        while output.ends_with("\n\n") { output.pop(); }
-        if !output.ends_with('\n') { output.push('\n'); }
+        while output.ends_with('\n') { output.pop(); }
         output
     }
 

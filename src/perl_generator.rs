@@ -19,9 +19,8 @@ impl PerlGenerator {
         for command in commands {
             output.push_str(&self.generate_command(command));
         }
-        // Normalize trailing newlines: ensure at most one
-        while output.ends_with("\n\n") { output.pop(); }
-        if !output.ends_with('\n') { output.push('\n'); }
+        // Remove all trailing newlines
+        while output.ends_with('\n') { output.pop(); }
         output
     }
 

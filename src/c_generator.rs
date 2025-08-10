@@ -34,8 +34,7 @@ impl CGenerator {
         output.push_str("return 0;\n");
         self.indent_level -= 1;
         output.push_str("}\n");
-        while output.ends_with("\n\n") { output.pop(); }
-        if !output.ends_with('\n') { output.push('\n'); }
+        while output.ends_with('\n') { output.pop(); }
         output
     }
 
