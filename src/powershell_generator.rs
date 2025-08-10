@@ -41,7 +41,7 @@ impl PowerShellGenerator {
 
     fn simple(&self, cmd: &SimpleCommand) -> String {
         if cmd.name == "echo" {
-            if cmd.args.is_empty() { "Write-Output \"\"\n".to_string() } else { format!("Write-Output {}\n", self.quote_join(&cmd.args)) }
+            if cmd.args.is_empty() { "Write-Output \"\"\n".to_string() } else { format!("Write-Output {}\n", self.quote_join(&cmd.args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>())) }
         } else if cmd.name == "shopt" {
             // Builtin: ignore
             return String::from("# builtin\n");
@@ -68,7 +68,7 @@ impl PowerShellGenerator {
             }
             return output;
         } else {
-            if cmd.args.is_empty() { format!("{}\n", cmd.name) } else { format!("{} {}\n", cmd.name, self.quote_join(&cmd.args)) }
+            if cmd.args.is_empty() { format!("{}\n", cmd.name) } else { format!("{} {}\n", cmd.name, self.quote_join(&cmd.args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>())) }
         }
     }
 
@@ -76,7 +76,7 @@ impl PowerShellGenerator {
         let mut parts: Vec<String> = Vec::new();
         for c in &p.commands {
             if let Command::Simple(s) = c {
-                if s.args.is_empty() { parts.push(s.name.clone()); } else { parts.push(format!("{} {}", s.name, self.quote_join(&s.args))); }
+                if s.args.is_empty() { parts.push(s.name.to_string()); } else { parts.push(format!("{} {}", s.name, self.quote_join(&s.args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>()))); }
             }
         }
         format!("{}\n", parts.join(" | "))

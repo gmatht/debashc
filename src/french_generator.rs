@@ -18,14 +18,14 @@ impl FrenchGenerator {
         match c {
             Command::Simple(cmd) => {
                 if cmd.name == "echo" {
-                    if cmd.args.is_empty() { "Afficher une ligne vide.\n".to_string() } else { format!("Afficher: {}.\n", cmd.args.join(" ")) }
+                    if cmd.args.is_empty() { "Afficher une ligne vide.\n".to_string() } else { format!("Afficher: {}.\n", cmd.args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>().join(" ")) }
                 } else {
-                    if cmd.args.is_empty() { format!("Exécuter '{}'.\n", cmd.name) } else { format!("Exécuter '{}' avec les arguments '{}'.\n", cmd.name, cmd.args.join(" ")) }
+                    if cmd.args.is_empty() { format!("Exécuter '{}'.\n", cmd.name) } else { format!("Exécuter '{}' avec les arguments '{}'.\n", cmd.name, cmd.args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>().join(" ")) }
                 }
             }
             Command::Pipeline(p) => {
                 let mut s = String::from("Créer un pipeline: ");
-                let parts: Vec<String> = p.commands.iter().map(|pc| match pc { Command::Simple(sc) => sc.name.clone(), _ => String::from("commande") }).collect();
+                let parts: Vec<String> = p.commands.iter().map(|pc| match pc { Command::Simple(sc) => sc.name.to_string(), _ => String::from("commande") }).collect();
                 s.push_str(&parts.join(" | "));
                 s.push_str(".\n");
                 s

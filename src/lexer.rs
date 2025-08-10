@@ -65,7 +65,7 @@ pub enum Token {
     Exec,
     #[token("source")]
     Source,
-    #[token(".", priority = 0)]
+    #[token(".", priority = 2)]
     SourceDot,
     #[token("trap")]
     Trap,
@@ -93,6 +93,8 @@ pub enum Token {
     Semicolon,
     #[token(";;")]
     DoubleSemicolon,
+    #[token("..")]
+    Range,
     #[token("(")]
     ParenOpen,
     #[token(")")]
@@ -295,7 +297,7 @@ pub enum Token {
     Minus,
     #[token("*")]
     Star,
-    #[token("/", priority = 0)]
+    #[token("/", priority = 2)]
     Slash,
     #[token("\\", priority = 1)]
     Backslash,
@@ -313,6 +315,8 @@ pub enum Token {
     DoubleQuote,
     #[token("\\", priority = 2)]
     Escape,
+    #[token(",")]
+    Comma,
     #[regex(r"\n", priority = 3)]
     Newline,
     #[token("\r")]

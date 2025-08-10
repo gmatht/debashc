@@ -42,45 +42,24 @@ struct TestResult {
     translated_stderr: String,
     shell_exit: i32,
     translated_exit: i32,
+    original_code: String,
+    translated_code: String,
+    ast: String,
+    lexer_output: String,
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
     
     if args.len() < 2 {
-        println!("Usage: {} <command> [input]", args[0]);
-        println!("Commands:");
-        println!("  lex <input>     - Tokenize shell script");
-        println!("  parse <input>   - Parse shell script to AST");
-        println!("  parse --perl <input> - Convert shell script to Perl");
-        println!("  parse --rust <input> - Convert shell script to Rust");
-        println!("  parse --python <input> - Convert shell script to Python");
-        println!("  parse --lua <input> - Convert shell script to Lua");
-        println!("  parse --c <input> - Convert shell script to C");
-        println!("  parse --js <input> - Convert shell script to JavaScript (Node.js)");
-        println!("  parse --english <input> - Generate English pseudocode");
-        println!("  parse --french <input> - Générer du pseudo-code en français");
-        println!("  parse --comment <input> - Output original SH with English pseudocode comments");
-        println!("  parse --bat <input> - Convert shell script to Windows Batch");
-        println!("  parse --ps <input> - Convert shell script to PowerShell");
-        println!("  parse --run <perl|python|rust|lua|js|ps> <input> - Generate and run code");
-        println!("  file <filename> - Parse shell script from file");
-        println!("  file --perl <filename> - Convert shell script file to Perl");
-        println!("  file --rust <filename> - Convert shell script file to Rust");
-        println!("  file --python <filename> - Convert shell script file to Python");
-        println!("  file --lua <filename> - Convert shell script file to Lua");
-        println!("  file --c <filename> - Convert shell script file to C");
-        println!("  file --js <filename> - Convert shell script file to JavaScript (Node.js)");
-        println!("  file --english <filename> - Generate English pseudocode from file");
-        println!("  file --french <filename> - Générer du pseudo-code en français (fichier)");
-        println!("  file --comment <filename> - Output original SH with English pseudocode comments");
-        println!("  file --bat <filename> - Convert shell script file to Windows Batch");
-        println!("  file --ps <filename> - Convert shell script file to PowerShell");
-        println!("  file --test-file <perl|python|rust|lua|js|ps> <filename> - Compare outputs of .sh vs translated");
-        println!("  file --run <perl|python|rust|lua|js|ps> <filename> - Generate and run from file");
-        println!("  --test-file <perl|python|rust|lua|js|ps> <filename> - Same as file --test-file (top-level)");
-        println!("  --test-eq - Test all generators against all examples");
-        println!("  --next-fail - Test all generators against all examples, exit after first failure with diff");
+        show_help(&args[0]);
+        return;
+    }
+    
+    let command = &args[1];
+    
+    if command == "--help" || command == "-h" {
+        show_help(&args[0]);
         return;
     }
     
@@ -570,37 +549,63 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str) -> Result<TestResu
     // Parse and generate target language code
     let commands = match Parser::new(&shell_content).parse() {
         Ok(c) => c,
-        Err(e) => { return Err(format!("Failed to parse {}: {:?}", filename, e)); }
+        Err(e) => { 
+            // Capture lexer output for debugging
+            let mut lexer = Lexer::new(&shell_content);
+            let mut lexer_output = String::new();
+            let mut token_count = 0;
+            
+            while !lexer.is_eof() && token_count < 1000 { // Limit to prevent infinite loops
+                if let Some(token) = lexer.peek() {
+                    let current_pos = lexer.current_position();
+                    let (line, col) = lexer.offset_to_line_col(current_pos);
+                    lexer_output.push_str(&format!("{:?} at {}:{}\n", token, line, col));
+                    lexer.next(); // Advance to next token
+                    token_count += 1;
+                } else {
+                    break;
+                }
+            }
+            
+            if token_count >= 1000 {
+                lexer_output.push_str("... (lexer output truncated at 1000 tokens)\n");
+            }
+            
+            return Err(format!("Failed to parse {}: {:?}\n\nLexer output:\n{}", filename, e, lexer_output)); 
+        }
     };
 
-    let (tmp_file, run_cmd) = match lang {
+    // Capture AST for output
+    let ast = format!("{:#?}", commands);
+
+    let (tmp_file, run_cmd, translated_code) = match lang {
         "perl" => {
             let mut gen = PerlGenerator::new();
             let code = gen.generate(&commands);
             let tmp = "__tmp_test_output.pl";
             if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Perl temp file: {}", e)); }
-            (tmp.to_string(), vec![if cfg!(windows) { "perl" } else { "perl" }, tmp])
+            (tmp.to_string(), vec![if cfg!(windows) { "perl" } else { "perl" }, tmp], code)
         }
         "python" => {
             let mut gen = PythonGenerator::new();
             let code = gen.generate(&commands);
             let tmp = "__tmp_test_output.py";
             if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Python temp file: {}", e)); }
-            (tmp.to_string(), vec!["python3", tmp])
+            (tmp.to_string(), vec!["python3", tmp], code)
         }
         "lua" => {
             let mut gen = LuaGenerator::new();
             let code = gen.generate(&commands);
             let tmp = "__tmp_test_output.lua";
             if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Lua temp file: {}", e)); }
-            (tmp.to_string(), vec!["lua", tmp])
+            (tmp.to_string(), vec!["lua", tmp], code)
         }
         "js" => {
             let mut gen = JsGenerator::new();
             let code = gen.generate(&commands);
             let tmp = "__tmp_test_output.js";
             if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write JS temp file: {}", e)); }
-            (tmp.to_string(), vec!["node", tmp])
+            (tmp.to_string(), vec!["node", tmp], code)
         }
         "ps" => {
             let mut gen = PowerShellGenerator::new();
@@ -609,7 +614,7 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str) -> Result<TestResu
             if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write PowerShell temp file: {}", e)); }
             let shell = if cfg!(windows) { "powershell" } else { "pwsh" };
             // Add -ExecutionPolicy Bypass to allow running unsigned scripts
-            (tmp.to_string(), vec![shell, "-ExecutionPolicy", "Bypass", "-File", tmp])
+            (tmp.to_string(), vec![shell, "-ExecutionPolicy", "Bypass", "-File", tmp], code)
         }
         "rust" => {
             let mut gen = RustGenerator::new();
@@ -628,7 +633,7 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str) -> Result<TestResu
                 Err(e) => { return Err(format!("Failed to run rustc: {}", e)); }
             }
             // We'll run compiled binary; remember to cleanup later
-            (tmp_src.to_string(), vec![out])
+            (tmp_src.to_string(), vec![out], code)
         }
         _ => { return Err(format!("Unsupported language for --test-file: {}", lang)); }
     };
@@ -717,6 +722,10 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str) -> Result<TestResu
         translated_stderr: trans_stderr,
         shell_exit: shell_output.status.code().unwrap_or(-1),
         translated_exit: translated_output.status.code().unwrap_or(-1),
+        original_code: shell_content,
+        translated_code,
+        ast,
+        lexer_output: String::new(), // No lexer output for detailed test
     })
 }
 
@@ -1351,8 +1360,8 @@ fn test_all_examples_next_fail() {
              total_tests, examples.len(), generators.len());
     println!("{}", "=".repeat(50));
     
+    for generator in &generators {
     for example in &examples {
-        for generator in &generators {
             current_test += 1;
             print!("\rTest {}/{}: {} with {:<8} ", 
                   current_test, total_tests, 
@@ -1383,15 +1392,37 @@ fn test_all_examples_next_fail() {
                         println!("Shell script exit code: {}", result.shell_exit);
                         println!("Translated code exit code: {}", result.translated_exit);
                         
+                        // Show original code
+                        println!("\n{}", "=".repeat(80));
+                        println!("ORIGINAL SHELL SCRIPT:");
+                        println!("{}", "=".repeat(80));
+                        println!("{}", result.original_code);
+                        
+                        // Show translated code
+                        println!("\n{}", "=".repeat(80));
+                        println!("TRANSLATED {} CODE:", generator.to_uppercase());
+                        println!("{}", "=".repeat(80));
+                        println!("{}", result.translated_code);
+                        
+                        // Show AST
+                        println!("\n{}", "=".repeat(80));
+                        println!("ABSTRACT SYNTAX TREE:");
+                        println!("{}", "=".repeat(80));
+                        println!("{}", result.ast);
+                        
                         // Show stdout diff
-                        println!("\nSTDOUT Comparison:");
+                        println!("\n{}", "=".repeat(80));
+                        println!("STDOUT COMPARISON:");
+                        println!("{}", "=".repeat(80));
                         println!("Shell script stdout:");
                         println!("{}", truncate_output(&result.shell_stdout, 10));
                         println!("\nTranslated code stdout:");
                         println!("{}", truncate_output(&result.translated_stdout, 10));
                         
                         // Show stderr diff
-                        println!("\nSTDERR Comparison:");
+                        println!("\n{}", "=".repeat(80));
+                        println!("STDERR COMPARISON:");
+                        println!("{}", "=".repeat(80));
                         println!("Shell script stderr:");
                         println!("{}", truncate_output(&result.shell_stderr, 10));
                         println!("\nTranslated code stderr:");
@@ -1417,6 +1448,34 @@ fn test_all_examples_next_fail() {
                     println!("Tests passed before error: {}", passed_tests);
                     println!("Error: {}", e);
                     println!("{}", "=".repeat(80));
+                    
+                    // Show original source file content even if parsing failed
+                    match std::fs::read_to_string(example) {
+                        Ok(source_content) => {
+                            println!("\n{}", "=".repeat(80));
+                            println!("ORIGINAL SHELL SCRIPT:");
+                            println!("{}", "=".repeat(80));
+                            println!("{}", source_content);
+                        }
+                        Err(read_err) => {
+                            println!("\n{}", "=".repeat(80));
+                            println!("ORIGINAL SHELL SCRIPT (failed to read):");
+                            println!("{}", "=".repeat(80));
+                            println!("Error reading file: {}", read_err);
+                        }
+                    }
+                    
+                    // Show lexer output if the error contains it
+                    if e.contains("Lexer output:") {
+                        println!("\n{}", "=".repeat(80));
+                        println!("LEXER OUTPUT:");
+                        println!("{}", "=".repeat(80));
+                        // Extract lexer output from the error message
+                        if let Some(lexer_start) = e.find("Lexer output:") {
+                            let lexer_output = &e[lexer_start..];
+                            println!("{}", lexer_output);
+                        }
+                    }
                     
                     // Show summary
                     println!("\n{}", "=".repeat(80));
@@ -1465,6 +1524,9 @@ fn interactive_mode() {
                 println!("  parse <input>   - Parse shell script to AST");
                 println!("  quit/exit       - Exit interactive mode");
                 println!("  help            - Show this help");
+                println!();
+                println!("Type 'quit' to exit interactive mode");
+                println!("Use --help from command line for full program help");
             }
             _ => {
                 if input.starts_with("lex ") {
@@ -1480,6 +1542,82 @@ fn interactive_mode() {
             }
         }
     }
+}
+
+fn show_help(program_name: &str) {
+    println!("sh2perl - Shell Script to Multiple Language Translator");
+    println!("Version: 1.0.0");
+    println!();
+    println!("USAGE:");
+    println!("  {} <command> [options] [input]", program_name);
+    println!();
+    println!("COMMANDS:");
+    println!();
+    println!("  lex <input>                    - Tokenize shell script input");
+    println!("  parse <input>                  - Parse shell script to AST");
+    println!("  file <filename>                - Parse shell script from file");
+    println!("  interactive                    - Start interactive mode");
+    println!();
+    println!("TRANSLATION OPTIONS:");
+    println!();
+    println!("  parse --perl <input>           - Convert shell script to Perl");
+    println!("  parse --rust <input>           - Convert shell script to Rust");
+    println!("  parse --python <input>         - Convert shell script to Python");
+    println!("  parse --lua <input>            - Convert shell script to Lua");
+    println!("  parse --c <input>              - Convert shell script to C");
+    println!("  parse --js <input>             - Convert shell script to JavaScript (Node.js)");
+    println!("  parse --english <input>        - Generate English pseudocode");
+    println!("  parse --french <input>         - Générer du pseudo-code en français");
+    println!("  parse --comment <input>        - Output original SH with English pseudocode comments");
+    println!("  parse --bat <input>            - Convert shell script to Windows Batch");
+    println!("  parse --ps <input>             - Convert shell script to PowerShell");
+    println!();
+    println!("  file --perl <filename>         - Convert shell script file to Perl");
+    println!("  file --rust <filename>         - Convert shell script file to Rust");
+    println!("  file --python <filename>       - Convert shell script file to Python");
+    println!("  file --lua <filename>          - Convert shell script file to Lua");
+    println!("  file --c <filename>            - Convert shell script file to C");
+    println!("  file --js <filename>           - Convert shell script file to JavaScript (Node.js)");
+    println!("  file --english <filename>      - Generate English pseudocode from file");
+    println!("  file --french <filename>       - Générer du pseudo-code en français (fichier)");
+    println!("  file --comment <filename>      - Output original SH with English pseudocode comments");
+    println!("  file --bat <filename>          - Convert shell script file to Windows Batch");
+    println!("  file --ps <filename>           - Convert shell script file to PowerShell");
+    println!();
+    println!("EXECUTION OPTIONS:");
+    println!();
+    println!("  parse --run <lang> <input>     - Generate and run code in specified language");
+    println!("  file --run <lang> <filename>   - Generate and run code from file");
+    println!("  Supported languages: perl, python, rust, lua, js, ps");
+    println!();
+    println!("TESTING OPTIONS:");
+    println!();
+    println!("  --test-file <lang> <filename>  - Compare outputs of .sh vs translated code");
+    println!("  file --test-file <lang> <filename> - Same as above");
+    println!("  --test-eq                      - Test all generators against all examples");
+    println!("  --next-fail                    - Test all generators, exit after first failure");
+    println!();
+    println!("EXAMPLES:");
+    println!();
+    println!("  {} lex 'echo hello world'", program_name);
+    println!("  {} parse 'echo hello world'", program_name);
+    println!("  {} parse --perl 'echo hello world'", program_name);
+    println!("  {} file --perl examples/simple.sh", program_name);
+    println!("  {} --test-file perl examples/simple.sh", program_name);
+    println!("  {} --test-eq", program_name);
+    println!();
+    println!("DESCRIPTION:");
+    println!("  sh2perl is a tool that translates shell scripts to various programming");
+    println!("  languages. It can parse shell syntax, generate equivalent code in the");
+    println!("  target language, and optionally run the generated code to verify");
+    println!("  correctness against the original shell script.");
+    println!();
+    println!("  The tool supports multiple target languages including Perl, Python, Rust,");
+    println!("  Lua, C, JavaScript, and PowerShell. It can also generate pseudocode");
+    println!("  in English and French for educational purposes.");
+    println!();
+    println!("  For more information, visit: https://github.com/your-repo/sh2perl");
+    println!();
 }
 
 #[cfg(test)]

@@ -197,53 +197,9 @@ impl Parser {
                     if let Some(Token::Assign) = self.lexer.peek_n(1) {
                         let var_name = self.get_identifier_text()?;
                         self.lexer.next(); // consume =
-                        // Capture value tokens until a separator (space, tab, newline, semicolon)
-                        // Special cases: arithmetic $((...)), quoted strings, backticks
-                        let mut value = String::new();
-                        if let Some(tok) = self.lexer.peek() {
-                            match tok {
-                                Token::Arithmetic => {
-                                    value.push_str(&self.capture_arithmetic_text()?);
-                                }
-                                Token::DollarParen => {
-                                    value.push_str(&self.parse_variable_expansion()?);
-                                }
-                                Token::ParenOpen => {
-                                    value.push_str(&self.capture_parenthetical_text()?);
-                                }
-                                Token::DoubleQuotedString | Token::SingleQuotedString => {
-                                    value.push_str(&self.get_string_text()?);
-                                }
-                                Token::BacktickString => {
-                                    value.push_str(&self.get_raw_token_text()?);
-                                }
-                                _ => {
-                                    loop {
-                                        match self.lexer.peek() {
-                                            Some(Token::Space) | Some(Token::Tab) | Some(Token::Newline) | Some(Token::Semicolon) | None => break,
-                                            Some(Token::Arithmetic) => {
-                                                value.push_str(&self.capture_arithmetic_text()?);
-                                            }
-                                            Some(Token::DollarParen) => {
-                                                value.push_str(&self.parse_variable_expansion()?);
-                                            }
-                                            Some(Token::ParenOpen) => {
-                                                value.push_str(&self.capture_parenthetical_text()?);
-                                            }
-                                            _ => {
-                                                if let Some((start, end)) = self.lexer.get_span() {
-                                                    value.push_str(&self.lexer.get_text(start, end));
-                                                    self.lexer.next();
-                                                } else {
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        env_vars.insert(var_name, value);
+                        // Parse the value as a Word (which can be a string, arithmetic expression, etc.)
+                        let value_word = self.parse_environment_variable_value()?;
+                        env_vars.insert(var_name, value_word);
                         
                         // Skip whitespace after the environment variable
                         self.skip_whitespace_and_comments();
@@ -263,34 +219,9 @@ impl Parser {
                                 if done {
                                     let name_text = self.lexer.get_text(start, end);
                                     let _eq = self.lexer.next();
-                                    let mut value = String::new();
                                     self.skip_whitespace_and_comments();
-                                    if let Some(tok) = self.lexer.peek() {
-                                        match tok {
-                                            Token::Arithmetic => { value.push_str(&self.capture_arithmetic_text()?); }
-                                            Token::DollarParen => { value.push_str(&self.parse_variable_expansion()?); }
-                                            Token::ParenOpen => { value.push_str(&self.capture_parenthetical_text()?); }
-                                            Token::DoubleQuotedString | Token::SingleQuotedString => { value.push_str(&self.get_string_text()?); }
-                                            Token::BacktickString => { value.push_str(&self.get_raw_token_text()?); }
-                                            _ => {
-                                                loop {
-                                                    match self.lexer.peek() {
-                                                        Some(Token::Space) | Some(Token::Tab) | Some(Token::Newline) | Some(Token::Semicolon) | None => break,
-                                                        Some(Token::Arithmetic) => { value.push_str(&self.capture_arithmetic_text()?); }
-                                                        Some(Token::DollarParen) => { value.push_str(&self.parse_variable_expansion()?); }
-                                                        Some(Token::ParenOpen) => { value.push_str(&self.capture_parenthetical_text()?); }
-                                                        _ => {
-                                                            if let Some((s2, e2)) = self.lexer.get_span() {
-                                                                value.push_str(&self.lexer.get_text(s2, e2));
-                                                                self.lexer.next();
-                                                            } else { break; }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    env_vars.insert(name_text, value);
+                                    let value_word = self.parse_environment_variable_value()?;
+                                    env_vars.insert(name_text, value_word);
                                     self.skip_whitespace_and_comments();
                                     break;
                                 }
@@ -309,29 +240,29 @@ impl Parser {
         let name = if let Some(token) = self.lexer.peek() {
             match token {
                 Token::Identifier => {
-                    self.get_identifier_text()?
+                    Word::Literal(self.get_identifier_text()?)
                 }
                 Token::Set | Token::Export | Token::Readonly | Token::Local | Token::Declare | Token::Typeset |
                 Token::Unset | Token::Shift | Token::Eval | Token::Exec | Token::Source | Token::Trap | Token::Wait => {
-                    self.get_raw_token_text()? // keep exact text for builtin/keyword-as-command
+                    Word::Literal(self.get_raw_token_text()?) // keep exact text for builtin/keyword-as-command
                 }
                 Token::TestBracket => {
                     self.lexer.next(); // consume the first [
                     if let Some(Token::TestBracket) = self.lexer.peek() {
                         self.lexer.next(); // consume the second [
                         is_double_bracket = true;
-                        "[[".to_string()
+                        Word::Literal("[[".to_string())
                     } else {
-                        "[".to_string()
+                        Word::Literal("[".to_string())
                     }
                 }
                 Token::True => {
                     self.lexer.next(); // consume true
-                    "true".to_string()
+                    Word::Literal("true".to_string())
                 }
                 Token::False => {
                     self.lexer.next(); // consume false
-                    "false".to_string()
+                    Word::Literal("false".to_string())
                 }
                 Token::Dollar | Token::DollarBrace | Token::DollarParen
                 | Token::DollarBraceHash | Token::DollarBraceBang | Token::DollarBraceStar | Token::DollarBraceAt
@@ -343,7 +274,7 @@ impl Parser {
                     // treat as an assignment-only command (no external program), using "true" as no-op.
                     match token {
                         Token::Semicolon | Token::Newline | Token::Done | Token::Fi | Token::Then | Token::Else | Token::ParenClose | Token::BraceClose => {
-                            "true".to_string()
+                            Word::Literal("true".to_string())
                         }
                         _ => {
                             let (line, col) = self
@@ -368,7 +299,7 @@ impl Parser {
             let expr = self.capture_double_bracket_expression()?;
             return Ok(Command::Simple(SimpleCommand {
                 name,
-                args: if expr.is_empty() { Vec::new() } else { vec![expr] },
+                args: if expr.is_empty() { Vec::new() } else { vec![Word::Literal(expr)] },
                 redirects,
                 env_vars,
             }));
@@ -387,18 +318,18 @@ impl Parser {
                 }
                 Token::Arithmetic => {
                     let txt = self.capture_arithmetic_text()?;
-                    args.push(txt);
+                    args.push(Word::Literal(txt));
                 }
                 Token::Minus => {
                     // Handle arguments starting with minus (like -la, -v, etc.)
                     let token_clone = token.clone();
                     self.lexer.next(); // consume the minus
                     if let Some(Token::Identifier) = self.lexer.peek() {
-                        let arg = format!("-{}", self.get_identifier_text()?);
+                        let arg = Word::Literal(format!("-{}", self.get_identifier_text()?));
                         args.push(arg);
                     } else if let Some(Token::Number) = self.lexer.peek() {
                         let num = self.get_number_text()?;
-                        args.push(format!("-{}", num));
+                        args.push(Word::Literal(format!("-{}", num)));
                     } else {
                         return Err(ParserError::UnexpectedToken { token: token_clone, line: 1, col: 1 });
                     }
@@ -408,7 +339,7 @@ impl Parser {
                     if matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) {
                         self.lexer.next(); // consume '<'
                         let inner = self.capture_parenthetical_text()?;
-                        args.push(format!("<{}", inner));
+                        args.push(Word::Literal(format!("<{}", inner)));
                     } else {
                         redirects.push(self.parse_redirect()?);
                     }
@@ -417,7 +348,7 @@ impl Parser {
                     if matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) {
                         self.lexer.next(); // consume '>'
                         let inner = self.capture_parenthetical_text()?;
-                        args.push(format!(">{}", inner));
+                        args.push(Word::Literal(format!(">{}", inner)));
                     } else {
                         redirects.push(self.parse_redirect()?);
                     }
@@ -426,75 +357,75 @@ impl Parser {
                     // Handle -n argument
                     self.lexer.next(); // consume the NonZero token
                     if let Some(Token::Identifier) = self.lexer.peek() {
-                        let arg = format!("-n{}", self.get_identifier_text()?);
+                        let arg = Word::Literal(format!("-n{}", self.get_identifier_text()?));
                         args.push(arg);
                     } else {
-                        args.push("-n".to_string());
+                        args.push(Word::Literal("-n".to_string()));
                     }
                 }
                 Token::Character => {
                     // Handle -c argument
                     self.lexer.next(); // consume the Character token
                     if let Some(Token::Identifier) = self.lexer.peek() {
-                        let arg = format!("-c{}", self.get_identifier_text()?);
+                        let arg = Word::Literal(format!("-c{}", self.get_identifier_text()?));
                         args.push(arg);
                     } else {
-                        args.push("-c".to_string());
+                        args.push(Word::Literal("-c".to_string()));
                     }
                 }
                 Token::File => {
                     // Handle -f argument
                     self.lexer.next(); // consume the File token
-                    args.push("-f".to_string());
+                    args.push(Word::Literal("-f".to_string()));
                 }
                 Token::Directory => {
                     // Handle -d argument
                     self.lexer.next(); // consume the Directory token
-                    args.push("-d".to_string());
+                    args.push(Word::Literal("-d".to_string()));
                 }
                 Token::Exists => {
                     // Handle -e argument
                     self.lexer.next(); // consume the Exists token
-                    args.push("-e".to_string());
+                    args.push(Word::Literal("-e".to_string()));
                 }
                 Token::Readable => {
                     // Handle -r argument
                     self.lexer.next(); // consume the Readable token
-                    args.push("-r".to_string());
+                    args.push(Word::Literal("-r".to_string()));
                 }
                 Token::Writable => {
                     // Handle -w argument
                     self.lexer.next(); // consume the Writable token
-                    args.push("-w".to_string());
+                    args.push(Word::Literal("-w".to_string()));
                 }
                 Token::Executable => {
                     // Handle -x argument
                     self.lexer.next(); // consume the Executable token
-                    args.push("-x".to_string());
+                    args.push(Word::Literal("-x".to_string()));
                 }
-                Token::Size => { self.lexer.next(); args.push("-s".to_string()); }
-                Token::Symlink => { self.lexer.next(); args.push("-L".to_string()); }
-                Token::SymlinkH => { self.lexer.next(); args.push("-h".to_string()); }
-                Token::PipeFile => { self.lexer.next(); args.push("-p".to_string()); }
-                Token::Socket => { self.lexer.next(); args.push("-S".to_string()); }
-                Token::Block => { self.lexer.next(); args.push("-b".to_string()); }
-                Token::SetGid => { self.lexer.next(); args.push("-g".to_string()); }
-                Token::Sticky => { self.lexer.next(); args.push("-k".to_string()); }
-                Token::SetUid => { self.lexer.next(); args.push("-u".to_string()); }
-                Token::Owned => { self.lexer.next(); args.push("-O".to_string()); }
-                Token::GroupOwned => { self.lexer.next(); args.push("-G".to_string()); }
-                Token::Modified => { self.lexer.next(); args.push("-N".to_string()); }
+                Token::Size => { self.lexer.next(); args.push(Word::Literal("-s".to_string())); }
+                Token::Symlink => { self.lexer.next(); args.push(Word::Literal("-L".to_string())); }
+                Token::SymlinkH => { self.lexer.next(); args.push(Word::Literal("-h".to_string())); }
+                Token::PipeFile => { self.lexer.next(); args.push(Word::Literal("-p".to_string())); }
+                Token::Socket => { self.lexer.next(); args.push(Word::Literal("-S".to_string())); }
+                Token::Block => { self.lexer.next(); args.push(Word::Literal("-b".to_string())); }
+                Token::SetGid => { self.lexer.next(); args.push(Word::Literal("-g".to_string())); }
+                Token::Sticky => { self.lexer.next(); args.push(Word::Literal("-k".to_string())); }
+                Token::SetUid => { self.lexer.next(); args.push(Word::Literal("-u".to_string())); }
+                Token::Owned => { self.lexer.next(); args.push(Word::Literal("-O".to_string())); }
+                Token::GroupOwned => { self.lexer.next(); args.push(Word::Literal("-G".to_string())); }
+                Token::Modified => { self.lexer.next(); args.push(Word::Literal("-N".to_string())); }
                 // Test comparison operators
-                Token::Eq => { self.lexer.next(); args.push("-eq".to_string()); }
-                Token::Ne => { self.lexer.next(); args.push("-ne".to_string()); }
-                Token::Lt => { self.lexer.next(); args.push("-lt".to_string()); }
-                Token::Le => { self.lexer.next(); args.push("-le".to_string()); }
-                Token::Gt => { self.lexer.next(); args.push("-gt".to_string()); }
-                Token::Ge => { self.lexer.next(); args.push("-ge".to_string()); }
-                Token::NewerThan => { self.lexer.next(); args.push("-nt".to_string()); }
-                Token::OlderThan => { self.lexer.next(); args.push("-ot".to_string()); }
-                Token::SameFile => { self.lexer.next(); args.push("-ef".to_string()); }
-                Token::Zero => { self.lexer.next(); args.push("-z".to_string()); }
+                Token::Eq => { self.lexer.next(); args.push(Word::Literal("-eq".to_string())); }
+                Token::Ne => { self.lexer.next(); args.push(Word::Literal("-ne".to_string())); }
+                Token::Lt => { self.lexer.next(); args.push(Word::Literal("-lt".to_string())); }
+                Token::Le => { self.lexer.next(); args.push(Word::Literal("-le".to_string())); }
+                Token::Gt => { self.lexer.next(); args.push(Word::Literal("-gt".to_string())); }
+                Token::Ge => { self.lexer.next(); args.push(Word::Literal("-ge".to_string())); }
+                Token::NewerThan => { self.lexer.next(); args.push(Word::Literal("-nt".to_string())); }
+                Token::OlderThan => { self.lexer.next(); args.push(Word::Literal("-ot".to_string())); }
+                Token::SameFile => { self.lexer.next(); args.push(Word::Literal("-ef".to_string())); }
+                Token::Zero => { self.lexer.next(); args.push(Word::Literal("-z".to_string())); }
                 Token::RedirectAppend | Token::RedirectInOut | Token::Heredoc | Token::HeredocTabs => {
                     redirects.push(self.parse_redirect()?);
                 }
@@ -539,7 +470,7 @@ impl Parser {
                 }
             }
             let trimmed = expr.trim().to_string();
-            if !trimmed.is_empty() { args.push(trimmed); }
+            if !trimmed.is_empty() { args.push(Word::Literal(trimmed)); }
         }
         
         Ok(Command::Simple(SimpleCommand {
@@ -936,16 +867,19 @@ impl Parser {
         let target = if matches!(self.lexer.peek(), Some(Token::RedirectIn)) && matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) {
             // consume the extra '<' and capture ( ... )
             self.lexer.next();
-            self.capture_parenthetical_text()?
+            Word::Literal(self.capture_parenthetical_text()?)
         } else if matches!(self.lexer.peek(), Some(Token::ParenOpen)) {
-            self.capture_parenthetical_text()?
+            Word::Literal(self.capture_parenthetical_text()?)
         } else {
             self.parse_word()?
         };
         // If this is a heredoc, capture lines until the delimiter is found at start of line
         let heredoc_body = match operator {
             RedirectOperator::Heredoc | RedirectOperator::HeredocTabs => {
-                let delim = target.clone();
+                let delim = match &target {
+                    Word::Literal(s) => s.clone(),
+                    _ => return Err(ParserError::InvalidSyntax("Heredoc delimiter must be a literal string".to_string())),
+                };
                 let mut body = String::new();
                 let mut found_delim = false;
 
@@ -1006,27 +940,27 @@ impl Parser {
         Ok(Redirect { fd, operator, target, heredoc_body })
     }
 
-    fn parse_word(&mut self) -> Result<String, ParserError> {
+    fn parse_word(&mut self) -> Result<Word, ParserError> {
         let result = match self.lexer.peek() {
-            Some(Token::Identifier) => Ok(self.get_identifier_text()?),
-            Some(Token::Number) => Ok(self.get_number_text()?),
-            Some(Token::DoubleQuotedString) => Ok(self.get_string_text()?),
-            Some(Token::SingleQuotedString) => Ok(self.get_string_text()?),
-            Some(Token::BacktickString) => Ok(self.get_raw_token_text()?),
-            Some(Token::DollarSingleQuotedString) => Ok(self.get_raw_token_text()?),
-            Some(Token::DollarDoubleQuotedString) => Ok(self.get_raw_token_text()?),
-            Some(Token::BraceOpen) => Ok(self.parse_brace_word()?),
+            Some(Token::Identifier) => Ok(Word::Literal(self.get_identifier_text()?)),
+            Some(Token::Number) => Ok(Word::Literal(self.get_number_text()?)),
+            Some(Token::DoubleQuotedString) => Ok(self.parse_string_interpolation()?),
+            Some(Token::SingleQuotedString) => Ok(Word::Literal(self.get_string_text()?)),
+            Some(Token::BacktickString) => Ok(Word::Literal(self.get_raw_token_text()?)),
+            Some(Token::DollarSingleQuotedString) => Ok(Word::Literal(self.get_raw_token_text()?)),
+            Some(Token::DollarDoubleQuotedString) => Ok(self.parse_string_interpolation()?),
+            Some(Token::BraceOpen) => Ok(self.parse_brace_expansion()?),
             Some(Token::SourceDot) => {
                 // Treat standalone '.' as a normal word (e.g., `find . -name ...`)
                 self.lexer.next();
-                Ok(".".to_string())
+                Ok(Word::Literal(".".to_string()))
             }
             Some(Token::Dollar) => Ok(self.parse_variable_expansion()?),
             Some(Token::DollarBrace) | Some(Token::DollarParen) | Some(Token::DollarHashSimple) | Some(Token::DollarAtSimple) | Some(Token::DollarStarSimple)
             | Some(Token::DollarBraceHash) | Some(Token::DollarBraceBang) | Some(Token::DollarBraceStar) | Some(Token::DollarBraceAt)
             | Some(Token::DollarBraceHashStar) | Some(Token::DollarBraceHashAt) | Some(Token::DollarBraceBangStar) | Some(Token::DollarBraceBangAt)
                 => Ok(self.parse_variable_expansion()?),
-            Some(Token::Arithmetic) => Ok(self.capture_arithmetic_text()?),
+            Some(Token::Arithmetic) => Ok(self.parse_arithmetic_expression()?),
             _ => {
                 let (line, col) = self
                     .lexer
@@ -1043,67 +977,42 @@ impl Parser {
         result
     }
 
-    fn parse_variable_expansion(&mut self) -> Result<String, ParserError> {
-        // This is a simplified version - in a real implementation,
-        // you'd need to handle the full complexity of shell variable expansion
-        let mut result = String::new();
-        
+    fn parse_variable_expansion(&mut self) -> Result<Word, ParserError> {
         match self.lexer.peek() {
             Some(Token::Dollar) => {
                 self.lexer.next();
                 if let Some(Token::Identifier) = self.lexer.peek() {
-                    result.push_str(&format!("${}", self.get_identifier_text()?));
+                    let var_name = self.get_identifier_text()?;
+                    Ok(Word::Variable(var_name))
+                } else {
+                    Err(ParserError::InvalidSyntax("Expected identifier after $".to_string()))
                 }
             }
-            Some(Token::DollarHashSimple) => { self.lexer.next(); result.push_str("$#"); }
-            Some(Token::DollarAtSimple) => { self.lexer.next(); result.push_str("$@"); }
-            Some(Token::DollarStarSimple) => { self.lexer.next(); result.push_str("$*"); }
+            Some(Token::DollarHashSimple) => { 
+                self.lexer.next(); 
+                Ok(Word::Variable("#".to_string()))
+            }
+            Some(Token::DollarAtSimple) => { 
+                self.lexer.next(); 
+                Ok(Word::Variable("@".to_string()))
+            }
+            Some(Token::DollarStarSimple) => { 
+                self.lexer.next(); 
+                Ok(Word::Variable("*".to_string()))
+            }
             Some(Token::DollarBrace)
             | Some(Token::DollarBraceHash) | Some(Token::DollarBraceBang) | Some(Token::DollarBraceStar) | Some(Token::DollarBraceAt)
             | Some(Token::DollarBraceHashStar) | Some(Token::DollarBraceHashAt) | Some(Token::DollarBraceBangStar) | Some(Token::DollarBraceBangAt) => {
-                // Capture raw from '${' to matching '}' inclusively
-                if let Some((start, _)) = self.lexer.get_span() {
-                    let mut depth: i32 = 0;
-                    loop {
-                        if let Some((_, end)) = self.lexer.get_span() {
-                            match self.lexer.peek() {
-                                Some(Token::DollarBrace)
-                                | Some(Token::DollarBraceHash) | Some(Token::DollarBraceBang) | Some(Token::DollarBraceStar) | Some(Token::DollarBraceAt)
-                                | Some(Token::DollarBraceHashStar) | Some(Token::DollarBraceHashAt) | Some(Token::DollarBraceBangStar) | Some(Token::DollarBraceBangAt)
-                                | Some(Token::BraceOpen) => { depth += 1; }
-                                Some(Token::BraceClose) => { depth -= 1; }
-                                _ => {}
-                            }
-                            let seg = self.lexer.get_text(start, end);
-                            self.lexer.next();
-                            result.push_str(&seg);
-                            if depth == 0 { break; }
-                        } else { break; }
-                    }
-                }
+                // Parse ${...} expansions
+                self.lexer.next(); // consume the token
+                let var_name = self.parse_braced_variable_name()?;
+                Ok(Word::Variable(var_name))
             }
             Some(Token::DollarParen) => {
                 self.lexer.next();
                 // Parse command substitution: capture until matching ')'
-                result.push_str("$(");
-                let mut depth: i32 = 1;
-                while !self.lexer.is_eof() && depth > 0 {
-                    if let Some((start, end)) = self.lexer.get_span() {
-                        match self.lexer.peek() {
-                            Some(Token::DollarParen) => { depth += 1; }
-                            Some(Token::ParenClose) => { depth -= 1; }
-                            _ => {}
-                        }
-                        let text = self.lexer.get_text(start, end);
-                        self.lexer.next();
-                        if depth >= 0 {
-                            result.push_str(&text);
-                        }
-                    } else {
-                        break;
-                    }
-                }
-                result.push(')');
+                let command = self.parse_command_substitution()?;
+                Ok(Word::CommandSubstitution(Box::new(command)))
             }
             _ => {
                 let (line, col) = self
@@ -1114,11 +1023,9 @@ impl Parser {
                 return Err(ParserError::UnexpectedToken { token: Token::Identifier, line, col });
             }
         }
-        
-        Ok(result)
     }
 
-    fn parse_word_list(&mut self) -> Result<Vec<String>, ParserError> {
+    fn parse_word_list(&mut self) -> Result<Vec<Word>, ParserError> {
         let mut words = Vec::new();
         
         while let Some(token) = self.lexer.peek() {
@@ -1171,6 +1078,354 @@ impl Parser {
                 return Err(ParserError::UnexpectedEOF);
             }
         }
+    }
+
+    fn parse_brace_expansion(&mut self) -> Result<Word, ParserError> {
+        // Parse brace expansions like {1..5}, {a,b,c}, {prefix,{1..3},suffix}
+        let (start, _) = self.lexer.get_span().ok_or(ParserError::UnexpectedEOF)?;
+        
+        // consume '{'
+        self.lexer.next();
+        
+        let mut items = Vec::new();
+        let mut current_item = String::new();
+        let mut depth = 1;
+        
+        while !self.lexer.is_eof() && depth > 0 {
+            if let Some((_, end)) = self.lexer.get_span() {
+                match self.lexer.peek() {
+                    Some(Token::BraceOpen) => {
+                        depth += 1;
+                        current_item.push_str(&self.lexer.get_text(start, end));
+                        self.lexer.next();
+                    }
+                    Some(Token::BraceClose) => {
+                        depth -= 1;
+                        if depth == 0 {
+                            // End of brace expansion
+                            if !current_item.is_empty() {
+                                items.push(BraceItem::Literal(current_item.clone()));
+                            }
+                            self.lexer.next();
+                            break;
+                        } else {
+                            current_item.push_str(&self.lexer.get_text(start, end));
+                            self.lexer.next();
+                        }
+                    }
+                    Some(Token::Comma) if depth == 1 => {
+                        // Comma separator at top level
+                        if !current_item.is_empty() {
+                            items.push(BraceItem::Literal(current_item.clone()));
+                            current_item.clear();
+                        }
+                        self.lexer.next();
+                    }
+                    Some(Token::Range) if depth == 1 => {
+                        // This is a range separator (e.g., 1..5)
+                        if !current_item.is_empty() {
+                            // This is the start of the range
+                            let start_val = current_item.clone();
+                            current_item.clear();
+                            
+                            // Consume the range token
+                            self.lexer.next();
+                            
+                            let mut end_val = String::new();
+                            while let Some(token) = self.lexer.peek() {
+                                match token {
+                                    Token::Comma | Token::BraceClose => break,
+                                    _ => {
+                                        if let Some((s, e)) = self.lexer.get_span() {
+                                            end_val.push_str(&self.lexer.get_text(s, e));
+                                        }
+                                        self.lexer.next();
+                                    }
+                                }
+                            }
+                            
+                            // Check for step value (e.g., 1..5..2)
+                            let step = if let Some(Token::Range) = self.lexer.peek() {
+                                self.lexer.next(); // consume the range token
+                                let mut step_val = String::new();
+                                while let Some(token) = self.lexer.peek() {
+                                    match token {
+                                        Token::Comma | Token::BraceClose => break,
+                                        _ => {
+                                            if let Some((s, e)) = self.lexer.get_span() {
+                                                step_val.push_str(&self.lexer.get_text(s, e));
+                                            }
+                                            self.lexer.next();
+                                        }
+                                    }
+                                }
+                                if !step_val.is_empty() { Some(step_val) } else { None }
+                            } else {
+                                None
+                            };
+                            
+                            items.push(BraceItem::Range(BraceRange {
+                                start: start_val,
+                                end: end_val,
+                                step,
+                                format: None,
+                            }));
+                            continue;
+                        }
+                    }
+                    _ => {
+                        if let Some((s, e)) = self.lexer.get_span() {
+                            current_item.push_str(&self.lexer.get_text(s, e));
+                        }
+                        self.lexer.next();
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+        
+        // Create the brace expansion node
+        let brace_expansion = BraceExpansion {
+            prefix: None,
+            items,
+            suffix: None,
+        };
+        
+        Ok(Word::BraceExpansion(brace_expansion))
+    }
+
+    fn parse_arithmetic_expression(&mut self) -> Result<Word, ParserError> {
+        // Parse arithmetic expressions like $((i+1))
+        let mut inner_expression = String::new();
+        let mut tokens = Vec::new();
+        
+        // We're at the Arithmetic token which is $((, consume it
+        if let Some((start, end)) = self.lexer.get_span() {
+            self.lexer.next();
+        }
+        
+        let mut depth = 2; // We start with two open parentheses
+        
+        while !self.lexer.is_eof() && depth > 0 {
+            if let Some((start, end)) = self.lexer.get_span() {
+                let text = self.lexer.get_text(start, end);
+                match self.lexer.peek() {
+                    Some(Token::Arithmetic) => {
+                        depth += 2;
+                        tokens.push(ArithmeticToken::ParenOpen);
+                        tokens.push(ArithmeticToken::ParenOpen);
+                        inner_expression.push_str(&text);
+                    }
+                    Some(Token::ParenClose) => {
+                        depth -= 1;
+                        tokens.push(ArithmeticToken::ParenClose);
+                        // Only include the text if we're not at the final closing parenthesis
+                        // We need depth > 1 because we start with depth = 2 for $(( and need to
+                        // include the first ) but not the second )
+                        if depth > 1 {
+                            inner_expression.push_str(&text);
+                        }
+                        // When depth becomes 1 or 0, we've reached the end of the arithmetic expression
+                        // Don't include the final closing parentheses in the expression
+                    }
+                    Some(Token::Number) => {
+                        tokens.push(ArithmeticToken::Number(text.clone()));
+                        inner_expression.push_str(&text);
+                    }
+                    Some(Token::Identifier) => {
+                        tokens.push(ArithmeticToken::Variable(text.clone()));
+                        inner_expression.push_str(&text);
+                    }
+                    Some(Token::Plus) | Some(Token::Minus) | Some(Token::Star) | Some(Token::Slash) 
+                    | Some(Token::Percent) | Some(Token::Caret) => {
+                        tokens.push(ArithmeticToken::Operator(text.clone()));
+                        inner_expression.push_str(&text);
+                    }
+                    _ => {
+                        inner_expression.push_str(&text);
+                    }
+                }
+                
+                self.lexer.next();
+            } else {
+                break;
+            }
+        }
+        
+        Ok(Word::Arithmetic(ArithmeticExpression {
+            expression: inner_expression,
+            tokens,
+        }))
+    }
+
+    fn parse_string_interpolation(&mut self) -> Result<Word, ParserError> {
+        // Parse string interpolation like "I is $i" or "Result: $((i+1))"
+        let mut parts = Vec::new();
+        
+        // Get the quoted string content
+        let quoted_content = if let Some((start, end)) = self.lexer.get_span() {
+            let text = self.lexer.get_text(start, end);
+            self.lexer.next();
+            // Strip the quotes
+            if text.len() >= 2 {
+                text[1..text.len()-1].to_string()
+            } else {
+                text
+            }
+        } else {
+            return Err(ParserError::UnexpectedEOF);
+        };
+        
+        // Parse the string content for variables and arithmetic
+        let mut current_literal = String::new();
+        let mut i = 0;
+        
+        while i < quoted_content.len() {
+            if quoted_content[i..].starts_with('$') {
+                // Flush current literal if any
+                if !current_literal.is_empty() {
+                    parts.push(StringPart::Literal(current_literal.clone()));
+                    current_literal.clear();
+                }
+                
+                // Parse variable or arithmetic
+                if quoted_content[i..].starts_with("$((") {
+                    // Arithmetic expression
+                    let mut depth = 2;
+                    let mut expr = String::new();
+                    i += 3; // Skip $(( 
+                    
+                    while i < quoted_content.len() && depth > 0 {
+                        if quoted_content[i..].starts_with("((") {
+                            depth += 2;
+                            expr.push_str("((");
+                            i += 2;
+                        } else if quoted_content[i..].starts_with(')') {
+                            depth -= 1;
+                            expr.push(')');
+                            i += 1;
+                        } else {
+                            expr.push(quoted_content.chars().nth(i).unwrap_or(' '));
+                            i += 1;
+                        }
+                    }
+                    
+                    // Create a simple arithmetic expression for now
+                    parts.push(StringPart::Arithmetic(ArithmeticExpression {
+                        expression: format!("$(({}))", expr),
+                        tokens: Vec::new(), // Simplified for now
+                    }));
+                } else if quoted_content[i..].starts_with('$') && i + 1 < quoted_content.len() {
+                    // Variable
+                    i += 1; // Skip $
+                    let mut var_name = String::new();
+                    // Handle special shell variables like $# and $@
+                    if i < quoted_content.len() {
+                        let next_char = quoted_content.chars().nth(i).unwrap_or(' ');
+                        if next_char == '#' || next_char == '@' {
+                            // Special shell variables
+                            var_name.push(next_char);
+                            i += 1;
+                        } else {
+                            // Regular alphanumeric variables
+                            while i < quoted_content.len() && quoted_content.chars().nth(i).unwrap_or(' ').is_alphanumeric() {
+                                var_name.push(quoted_content.chars().nth(i).unwrap_or(' '));
+                                i += 1;
+                            }
+                        }
+                    }
+                    parts.push(StringPart::Variable(var_name));
+                } else {
+                    // Just a literal $
+                    current_literal.push('$');
+                    i += 1;
+                }
+            } else {
+                current_literal.push(quoted_content.chars().nth(i).unwrap_or(' '));
+                i += 1;
+            }
+        }
+        
+        // Flush remaining literal
+        if !current_literal.is_empty() {
+            parts.push(StringPart::Literal(current_literal));
+        }
+        
+        Ok(Word::StringInterpolation(StringInterpolation { parts }))
+    }
+
+    fn parse_braced_variable_name(&mut self) -> Result<String, ParserError> {
+        // Parse the variable name inside ${...}
+        let mut var_name = String::new();
+        let mut depth = 1; // We start after the opening {
+        
+        while !self.lexer.is_eof() && depth > 0 {
+            if let Some((start, end)) = self.lexer.get_span() {
+                match self.lexer.peek() {
+                    Some(Token::BraceOpen) => {
+                        depth += 1;
+                        var_name.push_str(&self.lexer.get_text(start, end));
+                    }
+                    Some(Token::BraceClose) => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        } else {
+                            var_name.push_str(&self.lexer.get_text(start, end));
+                        }
+                    }
+                    _ => {
+                        var_name.push_str(&self.lexer.get_text(start, end));
+                    }
+                }
+                self.lexer.next();
+            } else {
+                break;
+            }
+        }
+        
+        Ok(var_name)
+    }
+
+    fn parse_command_substitution(&mut self) -> Result<Command, ParserError> {
+        // Parse command substitution $(...)
+        let mut depth = 1; // We start after the opening (
+        let mut command_text = String::new();
+        
+        while !self.lexer.is_eof() && depth > 0 {
+            if let Some((start, end)) = self.lexer.get_span() {
+                match self.lexer.peek() {
+                    Some(Token::DollarParen) => {
+                        depth += 1;
+                        command_text.push_str(&self.lexer.get_text(start, end));
+                    }
+                    Some(Token::ParenClose) => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        } else {
+                            command_text.push_str(&self.lexer.get_text(start, end));
+                        }
+                    }
+                    _ => {
+                        command_text.push_str(&self.lexer.get_text(start, end));
+                    }
+                }
+                self.lexer.next();
+            } else {
+                break;
+            }
+        }
+        
+        // For now, create a simple command. In a full implementation,
+        // you'd want to parse the command_text as a proper command
+        Ok(Command::Simple(SimpleCommand {
+            name: Word::Literal("command_substitution".to_string()),
+            args: vec![Word::Literal(command_text)],
+            redirects: Vec::new(),
+            env_vars: HashMap::new(),
+        }))
     }
 
     fn get_identifier_text(&mut self) -> Result<String, ParserError> {
@@ -1235,17 +1490,19 @@ impl Parser {
         while !self.lexer.is_eof() && depth > 0 {
             if let Some((start, end)) = self.lexer.get_span() {
                 match self.lexer.peek() {
-                    Some(Token::Arithmetic) => { depth += 2; }
-                    Some(Token::ParenClose) => {
-                        // Could be one or two parens; capture text and adjust after
+                    Some(Token::Arithmetic) => { 
+                        depth += 2; 
+                        text.push_str(&self.lexer.get_text(start, end));
                     }
-                    _ => {}
+                    Some(Token::ParenClose) => {
+                        depth -= 1;
+                        text.push_str(&self.lexer.get_text(start, end));
+                    }
+                    _ => {
+                        text.push_str(&self.lexer.get_text(start, end));
+                    }
                 }
-                let seg = self.lexer.get_text(start, end);
                 self.lexer.next();
-                // Adjust depth when we see '))'
-                if seg == ")" { depth -= 1; }
-                text.push_str(&seg);
             } else {
                 break;
             }
@@ -1257,7 +1514,8 @@ impl Parser {
         // Assumes current token is '(' or we are right before it (when called after consuming '<' or '>')
         if !matches!(self.lexer.peek(), Some(Token::ParenOpen)) {
             // If not at '(', just parse a word
-            return self.parse_word();
+            let word = self.parse_word()?;
+            return Ok(word.to_string());
         }
         let (start, _end) = self.lexer.get_span().ok_or(ParserError::UnexpectedEOF)?;
         let mut depth: i32 = 0;
@@ -1319,7 +1577,7 @@ impl Parser {
                 if depth >= 0 { expr.push_str(&seg); }
             } else { break; }
         }
-        Ok(Command::Simple(SimpleCommand { name: "((".to_string(), args: vec![expr.trim().to_string()], redirects: Vec::new(), env_vars: HashMap::new() }))
+                 Ok(Command::Simple(SimpleCommand { name: Word::Literal("((".to_string()), args: vec![Word::Literal(expr.trim().to_string())], redirects: Vec::new(), env_vars: HashMap::new() }))
     }
 
     fn skip_whitespace_and_comments(&mut self) {
@@ -1332,6 +1590,69 @@ impl Parser {
             }
         }
     }
+
+    fn parse_environment_variable_value(&mut self) -> Result<Word, ParserError> {
+        if let Some(tok) = self.lexer.peek() {
+            match tok {
+                Token::Arithmetic => {
+                    // Parse arithmetic expression properly
+                    self.parse_arithmetic_expression()
+                }
+                Token::DollarParen => {
+                    // Parse variable expansion
+                    self.parse_variable_expansion()
+                }
+                Token::ParenOpen => {
+                    // Parse parenthetical text as a literal
+                    let text = self.capture_parenthetical_text()?;
+                    Ok(Word::Literal(text))
+                }
+                Token::DoubleQuotedString | Token::SingleQuotedString => {
+                    // Parse quoted string as a literal
+                    let text = self.get_string_text()?;
+                    Ok(Word::Literal(text))
+                }
+                Token::BacktickString => {
+                    // Parse backtick string as a literal
+                    let text = self.get_raw_token_text()?;
+                    Ok(Word::Literal(text))
+                }
+                _ => {
+                    // Parse as a literal string until separator
+                    let mut value = String::new();
+                    loop {
+                        match self.lexer.peek() {
+                            Some(Token::Space) | Some(Token::Tab) | Some(Token::Newline) | Some(Token::Semicolon) | None => break,
+                            Some(Token::Arithmetic) => {
+                                // Parse arithmetic expression properly
+                                return self.parse_arithmetic_expression();
+                            }
+                            Some(Token::DollarParen) => {
+                                // Parse variable expansion
+                                return self.parse_variable_expansion();
+                            }
+                            Some(Token::ParenOpen) => {
+                                // Parse parenthetical text as a literal
+                                let text = self.capture_parenthetical_text()?;
+                                value.push_str(&text);
+                            }
+                            _ => {
+                                if let Some((start, end)) = self.lexer.get_span() {
+                                    value.push_str(&self.lexer.get_text(start, end));
+                                    self.lexer.next();
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Ok(Word::Literal(value))
+                }
+            }
+        } else {
+            Ok(Word::Literal(String::new()))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1340,25 +1661,141 @@ mod tests {
 
     #[test]
     fn test_parse_simple_command() {
-        let input = "echo hello world";
-        let mut parser = Parser::new(input);
-        let result = parser.parse();
-        assert!(result.is_ok());
+        let mut parser = Parser::new("echo hello world");
+        let commands = parser.parse().unwrap();
+        assert_eq!(commands.len(), 1);
+        if let Command::Simple(cmd) = &commands[0] {
+            assert!(matches!(&cmd.name, Word::Literal(name) if name == "echo"));
+            assert_eq!(cmd.args.len(), 2);
+            assert!(matches!(&cmd.args[0], Word::Literal(arg) if arg == "hello"));
+            assert!(matches!(&cmd.args[1], Word::Literal(arg) if arg == "world"));
+        } else {
+            panic!("Expected Simple command");
+        }
     }
 
     #[test]
     fn test_parse_pipeline() {
-        let input = "ls | grep test";
-        let mut parser = Parser::new(input);
-        let result = parser.parse();
-        assert!(result.is_ok());
+        let mut parser = Parser::new("ls | grep test");
+        let commands = parser.parse().unwrap();
+        assert_eq!(commands.len(), 1);
+        if let Command::Pipeline(pipeline) = &commands[0] {
+            assert_eq!(pipeline.commands.len(), 2);
+            assert_eq!(pipeline.operators.len(), 1);
+        } else {
+            panic!("Expected Pipeline command");
+        }
     }
 
     #[test]
     fn test_parse_if_statement() {
-        let input = "if true; then echo hello; fi";
-        let mut parser = Parser::new(input);
-        let result = parser.parse();
-        assert!(result.is_ok());
+        let mut parser = Parser::new("if [ -f file ]; then echo exists; fi");
+        let commands = parser.parse().unwrap();
+        assert_eq!(commands.len(), 1);
+        if let Command::If(_) = &commands[0] {
+            // Successfully parsed if statement
+        } else {
+            panic!("Expected If command");
+        }
+    }
+
+    #[test]
+    fn test_parse_brace_expansion() {
+        let mut parser = Parser::new("echo {1..5}");
+        let commands = parser.parse().unwrap();
+        assert_eq!(commands.len(), 1);
+        if let Command::Simple(cmd) = &commands[0] {
+            assert!(matches!(&cmd.name, Word::Literal(name) if name == "echo"));
+            assert_eq!(cmd.args.len(), 1);
+            if let Word::BraceExpansion(expansion) = &cmd.args[0] {
+                assert_eq!(expansion.items.len(), 1);
+                if let BraceItem::Range(range) = &expansion.items[0] {
+                    assert_eq!(range.start, "1");
+                    assert_eq!(range.end, "5");
+                    assert!(range.step.is_none());
+                } else {
+                    panic!("Expected Range item");
+                }
+            } else {
+                panic!("Expected BraceExpansion word");
+            }
+        } else {
+            panic!("Expected Simple command");
+        }
+    }
+
+    #[test]
+    fn test_parse_arithmetic_expression() {
+        let mut parser = Parser::new("echo $((i+1))");
+        let commands = parser.parse().unwrap();
+        assert_eq!(commands.len(), 1);
+        if let Command::Simple(cmd) = &commands[0] {
+            assert!(matches!(&cmd.name, Word::Literal(name) if name == "echo"));
+            assert_eq!(cmd.args.len(), 1);
+            if let Word::Arithmetic(arithmetic) = &cmd.args[0] {
+                assert!(arithmetic.expression.contains("i+1"));
+                assert!(!arithmetic.tokens.is_empty());
+            } else {
+                panic!("Expected Arithmetic word");
+            }
+        } else {
+            panic!("Expected Simple command");
+        }
+    }
+
+    #[test]
+    fn test_parse_string_interpolation() {
+        let mut parser = Parser::new("echo \"I is $i\"");
+        let commands = parser.parse().unwrap();
+        assert_eq!(commands.len(), 1);
+        if let Command::Simple(cmd) = &commands[0] {
+            assert!(matches!(&cmd.name, Word::Literal(name) if name == "echo"));
+            assert_eq!(cmd.args.len(), 1);
+            if let Word::StringInterpolation(interpolation) = &cmd.args[0] {
+                assert_eq!(interpolation.parts.len(), 2);
+                assert!(matches!(&interpolation.parts[0], StringPart::Literal(s) if s == "I is "));
+                assert!(matches!(&interpolation.parts[1], StringPart::Variable(s) if s == "i"));
+            } else {
+                panic!("Expected StringInterpolation word");
+            }
+        } else {
+            panic!("Expected Simple command");
+        }
+    }
+
+    #[test]
+    fn test_parse_variable_expansion() {
+        let mut parser = Parser::new("echo $HOME");
+        let commands = parser.parse().unwrap();
+        assert_eq!(commands.len(), 1);
+        if let Command::Simple(cmd) = &commands[0] {
+            assert!(matches!(&cmd.name, Word::Literal(name) if name == "echo"));
+            assert_eq!(cmd.args.len(), 1);
+            if let Word::Variable(var) = &cmd.args[0] {
+                assert_eq!(var, "HOME");
+            } else {
+                panic!("Expected Variable word");
+            }
+        } else {
+            panic!("Expected Simple command");
+        }
+    }
+
+    #[test]
+    fn test_parse_command_substitution() {
+        let mut parser = Parser::new("echo $(ls)");
+        let commands = parser.parse().unwrap();
+        assert_eq!(commands.len(), 1);
+        if let Command::Simple(cmd) = &commands[0] {
+            assert!(matches!(&cmd.name, Word::Literal(name) if name == "echo"));
+            assert_eq!(cmd.args.len(), 1);
+            if let Word::CommandSubstitution(_) = &cmd.args[0] {
+                // Successfully parsed command substitution
+            } else {
+                panic!("Expected CommandSubstitution word");
+            }
+        } else {
+            panic!("Expected Simple command");
+        }
     }
 } 

@@ -69,8 +69,8 @@ impl CGenerator {
                 let mut fmt = String::new();
                 let mut printf_args: Vec<(String, LoopVarType)> = Vec::new();
                 for (index, arg) in cmd.args.iter().enumerate() {
-                    if let Some(var_name) = arg.strip_prefix('$') {
-                        if let Some(vt) = self.lookup_loop_var_type(var_name) {
+                    if let Some(var_name) = arg.strip_prefix_char('$') {
+                        if let Some(vt) = self.lookup_loop_var_type(&var_name) {
                             match vt {
                                 LoopVarType::Integer => fmt.push_str("%lld"),
                                 LoopVarType::String => fmt.push_str("%s"),
@@ -218,9 +218,9 @@ impl CGenerator {
 
     fn command_to_shell(&self, cmd: &SimpleCommand) -> String {
         if cmd.args.is_empty() {
-            cmd.name.clone()
+            cmd.name.to_string()
         } else {
-            let args = cmd.args.join(" ");
+            let args = cmd.args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>().join(" ");
             format!("{} {}", cmd.name, args)
         }
     }

@@ -64,16 +64,28 @@ impl PerlGenerator {
         } else if cmd.name == "true" && !cmd.env_vars.is_empty() && cmd.args.is_empty() {
             // Assignment-only shell locals: e.g., a=1
             for (var, value) in &cmd.env_vars {
-                let val = if value.starts_with("$((") && value.ends_with("))") {
-                    // Handle shell arithmetic: $((i + 1)) -> $i + 1
-                    let expr = &value[3..value.len()-2]; // Remove $(( and ))
-                    self.convert_arithmetic_to_perl(expr)
-                } else if value.starts_with("$(") && value.ends_with(")") {
-                    // Handle command substitution: $(command) -> `command`
-                    let cmd = &value[2..value.len()-1];
-                    format!("`{}`", cmd)
-                } else {
-                    self.perl_string_literal(value)
+                let val = match value {
+                    Word::Arithmetic(arithmetic) => {
+                        // Handle shell arithmetic: $((i + 1)) -> $i + 1
+                        self.convert_arithmetic_to_perl(&arithmetic.expression)
+                    }
+                    Word::Literal(literal) => {
+                        if literal.starts_with("$(") && literal.ends_with(")") {
+                            // Handle command substitution: $(command) -> `command`
+                            let cmd = &literal[2..literal.len()-1];
+                            format!("`{}`", cmd)
+                        } else {
+                            self.perl_string_literal(literal)
+                        }
+                    }
+                    Word::Variable(var_name) => {
+                        // Handle variable references
+                        format!("${}", var_name)
+                    }
+                    _ => {
+                        // Handle other Word types by converting to string
+                        self.word_to_perl(value)
+                    }
                 };
                 
                 if self.subshell_depth > 0 || !self.declared_locals.contains(var) {
@@ -97,9 +109,61 @@ impl PerlGenerator {
                 output.push_str("print(\"\\n\");\n");
             } else {
                 // Support special variables like $# (argc)
-                if cmd.args.len() == 1 && cmd.args[0] == "$#" {
-                    output.push_str("print(scalar(@ARGV) . \"\\n\");\n");
+                if cmd.args.len() == 1 {
+                    let arg = &cmd.args[0];
+                    if matches!(arg, Word::Variable(var) if var == "#") {
+                        output.push_str("print(scalar(@ARGV) . \"\\n\");\n");
+                    } else if matches!(arg, Word::Variable(var) if var == "@") {
+                        output.push_str("print(join(\" \", @ARGV) . \"\\n\");\n");
+                    } else if let Word::StringInterpolation(interp) = arg {
+                        // Handle string interpolation like "$#"
+                        if interp.parts.len() == 1 {
+                            if let StringPart::Variable(var) = &interp.parts[0] {
+                                if var == "#" {
+                                    output.push_str("print(scalar(@ARGV) . \"\\n\");\n");
+                                } else if var == "@" {
+                                    output.push_str("print(join(\" \", @ARGV) . \"\\n\");\n");
+                                } else {
+                                    // Handle other variables in string interpolation
+                                    let converted = self.convert_string_interpolation_to_perl(interp);
+                                    output.push_str(&format!("print(\"{}\\n\");\n", converted));
+                                }
+                            } else {
+                                // Handle other string parts
+                                let converted = self.convert_string_interpolation_to_perl(interp);
+                                output.push_str(&format!("print(\"{}\\n\");\n", converted));
+                            }
+                        } else {
+                            // Handle multiple parts in string interpolation
+                            let converted = self.convert_string_interpolation_to_perl(interp);
+                            output.push_str(&format!("print(\"{}\\n\");\n", converted));
+                        }
+                    } else {
+                        // Handle direct variable references like $# or $@
+                        let arg_str = arg.to_string();
+                        if arg_str == "$#" {
+                            output.push_str("print(scalar(@ARGV) . \"\\n\");\n");
+                        } else if arg_str == "$@" {
+                            output.push_str("print(join(\" \", @ARGV) . \"\\n\");\n");
+                        } else {
+                            let args = cmd.args.join(" ");
+                            // Convert shell positional parameters to Perl equivalents
+                            let converted_args = args.replace("$1", "$_[0]")
+                                                   .replace("$2", "$_[1]")
+                                                   .replace("$3", "$_[2]")
+                                                   .replace("$4", "$_[3]")
+                                                   .replace("$5", "$_[4]")
+                                                   .replace("$6", "$_[5]")
+                                                   .replace("$7", "$_[6]")
+                                                   .replace("$8", "$_[7]")
+                                                   .replace("$9", "$_[8]");
+                            let escaped_args = self.escape_perl_string(&converted_args);
+                            // Allow interpolation ($var) intentionally by not escaping '$'
+                            output.push_str(&format!("print(\"{}\\n\");\n", escaped_args));
+                        }
+                    }
                 } else {
+                    // Handle multiple arguments or no arguments
                     let args = cmd.args.join(" ");
                     // Convert shell positional parameters to Perl equivalents
                     let converted_args = args.replace("$1", "$_[0]")
@@ -118,8 +182,8 @@ impl PerlGenerator {
             }
         } else if cmd.name == "cd" {
             // Special handling for cd
-            let empty_string = "".to_string();
-            let dir = cmd.args.first().unwrap_or(&empty_string);
+            let empty_word = Word::Literal("".to_string());
+            let dir = cmd.args.first().unwrap_or(&empty_word);
             output.push_str(&format!("chdir('{}') or die \"Cannot change to directory: $!\\n\";\n", dir));
         } else if cmd.name == "ls" {
             // Special handling for ls (ignore flags like -la); default to current dir
@@ -128,7 +192,7 @@ impl PerlGenerator {
             } else if cmd.args[0].starts_with('-') {
                 ".".to_string()
             } else {
-                cmd.args[0].clone()
+                cmd.args[0].to_string()
             };
             output.push_str(&format!("opendir(my $dh, '{}') or die \"Cannot open directory: $!\\n\";\n", dir));
             output.push_str("while (my $file = readdir($dh)) {\n");
@@ -220,7 +284,7 @@ impl PerlGenerator {
                     let args = cmd
                         .args
                         .iter()
-                        .map(|arg| self.perl_string_literal(arg))
+                        .map(|arg| self.word_to_perl(arg))
                         .collect::<Vec<_>>();
                     if args.is_empty() {
                         output.push_str(&format!("{}();\n", cmd.name));
@@ -243,7 +307,7 @@ impl PerlGenerator {
                 let args = cmd
                     .args
                     .iter()
-                    .map(|arg| self.perl_string_literal(arg))
+                    .map(|arg| self.word_to_perl(arg))
                     .collect::<Vec<_>>();
                 if args.is_empty() {
                     output.push_str(&format!("{}();\n", cmd.name));
@@ -265,15 +329,13 @@ impl PerlGenerator {
             let operand2 = &cmd.args[2];
             
             // Ensure variables are declared if they're shell variables
-            if operand1.starts_with('$') {
-                let var_name = operand1.trim_start_matches('$');
+            if let Word::Variable(var_name) = operand1 {
                 if !self.declared_locals.contains(var_name) {
                     output.push_str(&format!("my ${} = 0;\n", var_name));
                     self.declared_locals.insert(var_name.to_string());
                 }
             }
-            if operand2.starts_with('$') {
-                let var_name = operand2.trim_start_matches('$');
+            if let Word::Variable(var_name) = operand2 {
                 if !self.declared_locals.contains(var_name) {
                     output.push_str(&format!("my ${} = 0;\n", var_name));
                     self.declared_locals.insert(var_name.to_string());
@@ -308,8 +370,7 @@ impl PerlGenerator {
             let operand = &cmd.args[1];
             
             // Ensure variables are declared if they're shell variables
-            if operand.starts_with('$') {
-                let var_name = operand.trim_start_matches('$');
+            if let Word::Variable(var_name) = operand {
                 if !self.declared_locals.contains(var_name) {
                     output.push_str(&format!("my ${} = 0;\n", var_name));
                     self.declared_locals.insert(var_name.to_string());
@@ -318,31 +379,31 @@ impl PerlGenerator {
             
             match operator.as_str() {
                 "-f" => {
-                    output.push_str(&format!("-f '{}'", operand));
+                    output.push_str(&format!("-f {}", self.word_to_perl_for_test(operand)));
                 }
                 "-d" => {
-                    output.push_str(&format!("-d '{}'", operand));
+                    output.push_str(&format!("-d {}", self.word_to_perl_for_test(operand)));
                 }
                 "-e" => {
-                    output.push_str(&format!("-e '{}'", operand));
+                    output.push_str(&format!("-e {}", self.word_to_perl_for_test(operand)));
                 }
                 "-r" => {
-                    output.push_str(&format!("-r '{}'", operand));
+                    output.push_str(&format!("-r {}", self.word_to_perl_for_test(operand)));
                 }
                 "-w" => {
-                    output.push_str(&format!("-w '{}'", operand));
+                    output.push_str(&format!("-w {}", self.word_to_perl_for_test(operand)));
                 }
                 "-x" => {
-                    output.push_str(&format!("-x '{}'", operand));
+                    output.push_str(&format!("-x {}", self.word_to_perl_for_test(operand)));
                 }
                 "-z" => {
-                    output.push_str(&format!("-z '{}'", operand));
+                    output.push_str(&format!("-z {}", self.word_to_perl_for_test(operand)));
                 }
                 "-n" => {
-                    output.push_str(&format!("-s '{}'", operand));
+                    output.push_str(&format!("-s {}", self.word_to_perl_for_test(operand)));
                 }
                 _ => {
-                    output.push_str(&format!("'{}' {} '{}'", operand, operator, operand));
+                    output.push_str(&format!("{} {} {}", self.word_to_perl_for_test(operand), operator, self.word_to_perl_for_test(operand)));
                 }
             }
         }
@@ -458,28 +519,26 @@ impl PerlGenerator {
                     let operand1 = &cmd.args[0];
                     let operand2 = &cmd.args[2];
                     
-                    // Initialize first operand if it's a variable
-                    if operand1.starts_with('$') {
-                        let var_name = operand1.trim_start_matches('$');
-                        if !self.declared_locals.contains(var_name) {
-                            // Check if this variable was used in a previous for loop
-                            if var_name == "i" {
-                                output.push_str(&format!("my ${} = 5;\n", var_name));
-                            } else {
-                                output.push_str(&format!("my ${} = 0;\n", var_name));
-                            }
-                            self.declared_locals.insert(var_name.to_string());
-                        }
-                    }
-                    
-                    // Initialize second operand if it's a variable
-                    if operand2.starts_with('$') {
-                        let var_name = operand2.trim_start_matches('$');
-                        if !self.declared_locals.contains(var_name) {
+                                    // Initialize first operand if it's a variable
+                if let Word::Variable(var_name) = operand1 {
+                    if !self.declared_locals.contains(var_name) {
+                        // Check if this variable was used in a previous for loop
+                        if var_name == "i" {
+                            output.push_str(&format!("my ${} = 5;\n", var_name));
+                        } else {
                             output.push_str(&format!("my ${} = 0;\n", var_name));
-                            self.declared_locals.insert(var_name.to_string());
                         }
+                        self.declared_locals.insert(var_name.to_string());
                     }
+                }
+                
+                // Initialize second operand if it's a variable
+                if let Word::Variable(var_name) = operand2 {
+                    if !self.declared_locals.contains(var_name) {
+                        output.push_str(&format!("my ${} = 0;\n", var_name));
+                        self.declared_locals.insert(var_name.to_string());
+                    }
+                }
                 } else if cmd.args.len() >= 1 {
                     // Handle single argument test conditions
                     let var_name = cmd.args[0].trim_start_matches('$');
@@ -541,33 +600,85 @@ impl PerlGenerator {
         let body = &for_loop.body;
         
         // Special case for iterating over arguments ($@)
-        if items.len() == 1 && (items[0] == "$@" || items[0] == "${@}") {
-            self.indent_level += 1;
-            let body_code = self.generate_block(body);
-            self.indent_level -= 1;
-            return format!("for my ${} (@ARGV) {{\n{}}}\n", variable, body_code);
+        if items.len() == 1 {
+            let item = &items[0];
+            if matches!(item, Word::Variable(var) if var == "@") {
+                self.indent_level += 1;
+                let body_code = self.generate_block(body);
+                self.indent_level -= 1;
+                return format!("for my ${} (@ARGV) {{\n{}}}\n", variable, body_code);
+            } else if let Word::StringInterpolation(interp) = item {
+                if interp.parts.len() == 1 {
+                    if let StringPart::Variable(var) = &interp.parts[0] {
+                        if var == "@" {
+                            self.indent_level += 1;
+                            let body_code = self.generate_block(body);
+                            self.indent_level -= 1;
+                            return format!("for my ${} (@ARGV) {{\n{}}}\n", variable, body_code);
+                        }
+                    }
+                }
+            }
         }
         
         // Convert shell brace expansion to Perl range syntax
-        let items_str = if items.len() == 1 && items[0].starts_with('{') && items[0].ends_with('}') {
-            let content = &items[0][1..items[0].len()-1];
-            if content.contains("..") {
-                // Already in range format like {1..5}
-                content.to_string()
-            } else {
-                // Convert {a,b,c} to ("a", "b", "c")
-                let parts: Vec<&str> = content.split(',').collect();
-                if parts.len() > 1 {
-                    format!("({})", parts.iter().map(|s| format!("\"{}\"", s)).collect::<Vec<_>>().join(", "))
-                } else {
-                    content.to_string()
+        let items_str = if items.len() == 1 {
+            match &items[0] {
+                Word::BraceExpansion(expansion) => {
+                    // Handle brace expansion items
+                    if expansion.items.len() == 1 {
+                        match &expansion.items[0] {
+                            BraceItem::Range(range) => {
+                                // Convert {1..5} to (1..5)
+                                format!("({}..{})", range.start, range.end)
+                            }
+                            BraceItem::Literal(s) => {
+                                // Single literal item
+                                format!("\"{}\"", s)
+                            }
+                            BraceItem::Sequence(seq) => {
+                                // Convert {a,b,c} to ("a", "b", "c")
+                                format!("({})", seq.iter().map(|s| format!("\"{}\"", s)).collect::<Vec<_>>().join(", "))
+                            }
+                        }
+                    } else {
+                        // Multiple items
+                        let parts: Vec<String> = expansion.items.iter().map(|item| {
+                            match item {
+                                BraceItem::Literal(s) => format!("\"{}\"", s),
+                                BraceItem::Range(range) => format!("({}..{})", range.start, range.end),
+                                BraceItem::Sequence(seq) => format!("({})", seq.iter().map(|s| format!("\"{}\"", s)).collect::<Vec<_>>().join(", ")),
+                            }
+                        }).collect();
+                        format!("({})", parts.join(", "))
+                    }
+                }
+                Word::Literal(s) if s.starts_with('{') && s.ends_with('}') => {
+                    // Fallback for literal strings that look like brace expansions
+                    let content = &s[1..s.len()-1];
+                    if content.contains("..") {
+                        // Already in range format like {1..5}
+                        content.to_string()
+                    } else {
+                        // Convert {a,b,c} to ("a", "b", "c")
+                        let parts: Vec<&str> = content.split(',').collect();
+                        if parts.len() > 1 {
+                            format!("({})", parts.iter().map(|s| format!("\"{}\"", s)).collect::<Vec<_>>().join(", "))
+                        } else {
+                            content.to_string()
+                        }
+                    }
+                }
+                _ => {
+                    // Other word types
+                    format!("\"{}\"", items[0])
                 }
             }
         } else if items.is_empty() {
             // No items specified, use default behavior
             "()".to_string()
         } else {
-            // Multiple items or single item
+            // Multiple items
             format!("({})", items.iter().map(|s| format!("\"{}\"", s)).collect::<Vec<_>>().join(", "))
         };
         
@@ -715,5 +826,146 @@ impl PerlGenerator {
         }).collect();
         
         converted_parts.join(" ")
+    }
+
+    fn convert_string_interpolation_to_perl(&self, interp: &StringInterpolation) -> String {
+        let mut result = String::new();
+        
+
+        
+        for part in &interp.parts {
+            match part {
+                StringPart::Literal(s) => {
+                    result.push_str(&self.escape_perl_string(s));
+                }
+                StringPart::Variable(var) => {
+                    // Convert shell variables to Perl variables
+                    if var == "#" {
+                        result.push_str("scalar(@ARGV)");
+                    } else if var == "@" {
+                        result.push_str("join(\" \", @ARGV)");
+                    } else if var == "1" {
+                        result.push_str("$_[0]");
+                    } else if var == "2" {
+                        result.push_str("$_[1]");
+                    } else if var == "3" {
+                        result.push_str("$_[2]");
+                    } else if var == "4" {
+                        result.push_str("$_[3]");
+                    } else if var == "5" {
+                        result.push_str("$_[4]");
+                    } else if var == "6" {
+                        result.push_str("$_[5]");
+                    } else if var == "7" {
+                        result.push_str("$_[6]");
+                    } else if var == "8" {
+                        result.push_str("$_[7]");
+                    } else if var == "9" {
+                        result.push_str("$_[8]");
+                    } else {
+                        // For simple variable names, use $var instead of ${var}
+                        result.push_str(&format!("${}", var));
+                    }
+                }
+                StringPart::Arithmetic(arith) => {
+                    // Convert shell arithmetic to Perl
+                    let expr = self.convert_arithmetic_to_perl(&arith.expression);
+                    result.push_str(&expr);
+                }
+                StringPart::CommandSubstitution(_) => {
+                    // TODO: implement command substitution
+                    result.push_str("''");
+                }
+            }
+        }
+        
+        result
+    }
+
+    fn word_to_perl(&self, word: &Word) -> String {
+        match word {
+            Word::Literal(s) => self.perl_string_literal(s),
+            Word::Variable(var) => format!("${}", var),
+            Word::Arithmetic(expr) => self.convert_arithmetic_to_perl(&expr.expression),
+            Word::BraceExpansion(expansion) => {
+                // Handle brace expansion in test commands
+                if expansion.items.len() == 1 {
+                    match &expansion.items[0] {
+                        BraceItem::Range(range) => {
+                            format!("({}..{})", range.start, range.end)
+                        }
+                        BraceItem::Literal(s) => self.perl_string_literal(s),
+                        BraceItem::Sequence(seq) => {
+                            format!("({})", seq.iter().map(|s| self.perl_string_literal(s)).collect::<Vec<_>>().join(", "))
+                        }
+                    }
+                } else {
+                    // Multiple items
+                    let parts: Vec<String> = expansion.items.iter().map(|item| {
+                        match item {
+                            BraceItem::Literal(s) => self.perl_string_literal(s),
+                            BraceItem::Range(range) => format!("({}..{})", range.start, range.end),
+                            BraceItem::Sequence(seq) => format!("({})", seq.iter().map(|s| self.perl_string_literal(s)).collect::<Vec<_>>().join(", ")),
+                        }
+                    }).collect();
+                    format!("({})", parts.join(", "))
+                }
+            }
+            Word::CommandSubstitution(_) => "`command`".to_string(),
+            Word::StringInterpolation(interp) => {
+                // For function arguments, we need quoted strings
+                // If it's just a single literal part, wrap it in quotes
+                if interp.parts.len() == 1 {
+                    if let StringPart::Literal(s) = &interp.parts[0] {
+                        return format!("\"{}\"", self.escape_perl_string(s));
+                    }
+                }
+                // For more complex interpolations, wrap the result in quotes
+                let content = self.convert_string_interpolation_to_perl(interp);
+                format!("\"{}\"", content)
+            },
+        }
+    }
+
+    fn word_to_perl_for_test(&self, word: &Word) -> String {
+        match word {
+            Word::Literal(s) => self.perl_string_literal(s),
+            Word::Variable(var) => format!("${}", var),
+            Word::Arithmetic(expr) => self.convert_arithmetic_to_perl(&expr.expression),
+            Word::BraceExpansion(expansion) => {
+                // Handle brace expansion in test commands
+                if expansion.items.len() == 1 {
+                    match &expansion.items[0] {
+                        BraceItem::Range(range) => {
+                            format!("({}..{})", range.start, range.end)
+                        }
+                        BraceItem::Literal(s) => self.perl_string_literal(s),
+                        BraceItem::Sequence(seq) => {
+                            format!("({})", seq.iter().map(|s| self.perl_string_literal(s)).collect::<Vec<_>>().join(", "))
+                        }
+                    }
+                } else {
+                    // Multiple items
+                    let parts: Vec<String> = expansion.items.iter().map(|item| {
+                        match item {
+                            BraceItem::Literal(s) => self.perl_string_literal(s),
+                            BraceItem::Range(range) => format!("({}..{})", range.start, range.end),
+                            BraceItem::Sequence(seq) => format!("({})", seq.iter().map(|s| self.perl_string_literal(s)).collect::<Vec<_>>().join(", ")),
+                        }
+                    }).collect();
+                    format!("({})", parts.join(", "))
+                }
+            }
+            Word::CommandSubstitution(_) => "`command`".to_string(),
+            Word::StringInterpolation(interp) => {
+                // For test commands, simple literal strings need to be quoted
+                if interp.parts.len() == 1 {
+                    if let StringPart::Literal(s) = &interp.parts[0] {
+                        return format!("\"{}\"", self.escape_perl_string(s));
+                    }
+                }
+                self.convert_string_interpolation_to_perl(interp)
+            },
+        }
     }
 } 

@@ -47,7 +47,7 @@ impl JsGenerator {
             if cmd.args.is_empty() {
                 return String::from("console.log();\n");
             } else {
-                let args = cmd.args.join(" ");
+                let args = cmd.args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>().join(" ");
                 return format!("console.log({});\n", self.escape_js_string(&args));
             }
         } else if cmd.name == "shopt" {
@@ -81,9 +81,9 @@ impl JsGenerator {
 
     fn command_to_shell(&self, cmd: &SimpleCommand) -> String {
         if cmd.args.is_empty() {
-            cmd.name.clone()
+            cmd.name.to_string()
         } else {
-            let args = cmd.args.join(" ");
+            let args = cmd.args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>().join(" ");
             format!("{} {}", cmd.name, args)
         }
     }

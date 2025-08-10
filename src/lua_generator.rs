@@ -1,4 +1,4 @@
-use crate::ast::{Command, SimpleCommand, Pipeline, IfStatement, WhileLoop, ForLoop, Function, Block};
+use crate::ast::{Command, SimpleCommand, Pipeline, IfStatement, WhileLoop, ForLoop, Function, Block, WordVecExt};
 
 pub struct LuaGenerator {
     indent_level: usize,

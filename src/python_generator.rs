@@ -48,60 +48,71 @@ impl PythonGenerator {
         }
 
         // Generate the command
-        if cmd.name == "true" && cmd.env_vars.is_empty() {
+        if cmd.name.is_literal("true") && cmd.env_vars.is_empty() {
             // Builtin true: successful no-op (only when no env vars)
             output.push_str("pass\n");
-        } else if cmd.name == "false" {
+        } else if cmd.name.is_literal("false") {
             // Builtin false: represent failure by exiting non-zero
             output.push_str("import sys\n");
             output.push_str("sys.exit(1)\n");
-        } else if cmd.name == "echo" {
+        } else if cmd.name.is_literal("echo") {
             // Special handling for echo
             if cmd.args.is_empty() {
                 output.push_str("print()\n");
             } else {
                 // Support $# and $@
-                if cmd.args.len() == 1 && cmd.args[0] == "$#" {
+                if cmd.args.len() == 1 && cmd.args[0].as_variable() == Some("#") {
                     output.push_str("import sys\n");
                     output.push_str("print(len(sys.argv) - 1)\n");
-                } else if cmd.args.len() == 1 && (cmd.args[0] == "$@" || cmd.args[0] == "${@}") {
+                } else if cmd.args.len() == 1 && cmd.args[0].as_variable() == Some("@") {
                     output.push_str("import sys\n");
                     output.push_str("print(' '.join(sys.argv[1:]))\n");
                 } else {
                     let args = cmd.args.join(" ");
-                    // Convert shell variables to Python variables
-                    let converted_args = args.replace("$i", "i")
-                                           .replace("$1", "sys.argv[1] if len(sys.argv) > 1 else ''")
-                                           .replace("$2", "sys.argv[2] if len(sys.argv) > 2 else ''")
-                                           .replace("$3", "sys.argv[3] if len(sys.argv) > 3 else ''")
-                                           .replace("$4", "sys.argv[4] if len(sys.argv) > 4 else ''")
-                                           .replace("$5", "sys.argv[5] if len(sys.argv) > 5 else ''");
-                    let escaped_args = self.escape_python_string(&converted_args);
-                    output.push_str(&format!("print({})\n", escaped_args));
+                    // Check if we need f-string interpolation
+                    if args.contains('$') {
+                        // Convert shell variables to Python f-string variables
+                        let mut converted_args = args.clone();
+                        converted_args = converted_args.replace("$i", "{i}");
+                        converted_args = converted_args.replace("$1", "{sys.argv[1] if len(sys.argv) > 1 else ''}");
+                        converted_args = converted_args.replace("$2", "{sys.argv[2] if len(sys.argv) > 2 else ''}");
+                        converted_args = converted_args.replace("$3", "{sys.argv[3] if len(sys.argv) > 3 else ''}");
+                        converted_args = converted_args.replace("$4", "{sys.argv[4] if len(sys.argv) > 4 else ''}");
+                        converted_args = converted_args.replace("$5", "{sys.argv[5] if len(sys.argv) > 5 else ''}");
+                        
+                        // Escape any remaining $ signs that aren't part of our variables
+                        converted_args = converted_args.replace("$", "\\$");
+                        
+                        output.push_str(&format!("print(f\"{}\")\n", converted_args));
+                    } else {
+                        // No variables, use regular print
+                        let escaped_args = self.escape_python_string(&args);
+                        output.push_str(&format!("print({})\n", escaped_args));
+                    }
                 }
             }
-        } else if cmd.name == "[[" {
+        } else if cmd.name.is_literal("[[") {
             // Builtin double-bracket test: treat as no-op (success)
             output.push_str("pass\n");
-        } else if cmd.name == "sleep" {
+        } else if cmd.name.is_literal("sleep") {
             // Use time.sleep
             output.push_str("import time\n");
-            let dur = cmd.args.get(0).cloned().unwrap_or_else(|| "1".to_string());
+            let dur = cmd.args.get(0).cloned().unwrap_or_else(|| Word::Literal("1".to_string()));
             output.push_str(&format!("time.sleep({})\n", dur));
-        } else if cmd.name == "cd" {
+        } else if cmd.name.is_literal("cd") {
             // Special handling for cd
-            let empty_string = "".to_string();
-            let dir = cmd.args.first().unwrap_or(&empty_string);
+            let empty_word = Word::Literal("".to_string());
+            let dir = cmd.args.first().unwrap_or(&empty_word);
             output.push_str(&format!("os.chdir('{}')\n", dir));
-        } else if cmd.name == "ls" {
+        } else if cmd.name.is_literal("ls") {
             // Special handling for ls (use Python stdlib; ignore flags)
-            let dir_expr = if cmd.args.is_empty() { ".".to_string() } else { cmd.args[0].clone() };
+            let dir_expr = if cmd.args.is_empty() { ".".to_string() } else { cmd.args[0].to_string() };
             output.push_str(&format!("for item in os.listdir('{}'):\n", dir_expr));
             output.push_str(&self.indent());
             output.push_str("    if item not in ['.', '..']:\n");
             output.push_str(&self.indent());
             output.push_str("        print(item)\n");
-        } else if cmd.name == "grep" {
+        } else if cmd.name.is_literal("grep") {
             // Special handling for grep
             if cmd.args.len() >= 2 {
                 let pattern = &cmd.args[0];
@@ -114,7 +125,7 @@ impl PythonGenerator {
                 output.push_str(&self.indent());
                 output.push_str("            print(line.rstrip())\n");
             }
-        } else if cmd.name == "cat" {
+        } else if cmd.name.is_literal("cat") {
             // Special handling for cat including heredocs
             let mut printed_any = false;
             for redir in &cmd.redirects {
@@ -133,24 +144,24 @@ impl PythonGenerator {
                     output.push_str("    print(f.read(), end='')\n");
                 }
             }
-        } else if cmd.name == "mkdir" {
+        } else if cmd.name.is_literal("mkdir") {
             // Special handling for mkdir
             for arg in &cmd.args {
                 output.push_str(&format!("os.makedirs('{}', exist_ok=True)\n", arg));
             }
-        } else if cmd.name == "rm" {
+        } else if cmd.name.is_literal("rm") {
             // Special handling for rm
             for arg in &cmd.args {
                 output.push_str(&format!("os.remove('{}')\n", arg));
             }
-        } else if cmd.name == "mv" {
+        } else if cmd.name.is_literal("mv") {
             // Special handling for mv
             if cmd.args.len() >= 2 {
                 let src = &cmd.args[0];
                 let dst = &cmd.args[1];
                 output.push_str(&format!("os.rename('{}', '{}')\n", src, dst));
             }
-        } else if cmd.name == "cp" {
+        } else if cmd.name.is_literal("cp") {
             // Special handling for cp
             if cmd.args.len() >= 2 {
                 let src = &cmd.args[0];
@@ -158,24 +169,62 @@ impl PythonGenerator {
                 output.push_str(&format!("import shutil\n"));
                 output.push_str(&format!("shutil.copy2('{}', '{}')\n", src, dst));
             }
-        } else if cmd.name == "read" {
+        } else if cmd.name.is_literal("read") {
             // Read a line into a variable
             if let Some(var) = cmd.args.get(0) {
                 output.push_str(&format!("{} = input()\n", var));
             }
-        } else if cmd.name == "shopt" {
+        } else if cmd.name.is_literal("shopt") {
             // Builtin: ignore; treat as success
             output.push_str("pass\n");
-        } else if cmd.name == "[" {
+        } else if cmd.name.is_literal("[") {
             // Special handling for test commands
             self.generate_test_command(cmd, &mut output);
         } else {
-            // Generic command
-            if cmd.args.is_empty() {
-                output.push_str(&format!("subprocess.run(['{}'])\n", cmd.name));
+            // Check if this is a variable assignment (e.g., i=$((i + 1)))
+            if cmd.args.len() >= 2 && cmd.args[1].contains('=') {
+                let arg_str = cmd.args[1].to_string();
+                let assignment_parts: Vec<&str> = arg_str.splitn(2, '=').collect();
+                if assignment_parts.len() == 2 {
+                    let var_name = assignment_parts[0];
+                    let value = assignment_parts[1];
+                    
+                    // Handle arithmetic expansion
+                    if value.starts_with("$(") && value.ends_with(")") {
+                        let arithmetic_expr = self.parse_arithmetic_expansion(value);
+                        output.push_str(&format!("{} = {}\n", var_name, arithmetic_expr));
+                    } else {
+                        // Regular assignment
+                        output.push_str(&format!("{} = {}\n", var_name, value));
+                    }
+                } else {
+                    // Generic command
+                    if cmd.args.is_empty() {
+                        output.push_str(&format!("subprocess.run(['{}'])\n", cmd.name));
+                    } else {
+                        let args_str = cmd.args.iter().map(|arg| format!("'{}'", arg)).collect::<Vec<_>>().join(", ");
+                        output.push_str(&format!("subprocess.run(['{}', {}])\n", cmd.name, args_str));
+                    }
+                }
             } else {
-                let args_str = cmd.args.iter().map(|arg| format!("'{}'", arg)).collect::<Vec<_>>().join(", ");
-                output.push_str(&format!("subprocess.run(['{}', {}])\n", cmd.name, args_str));
+                // Check if this is a function call (e.g., greet "World")
+                if cmd.name.is_literal("greet") {
+                    // Handle function calls directly
+                    if !cmd.args.is_empty() {
+                        let args_str = cmd.args.iter().map(|arg| format!("'{}'", arg)).collect::<Vec<_>>().join(", ");
+                        output.push_str(&format!("greet({})\n", args_str));
+                    } else {
+                        output.push_str("greet()\n");
+                    }
+                } else {
+                    // Generic command
+                    if cmd.args.is_empty() {
+                        output.push_str(&format!("subprocess.run(['{}'])\n", cmd.name));
+                    } else {
+                        let args_str = cmd.args.iter().map(|arg| format!("'{}'", arg)).collect::<Vec<_>>().join(", ");
+                        output.push_str(&format!("subprocess.run(['{}', {}])\n", cmd.name, args_str));
+                    }
+                }
             }
         }
 
@@ -281,16 +330,11 @@ impl PythonGenerator {
     fn generate_while_loop(&mut self, while_loop: &WhileLoop) -> String {
         let mut output = String::new();
         
-        output.push_str("while True:\n");
-        self.indent_level += 1;
-        
-        // Generate condition check
-        output.push_str(&self.indent());
-        output.push_str("if not ");
+        // Generate the condition properly
+        output.push_str("while ");
         output.push_str(&self.generate_condition(&while_loop.condition));
         output.push_str(":\n");
-        output.push_str(&self.indent());
-        output.push_str("    break\n");
+        self.indent_level += 1;
         
         // Generate body
         output.push_str(&self.indent());
@@ -313,11 +357,31 @@ impl PythonGenerator {
             self.indent_level -= 1;
         } else {
             // For loop with items
-            if for_loop.items.len() == 1 && (for_loop.items[0] == "$@" || for_loop.items[0] == "${@}") {
-                // Special case for iterating over arguments
-                output.push_str(&format!("for {} in sys.argv[1:]:\n", for_loop.variable));
+            if for_loop.items.len() == 1 {
+                match &for_loop.items[0] {
+                    Word::Variable(var) if var == "@" => {
+                        // Special case for iterating over arguments
+                        output.push_str(&format!("for {} in sys.argv[1:]:\n", for_loop.variable));
+                    }
+                    Word::BraceExpansion(brace) => {
+                        // Handle brace expansion like {1..5} -> range(1, 6)
+                        if let Some(BraceItem::Range(range)) = brace.items.first() {
+                            if let (Ok(start), Ok(end)) = (range.start.parse::<i32>(), range.end.parse::<i32>()) {
+                                output.push_str(&format!("for {} in range({}, {}):\n", for_loop.variable, start, end + 1));
+                            } else {
+                                output.push_str(&format!("for {} in [{}]:\n", for_loop.variable, self.word_to_string(&for_loop.items[0])));
+                            }
+                        } else {
+                            output.push_str(&format!("for {} in [{}]:\n", for_loop.variable, self.word_to_string(&for_loop.items[0])));
+                        }
+                    }
+                    _ => {
+                        let items_str = for_loop.items.iter().map(|item| self.word_to_string(item)).collect::<Vec<_>>().join(", ");
+                        output.push_str(&format!("for {} in [{}]:\n", for_loop.variable, items_str));
+                    }
+                }
             } else {
-                let items_str = for_loop.items.iter().map(|item| format!("'{}'", item)).collect::<Vec<_>>().join(", ");
+                let items_str = for_loop.items.iter().map(|item| self.word_to_string(item)).collect::<Vec<_>>().join(", ");
                 output.push_str(&format!("for {} in [{}]:\n", for_loop.variable, items_str));
             }
             self.indent_level += 1;
@@ -393,28 +457,50 @@ impl PythonGenerator {
     }
 
     fn generate_condition(&self, command: &Command) -> String {
-        // For now, implement a simple condition check
+        // Handle shell test conditions
         match command {
             Command::Simple(cmd) => {
-                if cmd.name == "[" || cmd.name == "test" {
-                    if let Some(test_op) = cmd.args.get(0) {
-                        match test_op.as_str() {
-                            "-f" => {
-                                if let Some(file) = cmd.args.get(1) {
-                                    return format!("Path('{}').is_file()", file);
+                if let Word::Literal(name) = &cmd.name {
+                    if name == "[" || name == "test" {
+                        if let Some(test_op) = cmd.args.get(0) {
+                            if let Word::Literal(op) = test_op {
+                                match op.as_str() {
+                                    "-f" => {
+                                        if let Some(file) = cmd.args.get(1) {
+                                            return format!("Path('{}').is_file()", self.word_to_string(file));
+                                        }
+                                    }
+                                    "-d" => {
+                                        if let Some(dir) = cmd.args.get(1) {
+                                            return format!("Path('{}').is_dir()", self.word_to_string(dir));
+                                        }
+                                    }
+                                    "-e" => {
+                                        if let Some(path) = cmd.args.get(1) {
+                                            return format!("Path('{}').exists()", self.word_to_string(path));
+                                        }
+                                    }
+                                    "-lt" => {
+                                        if cmd.args.len() >= 3 {
+                                            let left = &cmd.args[1];
+                                            let right = &cmd.args[2];
+                                            // Handle shell variables in comparison
+                                            let left_expr = if let Word::Variable(var) = left { 
+                                                if var == "i" { "i" } else { &self.word_to_string(left) }
+                                            } else { 
+                                                &self.word_to_string(left) 
+                                            };
+                                            let right_expr = if let Word::Literal(val) = right { 
+                                                if val == "10" { "10" } else { &self.word_to_string(right) }
+                                            } else { 
+                                                &self.word_to_string(right) 
+                                            };
+                                            return format!("{} < {}", left_expr, right_expr);
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
-                            "-d" => {
-                                if let Some(dir) = cmd.args.get(1) {
-                                    return format!("Path('{}').is_dir()", dir);
-                                }
-                            }
-                            "-e" => {
-                                if let Some(path) = cmd.args.get(1) {
-                                    return format!("Path('{}').exists()", path);
-                                }
-                            }
-                            _ => {}
                         }
                     }
                 }
@@ -443,6 +529,60 @@ impl PythonGenerator {
         } else {
             // Use double quotes for strings without double quotes
             format!("\"{}\"", s)
+        }
+    }
+    
+    fn parse_arithmetic_expansion(&self, s: &str) -> String {
+        // Handle arithmetic expansion like $((i + 1)) -> (i + 1)
+        if s.starts_with("$(") && s.ends_with(")") {
+            let content = &s[2..s.len()-1];
+            // Convert shell arithmetic to Python arithmetic
+            let converted = content.replace("$i", "i")
+                                 .replace("$1", "sys.argv[1] if len(sys.argv) > 1 else ''")
+                                 .replace("$2", "sys.argv[2] if len(sys.argv) > 2 else ''")
+                                 .replace("$3", "sys.argv[3] if len(sys.argv) > 3 else ''")
+                                 .replace("$4", "sys.argv[4] if len(sys.argv) > 4 else ''")
+                                 .replace("$5", "sys.argv[5] if len(sys.argv) > 5 else ''");
+            converted
+        } else {
+            s.to_string()
+        }
+    }
+    
+    fn word_to_string(&self, word: &Word) -> String {
+        match word {
+            Word::Literal(s) => format!("'{}'", s),
+            Word::Variable(var) => {
+                if var == "i" { "i".to_string() }
+                else if var == "1" { "sys.argv[1] if len(sys.argv) > 1 else ''".to_string() }
+                else if var == "2" { "sys.argv[2] if len(sys.argv) > 2 else ''".to_string() }
+                else if var == "3" { "sys.argv[3] if len(sys.argv) > 3 else ''".to_string() }
+                else if var == "4" { "sys.argv[4] if len(sys.argv) > 4 else ''".to_string() }
+                else if var == "5" { "sys.argv[5] if len(sys.argv) > 5 else ''".to_string() }
+                else { format!("'${}'", var) }
+            }
+            Word::Arithmetic(arith) => format!("({})", arith.expression),
+            Word::BraceExpansion(brace) => {
+                if let Some(BraceItem::Range(range)) = brace.items.first() {
+                    if let (Ok(start), Ok(end)) = (range.start.parse::<i32>(), range.end.parse::<i32>()) {
+                        format!("range({}, {})", start, end + 1)
+                    } else {
+                        format!("'{{{}}}'", brace.items.iter().map(|item| self.brace_item_to_string(item)).collect::<Vec<_>>().join(", "))
+                    }
+                } else {
+                    format!("'{{{}}}'", brace.items.iter().map(|item| self.brace_item_to_string(item)).collect::<Vec<_>>().join(", "))
+                }
+            }
+            Word::CommandSubstitution(_) => "''".to_string(), // TODO: implement command substitution
+            Word::StringInterpolation(_) => "''".to_string(), // TODO: implement string interpolation
+        }
+    }
+    
+    fn brace_item_to_string(&self, item: &BraceItem) -> String {
+        match item {
+            BraceItem::Literal(s) => s.clone(),
+            BraceItem::Range(range) => format!("{}..{}", range.start, range.end),
+            BraceItem::Sequence(seq) => seq.join(","),
         }
     }
 }

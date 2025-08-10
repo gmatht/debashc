@@ -130,11 +130,12 @@ impl RustGenerator {
         }
         
         // Handle variable assignments (e.g., i=5)
-        if cmd.name.contains('=') {
-            let parts: Vec<&str> = cmd.name.splitn(2, '=').collect();
+        if cmd.name.to_string().contains('=') {
+            let name_str = cmd.name.to_string();
+            let parts: Vec<&str> = name_str.splitn(2, '=').collect();
             if parts.len() == 2 {
-                let var_name = parts[0];
-                let var_value = parts[1];
+                let var_name = &parts[0];
+                let var_value = &parts[1];
                 output.push_str(&format!("env::set_var(\"{}\", \"{}\");\n", var_name, var_value));
                 return output;
             }
@@ -199,19 +200,18 @@ impl RustGenerator {
             output.push_str("/* builtin */\n");
         } else if cmd.name == "sleep" {
             // Use std::thread::sleep
-            let dur = cmd.args.get(0).cloned().unwrap_or_else(|| "1".to_string());
+            let dur = cmd.args.get(0).cloned().unwrap_or_else(|| Word::Literal("1".to_string()));
             output.push_str(&format!("thread::sleep(Duration::from_secs_f64({}f64));\n", dur));
         } else if cmd.name == "cd" {
             // Special handling for cd
-            let empty_string = "".to_string();
-            let dir = cmd.args.first().unwrap_or(&empty_string);
+            let dir = if cmd.args.is_empty() { ".".to_string() } else { cmd.args[0].to_string() };
             output.push_str(&format!("if let Err(_) = env::set_current_dir(\"{}\") {{\n", dir));
             output.push_str(&self.indent());
             output.push_str("    return std::process::ExitCode::FAILURE;\n");
             output.push_str("}\n");
         } else if cmd.name == "ls" {
             // Special handling for ls
-            let args = if cmd.args.is_empty() { "." } else { &cmd.args[0] };
+            let args = if cmd.args.is_empty() { "." } else { &cmd.args[0].to_string() };
             output.push_str(&format!("match fs::read_dir(\"{}\") {{\n", args));
             output.push_str(&self.indent());
             output.push_str("    Ok(entries) => {\n");
@@ -243,8 +243,8 @@ impl RustGenerator {
         } else if cmd.name == "grep" {
             // Special handling for grep
             if cmd.args.len() >= 2 {
-                let pattern = &cmd.args[0];
-                let file = &cmd.args[1];
+                let pattern = cmd.args[0].to_string();
+                let file = cmd.args[1].to_string();
                 output.push_str(&format!("match fs::read_to_string(\"{}\") {{\n", file));
                 output.push_str(&self.indent());
                 output.push_str("    Ok(content) => {\n");
@@ -280,7 +280,7 @@ impl RustGenerator {
             }
             if !printed_any {
                 for arg in &cmd.args {
-                    output.push_str(&format!("match fs::read_to_string(\"{}\") {{\n", arg));
+                    output.push_str(&format!("match fs::read_to_string(\"{}\") {{\n", arg.to_string()));
                     output.push_str(&self.indent());
                     output.push_str("    Ok(content) => print!(\"{}\", content),\n");
                     output.push_str(&self.indent());
@@ -291,7 +291,7 @@ impl RustGenerator {
         } else if cmd.name == "mkdir" {
             // Special handling for mkdir
             for arg in &cmd.args {
-                output.push_str(&format!("if let Err(_) = fs::create_dir_all(\"{}\") {{\n", arg));
+                output.push_str(&format!("if let Err(_) = fs::create_dir_all(\"{}\") {{\n", arg.to_string()));
                 output.push_str(&self.indent());
                 output.push_str("    return std::process::ExitCode::FAILURE;\n");
                 output.push_str("}\n");
@@ -299,7 +299,7 @@ impl RustGenerator {
         } else if cmd.name == "rm" {
             // Special handling for rm
             for arg in &cmd.args {
-                output.push_str(&format!("if let Err(_) = fs::remove_file(\"{}\") {{\n", arg));
+                output.push_str(&format!("if let Err(_) = fs::remove_file(\"{}\") {{\n", arg.to_string()));
                 output.push_str(&self.indent());
                 output.push_str("    return std::process::ExitCode::FAILURE;\n");
                 output.push_str("}\n");
@@ -307,8 +307,8 @@ impl RustGenerator {
         } else if cmd.name == "mv" {
             // Special handling for mv
             if cmd.args.len() >= 2 {
-                let src = &cmd.args[0];
-                let dst = &cmd.args[1];
+                let src = cmd.args[0].to_string();
+                let dst = cmd.args[1].to_string();
                 output.push_str(&format!("if let Err(_) = fs::rename(\"{}\", \"{}\") {{\n", src, dst));
                 output.push_str(&self.indent());
                 output.push_str("    return std::process::ExitCode::FAILURE;\n");
@@ -317,8 +317,8 @@ impl RustGenerator {
         } else if cmd.name == "cp" {
             // Special handling for cp
             if cmd.args.len() >= 2 {
-                let src = &cmd.args[0];
-                let dst = &cmd.args[1];
+                let src = cmd.args[0].to_string();
+                let dst = cmd.args[1].to_string();
                 output.push_str(&format!("if let Err(_) = fs::copy(\"{}\", \"{}\") {{\n", src, dst));
                 output.push_str(&self.indent());
                 output.push_str("    return std::process::ExitCode::FAILURE;\n");
@@ -327,12 +327,13 @@ impl RustGenerator {
         } else if cmd.name == "read" {
             // Read a line from stdin into a variable
             if let Some(var) = cmd.args.get(0) {
-                output.push_str(&format!("let mut {} = String::new();\n", var));
-                output.push_str(&format!("if let Err(_) = io::stdin().read_line(&mut {}) {{\n", var));
+                let var_name = var.to_string();
+                output.push_str(&format!("let mut {} = String::new();\n", var_name));
+                output.push_str(&format!("if let Err(_) = io::stdin().read_line(&mut {}) {{\n", var_name));
                 output.push_str(&self.indent());
                 output.push_str("    return std::process::ExitCode::FAILURE;\n");
                 output.push_str("}\n");
-                output.push_str(&format!("let {v} = {v}.trim().to_string();\n", v = var));
+                output.push_str(&format!("let {v} = {v}.trim().to_string();\n", v = var_name));
             }
         } else {
             // Generic command
@@ -344,7 +345,7 @@ impl RustGenerator {
                 output.push_str("    return std::process::ExitCode::FAILURE;\n");
                 output.push_str("}\n");
             } else {
-                let args_str = cmd.args.iter().map(|arg| format!("\"{}\"", arg)).collect::<Vec<_>>().join(", ");
+                let args_str = cmd.args.iter().map(|arg| format!("\"{}\"", arg.to_string())).collect::<Vec<_>>().join(", ");
                 output.push_str(&format!("if let Err(_) = Command::new(\"{}\")\n", cmd.name));
                 output.push_str(&self.indent());
                 output.push_str(&format!("    .args(&[{}])\n", args_str));
@@ -399,14 +400,14 @@ impl RustGenerator {
         let mut output = String::new();
         
         // Extract variable name from condition if it's a test command
-        let mut var_name = None;
+        let mut _var_name = None;
         if let Command::Simple(cmd) = &*while_loop.condition {
             if cmd.name == "[" || cmd.name == "test" {
                 if let Some(test_op) = cmd.args.get(0) {
                     if test_op == "-lt" || test_op == "-gt" || test_op == "-eq" || test_op == "-ne" {
                         if let Some(var) = cmd.args.get(1) {
-                            if let Some(stripped) = var.strip_prefix("$") {
-                                var_name = Some(stripped.to_string());
+                            if let Some(stripped) = var.strip_prefix_char('$') {
+                                _var_name = Some(stripped);
                             }
                         }
                     }
@@ -442,7 +443,7 @@ impl RustGenerator {
             output.push_str("}\n");
         } else {
             // For loop with items
-            if for_loop.items.len() == 1 && (for_loop.items[0] == "$@" || for_loop.items[0] == "${@}") {
+            if for_loop.items.len() == 1 && (for_loop.items[0].to_string() == "$@" || for_loop.items[0].to_string() == "${@}") {
                 // Special case: iterate over command line arguments
                 output.push_str("for arg in std::env::args().skip(1) {\n");
                 self.indent_level += 1;
@@ -456,10 +457,10 @@ impl RustGenerator {
                 // Regular for loop with items - handle brace expansion
                 let mut expanded_items = Vec::new();
                 for item in &for_loop.items {
-                    if let Some(expanded) = self.expand_brace_expression(item) {
+                    if let Some(expanded) = self.expand_brace_expression(&item.to_string()) {
                         expanded_items.extend(expanded);
                     } else {
-                        expanded_items.push(item.clone());
+                        expanded_items.push(item.to_string());
                     }
                 }
                 
