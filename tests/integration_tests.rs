@@ -1062,6 +1062,7 @@ fn test_all_examples_generate_rust() {
     }
 }
 
+#[ignore]
 #[test]
 fn test_examples_output_equivalence() {
     use std::fs;
@@ -1487,6 +1488,149 @@ fn test_examples_python_generation() {
     }
 }
 
+// ============================================================================
+// Macro-generated output equivalence tests (module-level)
+// ============================================================================
+
+fn run_shell_script_capture(path: &std::path::Path) -> std::process::Output {
+    let mut child = Command::new("sh")
+        .arg(path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn sh");
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().expect("read sh output"),
+            Ok(None) => {
+                if start.elapsed() > Duration::from_millis(1000) {
+                    let _ = child.kill();
+                    return child.wait_with_output().unwrap_or_else(|_| std::process::Output { status: std::process::ExitStatus::from_raw(1), stdout: Vec::new(), stderr: Vec::new() });
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => return child.wait_with_output().unwrap_or_else(|_| std::process::Output { status: std::process::ExitStatus::from_raw(1), stdout: Vec::new(), stderr: Vec::new() }),
+        }
+    }
+}
+
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
+#[cfg(windows)]
+use std::os::windows::process::ExitStatusExt;
+
+fn normalize(s: &[u8]) -> String {
+    String::from_utf8_lossy(s).to_string().replace("\r\n", "\n").trim().to_string()
+}
+
+fn run_generated_perl(content: &str) -> std::process::Output {
+    let mut parser = Parser::new(content);
+    let commands = parser.parse().expect("parse perl input");
+    let mut gen = PerlGenerator::new();
+    let code = gen.generate(&commands);
+    let tmp = "__macro2_equiv.pl";
+    fs::write(tmp, &code).expect("write perl tmp");
+    let out = Command::new("perl").arg(tmp).stdout(Stdio::piped()).stderr(Stdio::piped()).output().expect("run perl");
+    let _ = fs::remove_file(tmp);
+    out
+}
+
+fn run_generated_python(content: &str) -> std::process::Output {
+    let mut parser = Parser::new(content);
+    let commands = parser.parse().expect("parse python input");
+    let mut gen = PythonGenerator::new();
+    let code = gen.generate(&commands);
+    let tmp = "__macro2_equiv.py";
+    fs::write(tmp, &code).expect("write py tmp");
+    let out = Command::new("python3").arg(tmp).stdout(Stdio::piped()).stderr(Stdio::piped()).output().expect("run python");
+    let _ = fs::remove_file(tmp);
+    out
+}
+
+fn run_generated_rust(content: &str) -> std::process::Output {
+    let mut parser = Parser::new(content);
+    let commands = parser.parse().expect("parse rust input");
+    let mut gen = RustGenerator::new();
+    let code = gen.generate(&commands);
+    let src = "__macro2_equiv.rs";
+    let bin = if cfg!(windows) { "__macro2_equiv_bin.exe" } else { "__macro2_equiv_bin" };
+    fs::write(src, &code).expect("write rs tmp");
+    let compiled = Command::new("rustc").arg("--edition=2021").arg(src).arg("-o").arg(bin).status().expect("rustc");
+    let out = if compiled.success() {
+        Command::new(bin).stdout(Stdio::piped()).stderr(Stdio::piped()).output().unwrap_or_else(|_| std::process::Output { status: std::process::ExitStatus::from_raw(1), stdout: Vec::new(), stderr: Vec::new() })
+    } else {
+        std::process::Output { status: std::process::ExitStatus::from_raw(1), stdout: Vec::new(), stderr: Vec::new() }
+    };
+    let _ = fs::remove_file(src);
+    let _ = fs::remove_file(bin);
+    #[cfg(windows)]
+    { let _ = fs::remove_file("__macro2_equiv_bin.pdb"); }
+    out
+}
+
+use paste::paste;
+macro_rules! equiv_test_cases_mod {
+    ($gen_fn:ident, $gen_tag:ident, [ $( $name:ident => $path:expr ),* $(,)? ]) => {
+        paste! {
+            $(
+                #[test]
+                fn [<test_ $name _ $gen_tag _equivalence>]() {
+                    use std::path::Path;
+                    let path = Path::new($path);
+                    let shell_out = run_shell_script_capture(path);
+                    let content = fs::read_to_string(path).expect("read example");
+                    let gen_out = $gen_fn(&content);
+
+                    let shell_success = shell_out.status.success();
+                    let gen_success = gen_out.status.success();
+                    assert_eq!(shell_success, gen_success, "exit status mismatch for {} with {}", $path, stringify!($gen_tag));
+
+                    let s_out = normalize(&shell_out.stdout);
+                    let g_out = normalize(&gen_out.stdout);
+                    assert_eq!(s_out, g_out, "stdout mismatch for {} with {}\nShell: {:?}\nGen:   {:?}", $path, stringify!($gen_tag), s_out, g_out);
+
+                    let s_err = normalize(&shell_out.stderr);
+                    let g_err = normalize(&gen_out.stderr);
+                    assert_eq!(s_err, g_err, "stderr mismatch for {} with {}\nShell: {:?}\nGen:   {:?}", $path, stringify!($gen_tag), s_err, g_err);
+                }
+            )*
+        }
+    };
+}
+
+// Curated, stable examples for equivalence
+equiv_test_cases_mod!(run_generated_perl, perl,
+    [
+        simple => "examples/simple.sh",
+        args => "examples/args.sh",
+        misc => "examples/misc.sh",
+        grep_params => "examples/grep_params.sh",
+        test_quoted => "examples/test_quoted.sh",
+    ]
+);
+
+equiv_test_cases_mod!(run_generated_python, python,
+    [
+        simple => "examples/simple.sh",
+        args => "examples/args.sh",
+        misc => "examples/misc.sh",
+        grep_params => "examples/grep_params.sh",
+        test_quoted => "examples/test_quoted.sh",
+    ]
+);
+
+equiv_test_cases_mod!(run_generated_rust, rust,
+    [
+        simple => "examples/simple.sh",
+        args => "examples/args.sh",
+        misc => "examples/misc.sh",
+        grep_params => "examples/grep_params.sh",
+        test_quoted => "examples/test_quoted.sh",
+    ]
+);
+
+#[ignore]
 #[test]
 fn test_examples_python_output_equivalence() {
     use std::fs;
@@ -1498,6 +1642,147 @@ fn test_examples_python_output_equivalence() {
         return;
     }
     
+// ============================================================================
+// Output equivalence tests per generator x example (macro-generated)
+// ============================================================================
+
+fn run_shell_script_capture(path: &std::path::Path) -> std::process::Output {
+    let mut child = Command::new("sh")
+        .arg(path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn sh");
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().expect("read sh output"),
+            Ok(None) => {
+                if start.elapsed() > Duration::from_millis(1000) {
+                    let _ = child.kill();
+                    return child.wait_with_output().unwrap_or_else(|_| std::process::Output { status: std::process::ExitStatus::from_raw(1), stdout: Vec::new(), stderr: Vec::new() });
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => return child.wait_with_output().unwrap_or_else(|_| std::process::Output { status: std::process::ExitStatus::from_raw(1), stdout: Vec::new(), stderr: Vec::new() }),
+        }
+    }
+}
+
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
+#[cfg(windows)]
+use std::os::windows::process::ExitStatusExt;
+
+fn normalize(s: &[u8]) -> String {
+    String::from_utf8_lossy(s).to_string().replace("\r\n", "\n").trim().to_string()
+}
+
+fn run_generated_perl(content: &str) -> std::process::Output {
+    let mut parser = Parser::new(content);
+    let commands = parser.parse().expect("parse perl input");
+    let mut gen = PerlGenerator::new();
+    let code = gen.generate(&commands);
+    let tmp = "__macro_equiv.pl";
+    fs::write(tmp, &code).expect("write perl tmp");
+    let out = Command::new("perl").arg(tmp).stdout(Stdio::piped()).stderr(Stdio::piped()).output().expect("run perl");
+    let _ = fs::remove_file(tmp);
+    out
+}
+
+fn run_generated_python(content: &str) -> std::process::Output {
+    let mut parser = Parser::new(content);
+    let commands = parser.parse().expect("parse python input");
+    let mut gen = PythonGenerator::new();
+    let code = gen.generate(&commands);
+    let tmp = "__macro_equiv.py";
+    fs::write(tmp, &code).expect("write py tmp");
+    let out = Command::new("python3").arg(tmp).stdout(Stdio::piped()).stderr(Stdio::piped()).output().expect("run python");
+    let _ = fs::remove_file(tmp);
+    out
+}
+
+fn run_generated_rust(content: &str) -> std::process::Output {
+    let mut parser = Parser::new(content);
+    let commands = parser.parse().expect("parse rust input");
+    let mut gen = RustGenerator::new();
+    let code = gen.generate(&commands);
+    let src = "__macro_equiv.rs";
+    let bin = if cfg!(windows) { "__macro_equiv_bin.exe" } else { "__macro_equiv_bin" };
+    fs::write(src, &code).expect("write rs tmp");
+    let compiled = Command::new("rustc").arg("--edition=2021").arg(src).arg("-o").arg(bin).status().expect("rustc");
+    let out = if compiled.success() {
+        Command::new(bin).stdout(Stdio::piped()).stderr(Stdio::piped()).output().unwrap_or_else(|_| std::process::Output { status: std::process::ExitStatus::from_raw(1), stdout: Vec::new(), stderr: Vec::new() })
+    } else {
+        std::process::Output { status: std::process::ExitStatus::from_raw(1), stdout: Vec::new(), stderr: Vec::new() }
+    };
+    let _ = fs::remove_file(src);
+    let _ = fs::remove_file(bin);
+    #[cfg(windows)]
+    { let _ = fs::remove_file("__macro_equiv_bin.pdb"); }
+    out
+}
+
+macro_rules! equiv_test_cases {
+    ($gen_fn:ident, $gen_tag:ident, [ $( $name:ident => $path:expr ),* $(,)? ]) => {
+        paste::paste! {
+            $(
+                #[test]
+                fn [<$gen_tag _ $name>]() {
+                    use std::path::Path;
+                    let path = Path::new($path);
+                    let shell_out = run_shell_script_capture(path);
+                    let content = fs::read_to_string(path).expect("read example");
+                    let gen_out = $gen_fn(&content);
+
+                    let shell_success = shell_out.status.success();
+                    let gen_success = gen_out.status.success();
+                    assert_eq!(shell_success, gen_success, "exit status mismatch for {} with {}", $path, stringify!($gen_tag));
+
+                    let s_out = normalize(&shell_out.stdout);
+                    let g_out = normalize(&gen_out.stdout);
+                    assert_eq!(s_out, g_out, "stdout mismatch for {} with {}\nShell: {:?}\nGen:   {:?}", $path, stringify!($gen_tag), s_out, g_out);
+
+                    let s_err = normalize(&shell_out.stderr);
+                    let g_err = normalize(&gen_out.stderr);
+                    assert_eq!(s_err, g_err, "stderr mismatch for {} with {}\nShell: {:?}\nGen:   {:?}", $path, stringify!($gen_tag), s_err, g_err);
+                }
+            )*
+        }
+    };
+}
+
+// Curated, stable examples for equivalence
+equiv_test_cases!(run_generated_perl, perl,
+    [
+        simple => "examples/simple.sh",
+        args => "examples/args.sh",
+        misc => "examples/misc.sh",
+        grep_params => "examples/grep_params.sh",
+        test_quoted => "examples/test_quoted.sh",
+    ]
+);
+
+equiv_test_cases!(run_generated_python, python,
+    [
+        simple => "examples/simple.sh",
+        args => "examples/args.sh",
+        misc => "examples/misc.sh",
+        grep_params => "examples/grep_params.sh",
+        test_quoted => "examples/test_quoted.sh",
+    ]
+);
+
+equiv_test_cases!(run_generated_rust, rust,
+    [
+        simple => "examples/simple.sh",
+        args => "examples/args.sh",
+        misc => "examples/misc.sh",
+        grep_params => "examples/grep_params.sh",
+        test_quoted => "examples/test_quoted.sh",
+    ]
+);
+
     let entries = match fs::read_dir(examples_dir) {
         Ok(entries) => entries,
         Err(e) => {

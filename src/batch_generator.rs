@@ -44,6 +44,9 @@ impl BatchGenerator {
     fn generate_simple(&self, cmd: &SimpleCommand) -> String {
         if cmd.name == "echo" {
             if cmd.args.is_empty() { "echo.\n".to_string() } else { format!("echo {}\n", cmd.args.join(" ")) }
+        } else if cmd.name == "shopt" {
+            // Builtin: ignore
+            "REM builtin\n".to_string()
         } else {
             if cmd.args.is_empty() { format!("{}\n", cmd.name) } else { format!("{} {}\n", cmd.name, cmd.args.join(" ")) }
         }
