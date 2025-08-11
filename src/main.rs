@@ -1482,6 +1482,38 @@ fn truncate_output(output: &str, max_lines: usize) -> String {
     }
 }
 
+/// Generate unified diff format for comparing two strings
+fn generate_unified_diff(expected: &str, actual: &str, expected_label: &str, actual_label: &str) -> String {
+    let expected_lines: Vec<&str> = expected.lines().collect();
+    let actual_lines: Vec<&str> = actual.lines().collect();
+    
+    let mut diff = String::new();
+    diff.push_str(&format!("--- {}\n", expected_label));
+    diff.push_str(&format!("+++ {}\n", actual_label));
+    
+    // Simple unified diff implementation
+    // For now, just show the differences line by line
+    let max_lines = expected_lines.len().max(actual_lines.len());
+    
+    for i in 0..max_lines {
+        let expected_line = expected_lines.get(i).unwrap_or(&"");
+        let actual_line = actual_lines.get(i).unwrap_or(&"");
+        
+        if expected_line == actual_line {
+            diff.push_str(&format!(" {}\n", expected_line));
+        } else {
+            if !expected_line.is_empty() {
+                diff.push_str(&format!("-{}\n", expected_line));
+            }
+            if !actual_line.is_empty() {
+                diff.push_str(&format!("+{}\n", actual_line));
+            }
+        }
+    }
+    
+    diff
+}
+
 fn test_all_examples_next_fail(generators: &[String]) {
     // Filter to only available generators
     let generators: Vec<_> = generators.iter()
@@ -1560,6 +1592,22 @@ fn test_all_examples_next_fail(generators: &[String]) {
                         println!("Shell script exit code: {}", result.shell_exit);
                         println!("Translated code exit code: {}", result.translated_exit);
                         
+                        // Show unified diff for stdout
+                        if result.shell_stdout != result.translated_stdout {
+                            println!("\n{}", "=".repeat(80));
+                            println!("STDOUT COMPARISON:");
+                            println!("{}", "=".repeat(80));
+                            println!("{}", generate_unified_diff(&result.shell_stdout, &result.translated_stdout, "shell_stdout", &format!("{}_stdout", generator)));
+                        }
+                        
+                        // Show unified diff for stderr
+                        if result.shell_stderr != result.translated_stderr {
+                            println!("\n{}", "=".repeat(80));
+                            println!("STDERR COMPARISON:");
+                            println!("{}", "=".repeat(80));
+                            println!("{}", generate_unified_diff(&result.shell_stderr, &result.translated_stderr, "shell_stderr", &format!("{}_stderr", generator)));
+                        }
+                        
                         // Show original code
                         println!("\n{}", "=".repeat(80));
                         println!("ORIGINAL SHELL SCRIPT:");
@@ -1578,24 +1626,6 @@ fn test_all_examples_next_fail(generators: &[String]) {
                         println!("{}", "=".repeat(80));
                         println!("{}", result.ast);
                         
-                        // Show stdout diff
-                        println!("\n{}", "=".repeat(80));
-                        println!("STDOUT COMPARISON:");
-                        println!("{}", "=".repeat(80));
-                        println!("Shell script stdout:");
-                        println!("{}", truncate_output(&result.shell_stdout, 20));
-                        println!("\nTranslated code stdout:");
-                        println!("{}", truncate_output(&result.translated_stdout, 20));
-                        
-                        // Show stderr diff
-                        println!("\n{}", "=".repeat(80));
-                        println!("STDERR COMPARISON:");
-                        println!("{}", "=".repeat(80));
-                        println!("Shell script stderr:");
-                        println!("{}", truncate_output(&result.shell_stderr, 20));
-                        println!("\nTranslated code stderr:");
-                        println!("{}", truncate_output(&result.translated_stderr, 20));
-                        
                         // Show summary
                         println!("\n{}", "=".repeat(80));
                         println!("SUMMARY: {} out of {} tests passed before first failure", passed_tests, total_tests);
@@ -1607,48 +1637,35 @@ fn test_all_examples_next_fail(generators: &[String]) {
                 Err(e) => {
                     // Test error - show error and exit
                     println!("\n\n");
-                    println!("{}", "=".repeat(80));
-                    println!("                                    TEST ERROR");
-                    println!("{}", "=".repeat(80));
-                    println!("File: {}", example);
-                    println!("Generator: {}", generator);
-                    println!("Test: {}/{}", current_test, total_tests);
-                    println!("Tests passed before error: {}", passed_tests);
+                    println!("TEST ERROR: {} with {} generator", example, generator);
+                    println!("Test: {}/{} ({} passed before error)", current_test, total_tests, passed_tests);
                     println!("Error: {}", e);
-                    println!("{}", "=".repeat(80));
+                    println!();
                     
                     // Show original source file content even if parsing failed
                     match std::fs::read_to_string(example) {
                         Ok(source_content) => {
-                            println!("\n{}", "=".repeat(80));
                             println!("ORIGINAL SHELL SCRIPT:");
-                            println!("{}", "=".repeat(80));
                             println!("{}", source_content);
+                            println!();
                         }
                         Err(read_err) => {
-                            println!("\n{}", "=".repeat(80));
                             println!("ORIGINAL SHELL SCRIPT (failed to read):");
-                            println!("{}", "=".repeat(80));
                             println!("Error reading file: {}", read_err);
+                            println!();
                         }
                     }
                     
                     // Show lexer output if the error contains it
                     if e.contains("Lexer output:") {
-                        println!("\n{}", "=".repeat(80));
                         println!("LEXER OUTPUT:");
-                        println!("{}", "=".repeat(80));
                         // Extract lexer output from the error message
                         if let Some(lexer_start) = e.find("Lexer output:") {
                             let lexer_output = &e[lexer_start..];
                             println!("{}", lexer_output);
                         }
+                        println!();
                     }
-                    
-                    // Show summary
-                    println!("\n{}", "=".repeat(80));
-                    println!("SUMMARY: {} out of {} tests passed before first error", passed_tests, total_tests);
-                    println!("{}", "=".repeat(80));
                     
                     std::process::exit(1);
                 }
@@ -1660,12 +1677,9 @@ fn test_all_examples_next_fail(generators: &[String]) {
     
     // All tests passed
     println!("\n\n");
-    println!("{}", "=".repeat(80));
-    println!("                                    ALL TESTS PASSED! 🎉");
-    println!("{}", "=".repeat(80));
+    println!("ALL TESTS PASSED! 🎉");
     println!("Total tests: {}", total_tests);
     println!("Passed: {} (100%)", passed_tests);
-    println!("{}", "=".repeat(80));
 }
 
 fn interactive_mode() {
