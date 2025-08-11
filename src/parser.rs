@@ -1157,48 +1157,57 @@ impl Parser {
                 let var_name = self.parse_braced_variable_name()?;
                 
                 // Check if this is a parameter expansion with operators
-                if var_name.contains("^^") {
-                    let base_var = var_name.replace("^^", "");
+                // Check longer patterns first to avoid partial matches
+                if var_name.ends_with("^^") {
+                    let base_var = var_name.trim_end_matches("^^");
                     Ok(Word::ParameterExpansion(ParameterExpansion {
-                        variable: base_var,
+                        variable: base_var.to_string(),
                         operator: ParameterExpansionOperator::UppercaseAll,
                     }))
-                } else if var_name.contains(",,)") {
-                    let base_var = var_name.replace(",,)", "");
+                } else if var_name.ends_with(",,") {
+                    let base_var = var_name.trim_end_matches(",,");
                     Ok(Word::ParameterExpansion(ParameterExpansion {
-                        variable: base_var,
+                        variable: base_var.to_string(),
                         operator: ParameterExpansionOperator::LowercaseAll,
                     }))
-                } else if var_name.contains("^)") {
-                    let base_var = var_name.replace("^)", "");
+                } else if var_name.ends_with("^") && !var_name.ends_with("^^") {
+                    let base_var = var_name.trim_end_matches("^");
                     Ok(Word::ParameterExpansion(ParameterExpansion {
-                        variable: base_var,
+                        variable: base_var.to_string(),
                         operator: ParameterExpansionOperator::UppercaseFirst,
                     }))
-                } else if var_name.contains("^") && !var_name.contains("^^") {
-                    let base_var = var_name.replace("^", "");
+                } else if var_name.ends_with("##*/") {
+                    let base_var = var_name.trim_end_matches("##*/");
                     Ok(Word::ParameterExpansion(ParameterExpansion {
-                        variable: base_var,
-                        operator: ParameterExpansionOperator::UppercaseFirst,
-                    }))
-                } else if var_name.contains(",,)") {
-                    let base_var = var_name.replace(",,)", "");
-                    Ok(Word::ParameterExpansion(ParameterExpansion {
-                        variable: base_var,
-                        operator: ParameterExpansionOperator::LowercaseAll,
-                    }))
-                } else if var_name.contains("##*/") {
-                    let base_var = var_name.replace("##*/", "");
-                    Ok(Word::ParameterExpansion(ParameterExpansion {
-                        variable: base_var,
+                        variable: base_var.to_string(),
                         operator: ParameterExpansionOperator::Basename,
                     }))
-                } else if var_name.contains("%/*") {
-                    let base_var = var_name.replace("%/*", "");
+                } else if var_name.ends_with("%/*") {
+                    let base_var = var_name.trim_end_matches("%/*");
                     Ok(Word::ParameterExpansion(ParameterExpansion {
-                        variable: base_var,
+                        variable: base_var.to_string(),
                         operator: ParameterExpansionOperator::Dirname,
                     }))
+                } else if var_name.contains("##") && !var_name.ends_with("##*/") {
+                    let parts: Vec<&str> = var_name.split("##").collect();
+                    if parts.len() == 2 {
+                        Ok(Word::ParameterExpansion(ParameterExpansion {
+                            variable: parts[0].to_string(),
+                            operator: ParameterExpansionOperator::RemoveLongestPrefix(parts[1].to_string()),
+                        }))
+                    } else {
+                        Ok(Word::Variable(var_name))
+                    }
+                } else if var_name.contains("%%") && !var_name.ends_with("%/*") {
+                    let parts: Vec<&str> = var_name.split("%%").collect();
+                    if parts.len() == 2 {
+                        Ok(Word::ParameterExpansion(ParameterExpansion {
+                            variable: parts[0].to_string(),
+                            operator: ParameterExpansionOperator::RemoveLongestSuffix(parts[1].to_string()),
+                        }))
+                    } else {
+                        Ok(Word::Variable(var_name))
+                    }
                 } else if var_name.contains("//") {
                     let parts: Vec<&str> = var_name.split("//").collect();
                     if parts.len() == 3 {
@@ -1900,7 +1909,130 @@ impl Parser {
                             }
                         }
                     }
-                    parts.push(StringPart::Variable(var_name));
+                    
+                    // Check if this is a parameter expansion with operators
+                    if var_name.ends_with("^^") {
+                        let base_var = var_name.trim_end_matches("^^");
+                        parts.push(StringPart::ParameterExpansion(ParameterExpansion {
+                            variable: base_var.to_string(),
+                            operator: ParameterExpansionOperator::UppercaseAll,
+                        }));
+                    } else if var_name.ends_with(",,") {
+                        let base_var = var_name.trim_end_matches(",,");
+                        parts.push(StringPart::ParameterExpansion(ParameterExpansion {
+                            variable: base_var.to_string(),
+                            operator: ParameterExpansionOperator::LowercaseAll,
+                        }));
+                    } else if var_name.ends_with("^") && !var_name.ends_with("^^") {
+                        let base_var = var_name.trim_end_matches("^");
+                        parts.push(StringPart::ParameterExpansion(ParameterExpansion {
+                            variable: base_var.to_string(),
+                            operator: ParameterExpansionOperator::UppercaseFirst,
+                        }));
+                    } else if var_name.ends_with("##*/") {
+                        let base_var = var_name.trim_end_matches("##*/");
+                        parts.push(StringPart::ParameterExpansion(ParameterExpansion {
+                            variable: base_var.to_string(),
+                            operator: ParameterExpansionOperator::Basename,
+                        }));
+                    } else if var_name.ends_with("%/*") {
+                        let base_var = var_name.trim_end_matches("%/*");
+                        parts.push(StringPart::ParameterExpansion(ParameterExpansion {
+                            variable: base_var.to_string(),
+                            operator: ParameterExpansionOperator::Dirname,
+                        }));
+                    } else if var_name.contains("##") && !var_name.ends_with("##*/") {
+                        let parts_split: Vec<&str> = var_name.split("##").collect();
+                        if parts_split.len() == 2 {
+                            parts.push(StringPart::ParameterExpansion(ParameterExpansion {
+                                variable: parts_split[0].to_string(),
+                                operator: ParameterExpansionOperator::RemoveLongestPrefix(parts_split[1].to_string()),
+                            }));
+                        } else {
+                            parts.push(StringPart::Variable(var_name));
+                        }
+                    } else if var_name.contains("%%") && !var_name.ends_with("%/*") {
+                        let parts_split: Vec<&str> = var_name.split("%%").collect();
+                        if parts_split.len() == 2 {
+                            parts.push(StringPart::ParameterExpansion(ParameterExpansion {
+                                variable: parts_split[0].to_string(),
+                                operator: ParameterExpansionOperator::RemoveLongestSuffix(parts_split[1].to_string()),
+                            }));
+                        } else {
+                            parts.push(StringPart::Variable(var_name));
+                        }
+                    } else if var_name.contains("//") {
+                        // For pattern substitution, we need to split on all // occurrences
+                        // The format is variable//pattern/replacement
+                        if let Some(first_slash) = var_name.find("//") {
+                            let variable = &var_name[..first_slash];
+                            let rest = &var_name[first_slash + 2..];
+                            if let Some(second_slash) = rest.find('/') {
+                                let pattern = &rest[..second_slash];
+                                let replacement = &rest[second_slash + 1..];
+                                parts.push(StringPart::ParameterExpansion(ParameterExpansion {
+                                    variable: variable.to_string(),
+                                    operator: ParameterExpansionOperator::SubstituteAll(pattern.to_string(), replacement.to_string()),
+                                }));
+                            } else {
+                                parts.push(StringPart::Variable(var_name));
+                            }
+                        } else {
+                            parts.push(StringPart::Variable(var_name));
+                        }
+                    } else if var_name.contains(":-") {
+                        let parts_split: Vec<&str> = var_name.split(":-").collect();
+                        if parts_split.len() == 2 {
+                            parts.push(StringPart::ParameterExpansion(ParameterExpansion {
+                                variable: parts_split[0].to_string(),
+                                operator: ParameterExpansionOperator::DefaultValue(parts_split[1].to_string()),
+                            }));
+                        } else {
+                            parts.push(StringPart::Variable(var_name));
+                        }
+                    } else if var_name.contains(":=") {
+                        let parts_split: Vec<&str> = var_name.split(":=").collect();
+                        if parts_split.len() == 2 {
+                            parts.push(StringPart::ParameterExpansion(ParameterExpansion {
+                                variable: parts_split[0].to_string(),
+                                operator: ParameterExpansionOperator::AssignDefault(parts_split[1].to_string()),
+                            }));
+                        } else {
+                            parts.push(StringPart::Variable(var_name));
+                        }
+                    } else if var_name.contains(":?") {
+                        let parts_split: Vec<&str> = var_name.split(":?").collect();
+                        if parts_split.len() == 2 {
+                            parts.push(StringPart::ParameterExpansion(ParameterExpansion {
+                                variable: parts_split[0].to_string(),
+                                operator: ParameterExpansionOperator::ErrorIfUnset(parts_split[1].to_string()),
+                            }));
+                        } else {
+                            parts.push(StringPart::Variable(var_name));
+                        }
+                    } else if var_name.contains("#") && !var_name.starts_with('#') {
+                        let parts_split: Vec<&str> = var_name.split("#").collect();
+                        if parts_split.len() == 2 {
+                            parts.push(StringPart::ParameterExpansion(ParameterExpansion {
+                                variable: parts_split[0].to_string(),
+                                operator: ParameterExpansionOperator::RemoveShortestPrefix(parts_split[1].to_string()),
+                            }));
+                        } else {
+                            parts.push(StringPart::Variable(var_name));
+                        }
+                    } else if var_name.contains("%") && !var_name.starts_with('%') {
+                        let parts_split: Vec<&str> = var_name.split("%").collect();
+                        if parts_split.len() == 2 {
+                            parts.push(StringPart::ParameterExpansion(ParameterExpansion {
+                                variable: parts_split[0].to_string(),
+                                operator: ParameterExpansionOperator::RemoveShortestSuffix(parts_split[1].to_string()),
+                            }));
+                        } else {
+                            parts.push(StringPart::Variable(var_name));
+                        }
+                    } else {
+                        parts.push(StringPart::Variable(var_name));
+                    }
                 } else {
                     // Just a literal $
                     current_literal.push('$');
@@ -1922,35 +2054,42 @@ impl Parser {
 
     fn parse_braced_variable_name(&mut self) -> Result<String, ParserError> {
         // Parse the variable name inside ${...}
-        let mut var_name = String::new();
+        // We need to capture the raw text from the input to preserve special characters
+        let start_pos = self.lexer.current_position();
         let mut depth = 1; // We start after the opening {
         
+        // Skip the opening brace
+        self.lexer.next();
+        
         while !self.lexer.is_eof() && depth > 0 {
-            if let Some((start, end)) = self.lexer.get_span() {
-                match self.lexer.peek() {
-                    Some(Token::BraceOpen) => {
-                        depth += 1;
-                        var_name.push_str(&self.lexer.get_text(start, end));
-                    }
-                    Some(Token::BraceClose) => {
-                        depth -= 1;
-                        if depth == 0 {
-                            break;
-                        } else {
-                            var_name.push_str(&self.lexer.get_text(start, end));
-                        }
-                    }
-                    _ => {
-                        var_name.push_str(&self.lexer.get_text(start, end));
+            match self.lexer.peek() {
+                Some(Token::BraceOpen) => {
+                    depth += 1;
+                    self.lexer.next();
+                }
+                Some(Token::BraceClose) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    } else {
+                        self.lexer.next();
                     }
                 }
-                self.lexer.next();
-            } else {
-                break;
+                _ => {
+                    self.lexer.next();
+                }
             }
         }
         
-        Ok(var_name)
+        let end_pos = self.lexer.current_position();
+        
+        // Extract the raw text from the input string
+        let raw_text = &self.lexer.get_input()[start_pos..end_pos];
+        
+        // Remove the opening brace and closing brace
+        let var_name = raw_text.trim_start_matches('{').trim_end_matches('}');
+        
+        Ok(var_name.to_string())
     }
 
     fn parse_command_substitution(&mut self) -> Result<Word, ParserError> {

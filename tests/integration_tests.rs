@@ -351,6 +351,122 @@ fn test_parser_env_assignments_with_substitutions() {
 }
 
 #[test]
+fn test_ast_variables_no_special_characters() {
+    // Test that the parser correctly rejects variable names with special characters
+    // that should be handled by parameter expansion operators
+    
+    let test_cases = vec![
+        // Test case modification operators
+        ("name^^", "Uppercase all"),
+        ("name,,", "Lowercase all"), 
+        ("name^", "Uppercase first"),
+        
+        // Test substring removal operators
+        ("path##*/", "Remove longest prefix"),
+        ("path#hello", "Remove shortest prefix"),
+        ("path%%world", "Remove longest suffix"),
+        ("path%/*", "Remove shortest suffix"),
+        
+        // Test pattern substitution
+        ("s2//b/X", "Pattern substitution"),
+        
+        // Test default values
+        ("maybe:-default", "Default value"),
+        ("maybe:=default", "Assign default"),
+        ("maybe:?error", "Error if unset"),
+    ];
+    
+    for (input, description) in test_cases {
+        let mut parser = Parser::new(&format!("echo ${}", input));
+        let parse_result = parser.parse();
+        
+        // The parser should fail for these invalid variable names
+        // because they contain special characters that should be handled by parameter expansion
+        assert!(
+            parse_result.is_err(),
+            "Parser should reject variable name '{}' in context '{}' - it contains special characters that should be handled by ParameterExpansion",
+            input, description
+        );
+        
+        // Verify the error message indicates the issue
+        let error = parse_result.unwrap_err();
+        let error_str = format!("{:?}", error);
+        
+        // Check that the error is related to unexpected tokens (special characters)
+        assert!(
+            error_str.contains("UnexpectedToken") || error_str.contains("Unexpected"),
+            "Parser error for '{}' should indicate unexpected token, got: {}",
+            input, error_str
+        );
+    }
+}
+
+#[test]
+fn test_parameter_expansion_example_parses_correctly() {
+    // Test that the parameter_expansion.sh example file parses correctly
+    // and that special characters in parameter expansions are not incorrectly
+    // parsed as part of variable names
+    
+    let content = fs::read_to_string("examples/parameter_expansion.sh")
+        .expect("Failed to read parameter_expansion.sh");
+    
+    let mut parser = Parser::new(&content);
+    let parse_result = parser.parse();
+    
+    // The file should parse successfully
+    assert!(
+        parse_result.is_ok(),
+        "Failed to parse parameter_expansion.sh: {:?}",
+        parse_result.err()
+    );
+    
+    let commands = parse_result.unwrap();
+    
+    // Verify that the file contains the expected structure
+    // This ensures that parameter expansions are being parsed correctly
+    // rather than being treated as invalid variable names
+    
+    // The file should contain echo commands with parameter expansions
+    let has_parameter_expansions = commands.iter().any(|cmd| {
+        // Look for echo commands that contain parameter expansion syntax
+        // This is a basic check that the parser recognizes the structure
+        format!("{:?}", cmd).contains("echo") && 
+        format!("{:?}", cmd).contains("ParameterExpansion")
+    });
+    
+    assert!(
+        has_parameter_expansions,
+        "parameter_expansion.sh should contain parameter expansions that are parsed correctly"
+    );
+    
+    // Additional verification: check that the specific parameter expansion patterns
+    // from the test_ast_variables_no_special_characters test are NOT being
+    // incorrectly parsed as Variables with special characters
+    
+    let commands_str = format!("{:?}", commands);
+    
+    // These patterns should NOT appear as simple Variables in the AST
+    // They should be handled by ParameterExpansion nodes instead
+    let invalid_variable_patterns = vec![
+        "name^^", "name,,", "name^",           // Case modification
+        "path##*/", "path#hello",              // Substring removal
+        "path%%world", "path%/*",              // More substring removal
+        "s2//b/X",                             // Pattern substitution
+        "maybe:-default", "maybe:=default", "maybe:?error"  // Default values
+    ];
+    
+    for pattern in invalid_variable_patterns {
+        // The pattern should not appear as a simple variable name
+        // It should be part of a parameter expansion structure
+        assert!(
+            !commands_str.contains(&format!("Variable(\"{}\")", pattern)),
+            "Pattern '{}' should not be parsed as a simple Variable, it should be part of ParameterExpansion",
+            pattern
+        );
+    }
+}
+
+#[test]
 fn test_lexer_with_whitespace() {
     let input = "  echo   hello   world  ";
     let mut lexer = Lexer::new(input);

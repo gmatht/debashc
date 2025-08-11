@@ -169,7 +169,37 @@ fn main() {
             test_all_examples();
         }
         "--next-fail" => {
-            test_all_examples_next_fail();
+            // Parse optional generator list after --next-fail
+            let mut generators = Vec::new();
+            let mut i = 2;
+            
+            // Collect generators until we hit an AST option or run out of args
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--ast-pretty" | "--ast-compact" | "--ast-indent" | "--ast-no-indent" | 
+                    "--ast-newlines" | "--ast-no-newlines" => {
+                        // Stop parsing generators, let the AST options parsing continue
+                        break;
+                    }
+                    generator => {
+                        // Validate that it's a known generator
+                        let valid_generators = vec!["perl", "python", "rust", "lua", "js", "ps", "c", "english", "french", "bat"];
+                        if valid_generators.contains(&generator) {
+                            generators.push(generator.to_string());
+                        } else {
+                            println!("Warning: Unknown generator '{}', skipping", generator);
+                        }
+                    }
+                }
+                i += 1;
+            }
+            
+            // If no generators specified, use all available ones
+            if generators.is_empty() {
+                generators = vec!["perl", "python", "rust", "lua", "js", "ps"].into_iter().map(|s| s.to_string()).collect();
+            }
+            
+            test_all_examples_next_fail(&generators);
         }
         "lex" => {
             if args.len() < 3 {
@@ -1452,11 +1482,9 @@ fn truncate_output(output: &str, max_lines: usize) -> String {
     }
 }
 
-fn test_all_examples_next_fail() {
-    let all_generators = vec!["perl", "python", "rust", "lua", "js", "ps"];
-    
+fn test_all_examples_next_fail(generators: &[String]) {
     // Filter to only available generators
-    let generators: Vec<_> = all_generators.into_iter()
+    let generators: Vec<_> = generators.iter()
         .filter(|g| {
             let available = check_generator_available(g);
             if !available {
@@ -1516,7 +1544,8 @@ fn test_all_examples_next_fail() {
                         print!("✓");
                     } else {
                         // Test failed - show diff and exit
-                        println!("\n\n");
+                        // Clear entire terminal before showing failure
+                        print!("\x1B[2J\x1B[1;1H"); // ANSI escape code to clear screen and move cursor to top
                         println!("{}", "=".repeat(80));
                         println!("                                    TEST FAILED");
                         println!("{}", "=".repeat(80));
@@ -1734,7 +1763,7 @@ fn show_help(program_name: &str) {
     println!("  --test-file <lang> <filename>  - Compare outputs of .sh vs translated code");
     println!("  file --test-file <lang> <filename> - Same as above");
     println!("  --test-eq                      - Test all generators against all examples");
-    println!("  --next-fail                    - Test all generators, exit after first failure");
+    println!("  --next-fail [gen1 gen2 ...]    - Test specified generators (or all if none specified), exit after first failure");
     println!();
     println!("AST FORMATTING OPTIONS (for --next-fail):");
     println!();
@@ -1754,6 +1783,9 @@ fn show_help(program_name: &str) {
     println!("  {} file --perl examples/simple.sh", program_name);
     println!("  {} --test-file perl examples/simple.sh", program_name);
     println!("  {} --test-eq", program_name);
+    println!("  {} --next-fail", program_name);
+    println!("  {} --next-fail perl python", program_name);
+    println!("  {} --next-fail rust --ast-pretty", program_name);
     println!();
     println!("DESCRIPTION:");
     println!("  sh2perl is a tool that translates shell scripts to various programming");
@@ -1764,6 +1796,9 @@ fn show_help(program_name: &str) {
     println!("  The tool supports multiple target languages including Perl, Python, Rust,");
     println!("  Lua, C, JavaScript, and PowerShell. It can also generate pseudocode");
     println!("  in English and French for educational purposes.");
+    println!();
+    println!("  The --next-fail command can be used to test specific generators by");
+    println!("  listing them after the command (e.g., --next-fail perl python).");
     println!();
     println!("  For more information, visit: https://github.com/your-repo/sh2perl");
     println!();

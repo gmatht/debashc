@@ -2568,26 +2568,32 @@ impl PerlGenerator {
                     // ${var^} -> ucfirst($var) - uppercase first character
                     let var_name = var.replace("^)", "");
                     format!("ucfirst(${})", var_name)
-                } else if var.contains("##*/") {
+                } else if var.ends_with("##*/") {
                     // ${var##*/} -> basename($var) - remove longest prefix matching */
                     let var_name = var.replace("##*/", "");
                     format!("basename(${})", var_name)
-                } else if var.contains("%/*") {
+                } else if var.ends_with("%/*") {
                     // ${var%/*} -> dirname($var) - remove shortest suffix matching /*
                     let var_name = var.replace("%/*", "");
                     format!("dirname(${})", var_name)
                 } else if var.contains("//") {
                     // ${var//pattern/replacement} -> $var =~ s/pattern/replacement/g
                     let parts: Vec<&str> = var.split("//").collect();
-                    if parts.len() == 3 {
+                    if parts.len() >= 2 {
                         let var_name = parts[0];
-                        let pattern = parts[1];
-                        let replacement = parts[2];
-                        format!("${} =~ s/{}/{}/g", var_name, pattern, replacement)
+                        if parts.len() >= 3 {
+                            let pattern = parts[1];
+                            let replacement = parts[2];
+                            format!("${} =~ s/{}/{}/g", var_name, pattern, replacement)
+                        } else {
+                            // Only 2 parts: ${var//pattern} -> $var =~ s/pattern//g
+                            let pattern = parts[1];
+                            format!("${} =~ s/{}/g", var_name, pattern)
+                        }
                     } else {
                         format!("${}", var)
                     }
-                } else if var.contains("#") {
+                } else if var.contains("#") && !var.starts_with('#') {
                     // ${var#pattern} -> $var =~ s/^pattern// - remove shortest prefix
                     let parts: Vec<&str> = var.split("#").collect();
                     if parts.len() == 2 {
@@ -2597,7 +2603,7 @@ impl PerlGenerator {
                     } else {
                         format!("${}", var)
                     }
-                } else if var.contains("%") {
+                } else if var.contains("%") && !var.starts_with('%') {
                     // ${var%pattern} -> $var =~ s/pattern$// - remove shortest suffix
                     let parts: Vec<&str> = var.split("%").collect();
                     if parts.len() == 2 {
@@ -2633,7 +2639,7 @@ impl PerlGenerator {
                     if parts.len() == 2 {
                         let var_name = parts[0];
                         let error = parts[1];
-                        format!("defined(${}) ? ${} : '{}'", var_name, var_name, error)
+                        format!("defined(${}) ? ${} : die('{}')", var_name, var_name, error)
                     } else {
                         format!("${}", var)
                     }
