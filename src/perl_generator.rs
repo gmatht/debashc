@@ -440,6 +440,10 @@ impl PerlGenerator {
                         } else if let StringPart::MapKeys(map_name) = &interp.parts[0] {
                             // This is ${!map[@]} - convert to keys(%map) and print
                             output.push_str(&format!("print(join(\" \", keys(%{})) . \"\\n\");\n", map_name));
+                        } else if let StringPart::ParameterExpansion(pe) = &interp.parts[0] {
+                            // This is a single parameter expansion - generate without quotes
+                            let content = self.generate_parameter_expansion(pe);
+                            output.push_str(&format!("print({} . \"\\n\");\n", content));
                         } else {
                             let content = self.convert_string_interpolation_to_perl(interp);
                             output.push_str(&format!("print(\"{}\\n\");\n", content));
@@ -2841,6 +2845,10 @@ impl PerlGenerator {
                 if interp.parts.len() == 1 {
                     if let StringPart::Literal(s) = &interp.parts[0] {
                         return format!("\"{}\"", self.escape_perl_string(s));
+                    }
+                    // If it's just a single parameter expansion part, return it without quotes
+                    if let StringPart::ParameterExpansion(pe) = &interp.parts[0] {
+                        return self.generate_parameter_expansion(pe);
                     }
                 }
                 // For more complex interpolations, wrap the result in quotes

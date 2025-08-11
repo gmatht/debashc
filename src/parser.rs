@@ -1154,61 +1154,67 @@ impl Parser {
             Some(Token::DollarBrace) => {
                 // Parse ${...} expansions
                 self.lexer.next(); // consume the token
-                let var_name = self.parse_braced_variable_name()?;
                 
-                // Check if this is a parameter expansion with operators
-                // Check longer patterns first to avoid partial matches
-                if var_name.ends_with("^^") {
-                    let base_var = var_name.trim_end_matches("^^");
-                    Ok(Word::ParameterExpansion(ParameterExpansion {
-                        variable: base_var.to_string(),
-                        operator: ParameterExpansionOperator::UppercaseAll,
-                    }))
-                } else if var_name.ends_with(",,") {
-                    let base_var = var_name.trim_end_matches(",,");
-                    Ok(Word::ParameterExpansion(ParameterExpansion {
-                        variable: base_var.to_string(),
-                        operator: ParameterExpansionOperator::LowercaseAll,
-                    }))
-                } else if var_name.ends_with("^") && !var_name.ends_with("^^") {
-                    let base_var = var_name.trim_end_matches("^");
-                    Ok(Word::ParameterExpansion(ParameterExpansion {
-                        variable: base_var.to_string(),
-                        operator: ParameterExpansionOperator::UppercaseFirst,
-                    }))
-                } else if var_name.ends_with("##*/") {
-                    let base_var = var_name.trim_end_matches("##*/");
-                    Ok(Word::ParameterExpansion(ParameterExpansion {
-                        variable: base_var.to_string(),
-                        operator: ParameterExpansionOperator::Basename,
-                    }))
-                } else if var_name.ends_with("%/*") {
-                    let base_var = var_name.trim_end_matches("%/*");
-                    Ok(Word::ParameterExpansion(ParameterExpansion {
-                        variable: base_var.to_string(),
-                        operator: ParameterExpansionOperator::Dirname,
-                    }))
-                } else if var_name.contains("##") && !var_name.ends_with("##*/") {
-                    let parts: Vec<&str> = var_name.split("##").collect();
-                    if parts.len() == 2 {
+                // Try to parse as a parameter expansion first
+                if let Ok(pe) = self.parse_parameter_expansion() {
+                    Ok(pe)
+                } else {
+                    // Fall back to the old method
+                    let var_name = self.parse_braced_variable_name()?;
+                    
+                    // Check if this is a parameter expansion with operators
+                    // Check longer patterns first to avoid partial matches
+                    if var_name.ends_with("^^") {
+                        let base_var = var_name.trim_end_matches("^^");
                         Ok(Word::ParameterExpansion(ParameterExpansion {
-                            variable: parts[0].to_string(),
-                            operator: ParameterExpansionOperator::RemoveLongestPrefix(parts[1].to_string()),
+                            variable: base_var.to_string(),
+                            operator: ParameterExpansionOperator::UppercaseAll,
                         }))
-                    } else {
-                        Ok(Word::Variable(var_name))
-                    }
-                } else if var_name.contains("%%") && !var_name.ends_with("%/*") {
-                    let parts: Vec<&str> = var_name.split("%%").collect();
-                    if parts.len() == 2 {
+                    } else if var_name.ends_with(",,") {
+                        let base_var = var_name.trim_end_matches(",,");
                         Ok(Word::ParameterExpansion(ParameterExpansion {
-                            variable: parts[0].to_string(),
-                            operator: ParameterExpansionOperator::RemoveLongestSuffix(parts[1].to_string()),
+                            variable: base_var.to_string(),
+                            operator: ParameterExpansionOperator::LowercaseAll,
                         }))
-                    } else {
-                        Ok(Word::Variable(var_name))
-                    }
-                } else if var_name.contains("//") {
+                    } else if var_name.ends_with("^") && !var_name.ends_with("^^") {
+                        let base_var = var_name.trim_end_matches("^");
+                        Ok(Word::ParameterExpansion(ParameterExpansion {
+                            variable: base_var.to_string(),
+                            operator: ParameterExpansionOperator::UppercaseFirst,
+                        }))
+                    } else if var_name.ends_with("##*/") {
+                        let base_var = var_name.trim_end_matches("##*/");
+                        Ok(Word::ParameterExpansion(ParameterExpansion {
+                            variable: base_var.to_string(),
+                            operator: ParameterExpansionOperator::Basename,
+                        }))
+                    } else if var_name.ends_with("%/*") {
+                        let base_var = var_name.trim_end_matches("%/*");
+                        Ok(Word::ParameterExpansion(ParameterExpansion {
+                            variable: base_var.to_string(),
+                            operator: ParameterExpansionOperator::Dirname,
+                        }))
+                    } else if var_name.contains("##") && !var_name.ends_with("##*/") {
+                        let parts: Vec<&str> = var_name.split("##").collect();
+                        if parts.len() == 2 {
+                            Ok(Word::ParameterExpansion(ParameterExpansion {
+                                variable: parts[0].to_string(),
+                                operator: ParameterExpansionOperator::RemoveLongestPrefix(parts[1].to_string()),
+                            }))
+                        } else {
+                            Ok(Word::Variable(var_name))
+                        }
+                    } else if var_name.contains("%%") && !var_name.ends_with("%/*") {
+                        let parts: Vec<&str> = var_name.split("%%").collect();
+                        if parts.len() == 2 {
+                            Ok(Word::ParameterExpansion(ParameterExpansion {
+                                variable: parts[0].to_string(),
+                                operator: ParameterExpansionOperator::RemoveLongestSuffix(parts[1].to_string()),
+                            }))
+                        } else {
+                            Ok(Word::Variable(var_name))
+                        }
+                    } else if var_name.contains("//") {
                     let parts: Vec<&str> = var_name.split("//").collect();
                     if parts.len() == 3 {
                         Ok(Word::ParameterExpansion(ParameterExpansion {
@@ -1233,13 +1239,131 @@ impl Parser {
                             Ok(Word::Variable(var_name))
                         }
                     }
-                } else if var_name.contains(":-") {
-                    let parts: Vec<&str> = var_name.split(":-").collect();
-                    if parts.len() == 2 {
-                        Ok(Word::ParameterExpansion(ParameterExpansion {
-                            variable: parts[0].to_string(),
-                            operator: ParameterExpansionOperator::DefaultValue(parts[1].to_string()),
-                        }))
+                    } else if var_name.contains(":-") {
+                        let parts: Vec<&str> = var_name.split(":-").collect();
+                        if parts.len() == 2 {
+                            Ok(Word::ParameterExpansion(ParameterExpansion {
+                                variable: parts[0].to_string(),
+                                operator: ParameterExpansionOperator::DefaultValue(parts[1].to_string()),
+                            }))
+                        } else {
+                            // Check if this is a map access pattern like map[foo]
+                            if var_name.contains('[') && var_name.contains(']') {
+                                if let Some(bracket_start) = var_name.find('[') {
+                                    if let Some(bracket_end) = var_name.rfind(']') {
+                                        let map_name = &var_name[..bracket_start];
+                                        let key = &var_name[bracket_start + 1..bracket_end];
+                                        Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
+                                    } else {
+                                        Ok(Word::Variable(var_name))
+                                    }
+                                } else {
+                                    Ok(Word::Variable(var_name))
+                                }
+                            } else {
+                                Ok(Word::Variable(var_name))
+                            }
+                        }
+                        } else if var_name.contains(":=") {
+                        let parts: Vec<&str> = var_name.split(":=").collect();
+                        if parts.len() == 2 {
+                            Ok(Word::ParameterExpansion(ParameterExpansion {
+                                variable: parts[0].to_string(),
+                                operator: ParameterExpansionOperator::AssignDefault(parts[1].to_string()),
+                            }))
+                        } else {
+                            // Check if this is a map access pattern like map[foo]
+                            if var_name.contains('[') && var_name.contains(']') {
+                                if let Some(bracket_start) = var_name.find('[') {
+                                    if let Some(bracket_end) = var_name.rfind(']') {
+                                        let map_name = &var_name[..bracket_start];
+                                        let key = &var_name[bracket_start + 1..bracket_end];
+                                        Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
+                                    } else {
+                                        Ok(Word::Variable(var_name))
+                                    }
+                                } else {
+                                    Ok(Word::Variable(var_name))
+                                }
+                            } else {
+                                Ok(Word::Variable(var_name))
+                            }
+                        }
+                    } else if var_name.contains(":?") {
+                        let parts: Vec<&str> = var_name.split(":?").collect();
+                        if parts.len() == 2 {
+                            Ok(Word::ParameterExpansion(ParameterExpansion {
+                                variable: parts[0].to_string(),
+                                operator: ParameterExpansionOperator::ErrorIfUnset(parts[1].to_string()),
+                            }))
+                        } else {
+                            // Check if this is a map access pattern like map[foo]
+                            if var_name.contains('[') && var_name.contains(']') {
+                                if let Some(bracket_start) = var_name.find('[') {
+                                    if let Some(bracket_end) = var_name.rfind(']') {
+                                        let map_name = &var_name[..bracket_start];
+                                        let key = &var_name[bracket_start + 1..bracket_end];
+                                        Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
+                                    } else {
+                                        Ok(Word::Variable(var_name))
+                                    }
+                                } else {
+                                    Ok(Word::Variable(var_name))
+                                }
+                            } else {
+                                Ok(Word::Variable(var_name))
+                            }
+                        }
+                        } else if var_name.contains("#") && !var_name.starts_with('#') {
+                        let parts: Vec<&str> = var_name.split("#").collect();
+                        if parts.len() == 2 {
+                            Ok(Word::ParameterExpansion(ParameterExpansion {
+                                variable: parts[0].to_string(),
+                                operator: ParameterExpansionOperator::RemoveShortestPrefix(parts[1].to_string()),
+                            }))
+                        } else {
+                            // Check if this is a map access pattern like map[foo]
+                            if var_name.contains('[') && var_name.contains(']') {
+                                if let Some(bracket_start) = var_name.find('[') {
+                                    if let Some(bracket_end) = var_name.rfind(']') {
+                                        let map_name = &var_name[..bracket_start];
+                                        let key = &var_name[bracket_start + 1..bracket_end];
+                                        Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
+                                    } else {
+                                        Ok(Word::Variable(var_name))
+                                    }
+                                } else {
+                                    Ok(Word::Variable(var_name))
+                                }
+                            } else {
+                                Ok(Word::Variable(var_name))
+                            }
+                        }
+                    } else if var_name.contains("%") && !var_name.starts_with('%') {
+                        let parts: Vec<&str> = var_name.split("%").collect();
+                        if parts.len() == 2 {
+                            Ok(Word::ParameterExpansion(ParameterExpansion {
+                                variable: parts[0].to_string(),
+                                operator: ParameterExpansionOperator::RemoveShortestSuffix(parts[1].to_string()),
+                            }))
+                        } else {
+                            // Check if this is a map access pattern like map[foo]
+                            if var_name.contains('[') && var_name.contains(']') {
+                                if let Some(bracket_start) = var_name.find('[') {
+                                    if let Some(bracket_end) = var_name.rfind(']') {
+                                        let map_name = &var_name[..bracket_start];
+                                        let key = &var_name[bracket_start + 1..bracket_end];
+                                        Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
+                                    } else {
+                                        Ok(Word::Variable(var_name))
+                                    }
+                                } else {
+                                    Ok(Word::Variable(var_name))
+                                }
+                            } else {
+                                Ok(Word::Variable(var_name))
+                            }
+                        }
                     } else {
                         // Check if this is a map access pattern like map[foo]
                         if var_name.contains('[') && var_name.contains(']') {
@@ -1257,123 +1381,6 @@ impl Parser {
                         } else {
                             Ok(Word::Variable(var_name))
                         }
-                    }
-                } else if var_name.contains(":=") {
-                    let parts: Vec<&str> = var_name.split(":=").collect();
-                    if parts.len() == 2 {
-                        Ok(Word::ParameterExpansion(ParameterExpansion {
-                            variable: parts[0].to_string(),
-                            operator: ParameterExpansionOperator::AssignDefault(parts[1].to_string()),
-                        }))
-                    } else {
-                        // Check if this is a map access pattern like map[foo]
-                        if var_name.contains('[') && var_name.contains(']') {
-                            if let Some(bracket_start) = var_name.find('[') {
-                                if let Some(bracket_end) = var_name.rfind(']') {
-                                    let map_name = &var_name[..bracket_start];
-                                    let key = &var_name[bracket_start + 1..bracket_end];
-                                    Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
-                                } else {
-                                    Ok(Word::Variable(var_name))
-                                }
-                            } else {
-                                Ok(Word::Variable(var_name))
-                            }
-                        } else {
-                            Ok(Word::Variable(var_name))
-                        }
-                    }
-                } else if var_name.contains(":?") {
-                    let parts: Vec<&str> = var_name.split(":?").collect();
-                    if parts.len() == 2 {
-                        Ok(Word::ParameterExpansion(ParameterExpansion {
-                            variable: parts[0].to_string(),
-                            operator: ParameterExpansionOperator::ErrorIfUnset(parts[1].to_string()),
-                        }))
-                    } else {
-                        // Check if this is a map access pattern like map[foo]
-                        if var_name.contains('[') && var_name.contains(']') {
-                            if let Some(bracket_start) = var_name.find('[') {
-                                if let Some(bracket_end) = var_name.rfind(']') {
-                                    let map_name = &var_name[..bracket_start];
-                                    let key = &var_name[bracket_start + 1..bracket_end];
-                                    Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
-                                } else {
-                                    Ok(Word::Variable(var_name))
-                                }
-                            } else {
-                                Ok(Word::Variable(var_name))
-                            }
-                        } else {
-                            Ok(Word::Variable(var_name))
-                        }
-                    }
-                } else if var_name.contains("#") && !var_name.starts_with('#') {
-                    let parts: Vec<&str> = var_name.split("#").collect();
-                    if parts.len() == 2 {
-                        Ok(Word::ParameterExpansion(ParameterExpansion {
-                            variable: parts[0].to_string(),
-                            operator: ParameterExpansionOperator::RemoveShortestPrefix(parts[1].to_string()),
-                        }))
-                    } else {
-                        // Check if this is a map access pattern like map[foo]
-                        if var_name.contains('[') && var_name.contains(']') {
-                            if let Some(bracket_start) = var_name.find('[') {
-                                if let Some(bracket_end) = var_name.rfind(']') {
-                                    let map_name = &var_name[..bracket_start];
-                                    let key = &var_name[bracket_start + 1..bracket_end];
-                                    Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
-                                } else {
-                                    Ok(Word::Variable(var_name))
-                                }
-                            } else {
-                                Ok(Word::Variable(var_name))
-                            }
-                        } else {
-                            Ok(Word::Variable(var_name))
-                        }
-                    }
-                } else if var_name.contains("%") && !var_name.starts_with('%') {
-                    let parts: Vec<&str> = var_name.split("%").collect();
-                    if parts.len() == 2 {
-                        Ok(Word::ParameterExpansion(ParameterExpansion {
-                            variable: parts[0].to_string(),
-                            operator: ParameterExpansionOperator::RemoveShortestSuffix(parts[1].to_string()),
-                        }))
-                    } else {
-                        // Check if this is a map access pattern like map[foo]
-                        if var_name.contains('[') && var_name.contains(']') {
-                            if let Some(bracket_start) = var_name.find('[') {
-                                if let Some(bracket_end) = var_name.rfind(']') {
-                                    let map_name = &var_name[..bracket_start];
-                                    let key = &var_name[bracket_start + 1..bracket_end];
-                                    Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
-                                } else {
-                                    Ok(Word::Variable(var_name))
-                                }
-                            } else {
-                                Ok(Word::Variable(var_name))
-                            }
-                        } else {
-                            Ok(Word::Variable(var_name))
-                        }
-                    }
-                } else {
-                    // Check if this is a map access pattern like map[foo]
-                    if var_name.contains('[') && var_name.contains(']') {
-                        if let Some(bracket_start) = var_name.find('[') {
-                            if let Some(bracket_end) = var_name.rfind(']') {
-                                let map_name = &var_name[..bracket_start];
-                                let key = &var_name[bracket_start + 1..bracket_end];
-                                Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
-                            } else {
-                                Ok(Word::Variable(var_name))
-                            }
-                        } else {
-                            Ok(Word::Variable(var_name))
-                        }
-                    } else {
-                        Ok(Word::Variable(var_name))
                     }
                 }
             }
@@ -1791,7 +1798,7 @@ impl Parser {
         let mut i = 0;
         
         while i < quoted_content.len() {
-            if quoted_content[i..].starts_with('$') {
+            if quoted_content[i..].starts_with('$') { // TODO could this be replaced with .find()?
                 // Flush current literal if any
                 if !current_literal.is_empty() {
                     parts.push(StringPart::Literal(current_literal.clone()));
@@ -2055,41 +2062,132 @@ impl Parser {
     fn parse_braced_variable_name(&mut self) -> Result<String, ParserError> {
         // Parse the variable name inside ${...}
         // We need to capture the raw text from the input to preserve special characters
-        let start_pos = self.lexer.current_position();
+        let mut var_name = String::new();
         let mut depth = 1; // We start after the opening {
+        
+        println!("DEBUG: parse_braced_variable_name: Starting");
         
         // Skip the opening brace
         self.lexer.next();
         
         while !self.lexer.is_eof() && depth > 0 {
-            match self.lexer.peek() {
-                Some(Token::BraceOpen) => {
-                    depth += 1;
-                    self.lexer.next();
-                }
-                Some(Token::BraceClose) => {
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
-                    } else {
+            if let Some((start, end)) = self.lexer.get_span() {
+                let token = self.lexer.peek();
+                println!("DEBUG: parse_braced_variable_name: Token: {:?}, span: ({}, {})", token, start, end);
+                
+                match token {
+                    Some(Token::BraceOpen) => {
+                        depth += 1;
+                        let text = self.lexer.get_text(start, end);
+                        println!("DEBUG: parse_braced_variable_name: BraceOpen, text: '{}', depth: {}", text, depth);
+                        var_name.push_str(&text);
+                        self.lexer.next();
+                    }
+                    Some(Token::BraceClose) => {
+                        depth -= 1;
+                        if depth == 0 {
+                            println!("DEBUG: parse_braced_variable_name: Closing brace, depth: {}", depth);
+                            break;
+                        } else {
+                            let text = self.lexer.get_text(start, end);
+                            println!("DEBUG: parse_braced_variable_name: BraceClose, text: '{}', depth: {}", text, depth);
+                            var_name.push_str(&text);
+                            self.lexer.next();
+                        }
+                    }
+                    _ => {
+                        let text = self.lexer.get_text(start, end);
+                        println!("DEBUG: parse_braced_variable_name: Other token, text: '{}'", text);
+                        var_name.push_str(&text);
                         self.lexer.next();
                     }
                 }
-                _ => {
-                    self.lexer.next();
-                }
+            } else {
+                println!("DEBUG: parse_braced_variable_name: No span available");
+                break;
             }
         }
         
-        let end_pos = self.lexer.current_position();
+        println!("DEBUG: parse_braced_variable_name: Final var_name: '{}'", var_name);
+        Ok(var_name)
+    }
+    
+    fn parse_parameter_expansion(&mut self) -> Result<Word, ParserError> {
+        // Parse parameter expansion like ${name^^}, ${name,,}, etc.
+        // We're already past the ${, so we need to parse the content
         
-        // Extract the raw text from the input string
-        let raw_text = &self.lexer.get_input()[start_pos..end_pos];
+
         
-        // Remove the opening brace and closing brace
-        let var_name = raw_text.trim_start_matches('{').trim_end_matches('}');
+        // First, try to get an identifier (the variable name)
+        if let Some(Token::Identifier) = self.lexer.peek() {
+            let var_name = self.get_identifier_text()?;
+
+            
+            // Now check for operators
+            if let Some(Token::Caret) = self.lexer.peek() {
+                println!("DEBUG: parse_parameter_expansion: Found first Caret");
+                self.lexer.next(); // consume first ^
+                if let Some(Token::Caret) = self.lexer.peek() {
+                    // This is ^^ (uppercase all)
+                    println!("DEBUG: parse_parameter_expansion: Found second Caret, this is ^^");
+                    self.lexer.next(); // consume second ^
+                    
+                    // Expect closing brace
+                    if let Some(Token::BraceClose) = self.lexer.peek() {
+                        println!("DEBUG: parse_parameter_expansion: Found BraceClose, returning UppercaseAll");
+                        self.lexer.next(); // consume }
+                        return Ok(Word::ParameterExpansion(ParameterExpansion {
+                            variable: var_name,
+                            operator: ParameterExpansionOperator::UppercaseAll,
+                        }));
+                    } else {
+                        println!("DEBUG: parse_parameter_expansion: Expected BraceClose but got: {:?}", self.lexer.peek());
+                    }
+                } else {
+                    // This is ^ (uppercase first)
+                    println!("DEBUG: parse_parameter_expansion: Only one Caret, this is ^");
+                    // Expect closing brace
+                    if let Some(Token::BraceClose) = self.lexer.peek() {
+                        println!("DEBUG: parse_parameter_expansion: Found BraceClose, returning UppercaseFirst");
+                        self.lexer.next(); // consume }
+                        return Ok(Word::ParameterExpansion(ParameterExpansion {
+                            variable: var_name,
+                            operator: ParameterExpansionOperator::UppercaseFirst,
+                        }));
+                    } else {
+                        println!("DEBUG: parse_parameter_expansion: Expected BraceClose but got: {:?}", self.lexer.peek());
+                    }
+                }
+            } else if let Some(Token::Comma) = self.lexer.peek() {
+                println!("DEBUG: parse_parameter_expansion: Found first Comma");
+                self.lexer.next(); // consume first ,
+                if let Some(Token::Comma) = self.lexer.peek() {
+                    // This is ,, (lowercase all)
+                    println!("DEBUG: parse_parameter_expansion: Found second Comma, this is ,,");
+                    self.lexer.next(); // consume second ,
+                    
+                    // Expect closing brace
+                    if let Some(Token::BraceClose) = self.lexer.peek() {
+                        println!("DEBUG: parse_parameter_expansion: Found BraceClose, returning LowercaseAll");
+                        self.lexer.next(); // consume }
+                        return Ok(Word::ParameterExpansion(ParameterExpansion {
+                            variable: var_name,
+                            operator: ParameterExpansionOperator::LowercaseAll,
+                        }));
+                    } else {
+                        println!("DEBUG: parse_parameter_expansion: Expected BraceClose but got: {:?}", self.lexer.peek());
+                    }
+                }
+            } else {
+                println!("DEBUG: parse_parameter_expansion: No operator found, got: {:?}", self.lexer.peek());
+            }
+        } else {
+            println!("DEBUG: parse_parameter_expansion: No Identifier found, got: {:?}", self.lexer.peek());
+        }
         
-        Ok(var_name.to_string())
+        // If we get here, it's not a simple parameter expansion
+        println!("DEBUG: parse_parameter_expansion: Returning error");
+        Err(ParserError::InvalidSyntax("Not a valid parameter expansion".to_string()))
     }
 
     fn parse_command_substitution(&mut self) -> Result<Word, ParserError> {
