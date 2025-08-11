@@ -1607,8 +1607,13 @@ fn test_all_examples() {
     let mut passed_tests = 0;
     let mut current_test = 0;
     
-    println!("\nRunning {} tests across {} examples and {} generators", 
-             total_tests, examples.len(), generators.len());
+    if generators.len() == 1 {
+        println!("\nRunning {} tests across {} examples with {} generator", 
+                 total_tests, examples.len(), generators[0]);
+    } else {
+        println!("\nRunning {} tests across {} examples and {} generators", 
+                 total_tests, examples.len(), generators.len());
+    }
     println!("{}", "=".repeat(50));
     
     for example in &examples {
@@ -1804,8 +1809,13 @@ fn test_all_examples_next_fail(generators: &[String]) {
     let mut current_test = 0;
     let total_tests = examples.len() * generators.len();
     
-    println!("\nRunning {} tests across {} examples and {} generators", 
-             total_tests, examples.len(), generators.len());
+    if generators.len() == 1 {
+        println!("\nRunning {} tests across {} examples with {} generator", 
+                 total_tests, examples.len(), generators[0]);
+    } else {
+        println!("\nRunning {} tests across {} examples and {} generators", 
+                 total_tests, examples.len(), generators.len());
+    }
     println!("{}", "=".repeat(50));
     
     for generator in &generators {

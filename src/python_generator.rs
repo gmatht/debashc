@@ -47,7 +47,31 @@ impl PythonGenerator {
         
         // Handle environment variables
         for (var, value) in &cmd.env_vars {
-            output.push_str(&format!("os.environ['{}'] = '{}'\n", var, value));
+            // Check if this looks like an array assignment
+            if value.as_str().starts_with('(') && value.as_str().ends_with(')') {
+                // This is an array assignment like arr=(one two three)
+                let content = &value.as_str()[1..value.as_str().len()-1];
+                let elements: Vec<&str> = content.split_whitespace().collect();
+                let elements_str = elements.iter().map(|&s| format!("'{}'", s)).collect::<Vec<_>>().join(", ");
+                output.push_str(&format!("{} = [{}]\n", var, elements_str));
+            } else if var.contains('[') && var.contains(']') {
+                // This is an associative array assignment like map[foo]=bar
+                if let Some(bracket_pos) = var.find('[') {
+                    let map_name = &var[..bracket_pos];
+                    let key = &var[bracket_pos + 1..var.len() - 1]; // Remove [ and ]
+                    // Initialize the map if it doesn't exist
+                    output.push_str(&format!("if '{}' not in globals():\n", map_name));
+                    output.push_str(&self.indent());
+                    output.push_str(&format!("    {} = {{}}\n", map_name));
+                    output.push_str(&format!("{}['{}'] = '{}'\n", map_name, key, value));
+                } else {
+                    // Fallback
+                    output.push_str(&format!("os.environ['{}'] = '{}'\n", var, value));
+                }
+            } else {
+                // Regular environment variable
+                output.push_str(&format!("os.environ['{}'] = '{}'\n", var, value));
+            }
         }
 
         // Generate the command
@@ -75,16 +99,11 @@ impl PythonGenerator {
                     let mut python_args = Vec::new();
                     for arg in &cmd.args {
                         match arg {
-                            Word::Literal(s) => {
-                                // Handle ANSI-C quoting and escape sequences
-                                if s.contains('\\') {
-                                    // Convert escape sequences to Python format
-                                    let converted = self.convert_escape_sequences(s);
-                                    python_args.push(format!("'{}'", converted));
-                                } else {
-                                    python_args.push(format!("'{}'", s));
-                                }
-                            }
+                                                    Word::Literal(s) => {
+                            // Convert special characters to Python escape sequences
+                            let escaped = self.escape_python_string_literal(s);
+                            python_args.push(escaped);
+                        }
                             Word::Variable(var) => {
                                 if var == "i" { 
                                     python_args.push("i".to_string());
@@ -163,6 +182,95 @@ impl PythonGenerator {
                 output.push_str(&format!("        if '{}' in line:\n", pattern));
                 output.push_str(&self.indent());
                 output.push_str("            print(line.rstrip())\n");
+            }
+        } else if cmd.name.is_literal("declare") {
+            // Handle declare command (usually for arrays)
+            if cmd.args.len() >= 2 && cmd.args[0].as_str() == "-A" {
+                // declare -A map_name creates an associative array
+                let map_name = &cmd.args[1];
+                output.push_str(&format!("{} = {{}}\n", map_name));
+            } else if cmd.args.len() >= 2 && cmd.args[0].as_str() == "-a" {
+                // declare -a arr_name creates an indexed array
+                let arr_name = &cmd.args[1];
+                output.push_str(&format!("{} = []\n", arr_name));
+            } else if cmd.args.len() >= 1 {
+                // declare var_name creates a regular variable
+                let var_name = &cmd.args[0];
+                output.push_str(&format!("{} = None\n", var_name));
+            }
+        } else if cmd.name.is_literal("printf") {
+            // Special handling for printf
+            if cmd.args.is_empty() {
+                output.push_str("print()\n");
+            } else {
+                // Handle printf format string and arguments
+                if cmd.args.len() >= 1 {
+                    let format_str = &cmd.args[0];
+                    let format_content = match format_str {
+                        Word::Literal(s) => s.as_str(),
+                        _ => "",
+                    };
+                    
+                    if cmd.args.len() == 1 {
+                        // Just the format string
+                        let escaped = self.escape_python_string_literal(format_content);
+                        output.push_str(&format!("print({}, end='')\n", escaped));
+                    } else {
+                        // Format string with arguments
+                        let mut args_list = Vec::new();
+                        for arg in &cmd.args[1..] {
+                            match arg {
+                                Word::Variable(var) => {
+                                    if var == "i" { 
+                                        args_list.push("i".to_string());
+                                    } else if var == "1" { 
+                                        args_list.push("sys.argv[1] if len(sys.argv) > 1 else ''".to_string());
+                                    } else if var == "2" { 
+                                        args_list.push("sys.argv[2] if len(sys.argv) > 2 else ''".to_string());
+                                    } else if var == "3" { 
+                                        args_list.push("sys.argv[3] if len(sys.argv) > 3 else ''".to_string());
+                                    } else if var == "4" { 
+                                        args_list.push("sys.argv[4] if len(sys.argv) > 4 else ''".to_string());
+                                    } else if var == "5" { 
+                                        args_list.push("sys.argv[5] if len(sys.argv) > 5 else ''".to_string());
+                                    } else { 
+                                        args_list.push(format!("'${}'", var));
+                                    }
+                                }
+                                _ => {
+                                    args_list.push(self.word_to_string(arg));
+                                }
+                            }
+                        }
+                        
+                        // Convert printf format to Python format
+                        let python_format = format_content
+                            .replace("%s", "{}")
+                            .replace("%d", "{}")
+                            .replace("%i", "{}")
+                            .replace("%u", "{}")
+                            .replace("%o", "{}")
+                            .replace("%x", "{}")
+                            .replace("%X", "{}")
+                            .replace("%f", "{}")
+                            .replace("%F", "{}")
+                            .replace("%e", "{}")
+                            .replace("%E", "{}")
+                            .replace("%g", "{}")
+                            .replace("%G", "{}")
+                            .replace("%c", "{}")
+                            .replace("%%", "%");
+                        
+                        let escaped_format = self.escape_python_string_literal(&python_format);
+                        let args_str = args_list.join(", ");
+                        
+                        if args_list.is_empty() {
+                            output.push_str(&format!("print({}, end='')\n", escaped_format));
+                        } else {
+                            output.push_str(&format!("print({}.format({}), end='')\n", escaped_format, args_str));
+                        }
+                    }
+                }
             }
         } else if cmd.name.is_literal("cat") {
             // Special handling for cat including heredocs
@@ -349,7 +457,41 @@ impl PythonGenerator {
         if pipeline.commands.len() == 1 {
             output.push_str(&self.generate_command(&pipeline.commands[0]));
         } else {
-            // For now, handle simple pipelines
+            // Handle pipelines with multiple commands
+            if pipeline.commands.len() == 2 {
+                // Special case for common patterns like "command | sort"
+                let first_cmd = &pipeline.commands[0];
+                let second_cmd = &pipeline.commands[1];
+                
+                if let Command::Simple(cmd) = second_cmd {
+                    if cmd.name.is_literal("sort") {
+                        // Handle "command | sort" pattern
+                        if let Command::For(for_loop) = first_cmd {
+                            // Special case: for loop output piped to sort
+                            output.push_str("output_lines = []\n");
+                            // Generate a modified version of the for loop that collects output
+                            output.push_str(&self.generate_for_loop_collecting_output(for_loop));
+                            output.push_str("sorted_output = sorted(output_lines)\n");
+                            output.push_str("for line in sorted_output:\n");
+                            output.push_str("    if line.strip():\n");
+                            output.push_str("        print(line)\n");
+                            return output;
+                        } else {
+                            // Regular command piped to sort
+                            output.push_str("import subprocess\n");
+                            output.push_str(&format!("result = subprocess.run({}, capture_output=True, text=True)\n", 
+                                self.command_to_string(first_cmd)));
+                            output.push_str("sorted_output = sorted(result.stdout.strip().split('\\n'))\n");
+                            output.push_str("for line in sorted_output:\n");
+                            output.push_str("    if line.strip():\n");
+                            output.push_str("        print(line)\n");
+                            return output;
+                        }
+                    }
+                }
+            }
+            
+            // General pipeline handling
             output.push_str("import subprocess\n");
             for (i, command) in pipeline.commands.iter().enumerate() {
                 if i == 0 {
@@ -442,6 +584,24 @@ impl PythonGenerator {
                         // Special case for iterating over arguments
                         output.push_str(&format!("for {} in sys.argv[1:]:\n", for_loop.variable));
                     }
+                    Word::StringInterpolation(interp) => {
+                        // Handle string interpolation, especially for array access
+                        if interp.parts.len() == 1 {
+                            match &interp.parts[0] {
+                                crate::ast::StringPart::MapAccess(map_name, key) if key == "@" => {
+                                    // Special case: iterate over all array elements
+                                    output.push_str(&format!("for {} in {}:\n", for_loop.variable, map_name));
+                                }
+                                _ => {
+                                    let items_str = self.word_to_string(&for_loop.items[0]);
+                                    output.push_str(&format!("for {} in [{}]:\n", for_loop.variable, items_str));
+                                }
+                            }
+                        } else {
+                            let items_str = self.word_to_string(&for_loop.items[0]);
+                            output.push_str(&format!("for {} in [{}]:\n", for_loop.variable, items_str));
+                        }
+                    }
                     Word::BraceExpansion(brace) => {
                         // Handle brace expansion like {1..5} -> range(1, 6)
                         if let Some(BraceItem::Range(range)) = brace.items.first() {
@@ -469,9 +629,105 @@ impl PythonGenerator {
             self.indent_level -= 1;
         }
         
+                output
+    }
+    
+    fn generate_for_loop_collecting_output(&mut self, for_loop: &ForLoop) -> String {
+        let mut output = String::new();
+        
+        if for_loop.items.is_empty() {
+            // Infinite loop
+            output.push_str("while True:\n");
+            self.indent_level += 1;
+            output.push_str(&self.indent());
+            output.push_str("    # Collect output\n");
+            output.push_str(&self.indent());
+            output.push_str(&self.generate_block_collecting_output(&for_loop.body));
+            self.indent_level -= 1;
+        } else {
+            // For loop with items
+            if for_loop.items.len() == 1 {
+                match &for_loop.items[0] {
+                    Word::Variable(var) if var == "@" => {
+                        // Special case for iterating over arguments
+                        output.push_str(&format!("for {} in sys.argv[1:]:\n", for_loop.variable));
+                    }
+                    Word::StringInterpolation(interp) => {
+                        // Handle string interpolation, especially for array access
+                        if interp.parts.len() == 1 {
+                            match &interp.parts[0] {
+                                crate::ast::StringPart::MapAccess(map_name, key) if key == "@" => {
+                                    // Special case: iterate over all array elements
+                                    output.push_str(&format!("for {} in {}:\n", for_loop.variable, map_name));
+                                }
+                                _ => {
+                                    let items_str = self.word_to_string(&for_loop.items[0]);
+                                    output.push_str(&format!("for {} in [{}]:\n", for_loop.variable, items_str));
+                                }
+                            }
+                        } else {
+                            let items_str = self.word_to_string(&for_loop.items[0]);
+                            output.push_str(&format!("for {} in [{}]:\n", for_loop.variable, items_str));
+                        }
+                    }
+                    Word::BraceExpansion(brace) => {
+                        // Handle brace expansion like {1..5} -> range(1, 6)
+                        if let Some(BraceItem::Range(range)) = brace.items.first() {
+                            if let (Ok(start), Ok(end)) = (range.start.parse::<i32>(), range.end.parse::<i32>()) {
+                                output.push_str(&format!("for {} in range({}, {}):\n", for_loop.variable, start, end + 1));
+                            } else {
+                                output.push_str(&format!("for {} in [{}]:\n", for_loop.variable, self.word_to_string(&for_loop.items[0])));
+                            }
+                        } else {
+                            output.push_str(&format!("for {} in [{}]:\n", for_loop.variable, self.word_to_string(&for_loop.items[0])));
+                        }
+                    }
+                    _ => {
+                        let items_str = for_loop.items.iter().map(|item| self.word_to_string(item)).collect::<Vec<_>>().join(", ");
+                        output.push_str(&format!("for {} in [{}]:\n", for_loop.variable, items_str));
+                    }
+                }
+            } else {
+                let items_str = for_loop.items.iter().map(|item| self.word_to_string(item)).collect::<Vec<_>>().join(", ");
+                output.push_str(&format!("for {} in [{}]:\n", for_loop.variable, items_str));
+            }
+            self.indent_level += 1;
+            output.push_str(&self.indent());
+            output.push_str("    # Collect output\n");
+            output.push_str(&self.indent());
+            output.push_str(&self.generate_block_collecting_output(&for_loop.body));
+            self.indent_level -= 1;
+        }
+        
         output
     }
-
+    
+    fn generate_block_collecting_output(&mut self, block: &Block) -> String {
+        let mut output = String::new();
+        for command in &block.commands {
+            match command {
+                Command::Simple(cmd) => {
+                    if cmd.name.is_literal("echo") {
+                        // Collect echo output instead of printing
+                        if cmd.args.is_empty() {
+                            output.push_str("output_lines.append('')\n");
+                        } else {
+                            let args_str = cmd.args.iter().map(|arg| self.word_to_string(arg)).collect::<Vec<_>>().join(" + ");
+                            output.push_str(&format!("output_lines.append({})\n", args_str));
+                        }
+                    } else {
+                        // For other commands, just execute them normally
+                        output.push_str(&self.generate_command(command));
+                    }
+                }
+                _ => {
+                    output.push_str(&self.generate_command(command));
+                }
+            }
+        }
+        output
+    }
+    
     fn generate_function(&mut self, func: &Function) -> String {
         let mut output = String::new();
         
@@ -611,6 +867,38 @@ impl PythonGenerator {
         }
     }
     
+    fn escape_python_string_literal(&self, s: &str) -> String {
+        // Convert special characters to Python escape sequences
+        let mut result = String::new();
+        for ch in s.chars() {
+            match ch {
+                '\n' => result.push_str("\\n"),
+                '\r' => result.push_str("\\r"),
+                '\t' => result.push_str("\\t"),
+                '\x07' => result.push_str("\\a"),  // bell
+                '\x08' => result.push_str("\\b"),  // backspace
+                '\x0c' => result.push_str("\\f"),  // formfeed
+                '\x0b' => result.push_str("\\v"),  // vertical tab
+                '\'' => result.push_str("\\'"),
+                '"' => result.push_str("\\\""),
+                '\\' => result.push_str("\\\\"),
+                _ => result.push(ch),
+            }
+        }
+        
+        // Choose appropriate quote style
+        if result.contains('\'') && result.contains('"') {
+            // Contains both quotes, use triple quotes
+            format!("'''{}'''", result)
+        } else if result.contains('\'') {
+            // Contains single quotes, use double quotes
+            format!("\"{}\"", result)
+        } else {
+            // Use single quotes
+            format!("'{}'", result)
+        }
+    }
+    
     fn convert_escape_sequences(&self, s: &str) -> String {
         // Convert shell escape sequences to Python-compatible format
         let mut result = String::new();
@@ -634,10 +922,14 @@ impl PythonGenerator {
                             // Octal escape sequence
                             let mut octal = String::new();
                             octal.push(next_ch);
-                            if let Some(&'0'..='7') = chars.peek() {
-                                octal.push(chars.next().unwrap());
-                                if let Some(&'0'..='7') = chars.peek() {
+                            if let Some(&ch) = chars.peek() {
+                                if ch >= '0' && ch <= '7' {
                                     octal.push(chars.next().unwrap());
+                                    if let Some(&ch2) = chars.peek() {
+                                        if ch2 >= '0' && ch2 <= '7' {
+                                            octal.push(chars.next().unwrap());
+                                        }
+                                    }
                                 }
                             }
                             if let Ok(byte) = u8::from_str_radix(&octal, 8) {
@@ -650,10 +942,14 @@ impl PythonGenerator {
                         'x' => {
                             // Hex escape sequence
                             let mut hex = String::new();
-                            if let Some(&'0'..='9' | 'a'..='f' | 'A'..='F') = chars.peek() {
-                                hex.push(chars.next().unwrap().to_ascii_lowercase());
-                                if let Some(&'0'..='9' | 'a'..='f' | 'A'..='F') = chars.peek() {
+                            if let Some(&ch) = chars.peek() {
+                                if (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F') {
                                     hex.push(chars.next().unwrap().to_ascii_lowercase());
+                                    if let Some(&ch2) = chars.peek() {
+                                        if (ch2 >= '0' && ch2 <= '9') || (ch2 >= 'a' && ch2 <= 'f') || (ch2 >= 'A' && ch2 <= 'F') {
+                                            hex.push(chars.next().unwrap().to_ascii_lowercase());
+                                        }
+                                    }
                                 }
                             }
                             if let Ok(byte) = u8::from_str_radix(&hex, 16) {
@@ -668,8 +964,12 @@ impl PythonGenerator {
                             // Unicode escape sequence (4 hex digits)
                             let mut hex = String::new();
                             for _ in 0..4 {
-                                if let Some(&'0'..='9' | 'a'..='f' | 'A'..='F') = chars.peek() {
-                                    hex.push(chars.next().unwrap().to_ascii_lowercase());
+                                if let Some(&ch) = chars.peek() {
+                                    if (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F') {
+                                        hex.push(chars.next().unwrap().to_ascii_lowercase());
+                                    } else {
+                                        break;
+                                    }
                                 } else {
                                     break;
                                 }
@@ -698,13 +998,17 @@ impl PythonGenerator {
                             // Unicode escape sequence (8 hex digits)
                             let mut hex = String::new();
                             for _ in 0..8 {
-                                if let Some(&'0'..='9' | 'a'..='f' | 'A'..='F') = chars.peek() {
-                                    hex.push(chars.next().unwrap().to_ascii_lowercase());
-                                } else {
-                                    break;
-                                }
+                                if let Some(&ch) = chars.peek() {
+                                    if (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F') {
+                                        hex.push(chars.next().unwrap().to_ascii_lowercase());
+                                    } else {
+                                        break;
+                                    }
+                                                            } else {
+                                break;
                             }
-                            if hex.len() == 8 {
+                        }
+                        if hex.len() == 8 {
                                 if let Ok(codepoint) = u32::from_str_radix(&hex, 16) {
                                     if let Some(ch) = char::from_u32(codepoint) {
                                         result.push(ch);
@@ -762,6 +1066,14 @@ impl PythonGenerator {
     fn word_to_string(&self, word: &Word) -> String {
         match word {
             Word::Literal(s) => format!("'{}'", s),
+            Word::Array(name, elements) => {
+                // Convert array declaration to Python list
+                let elements_str = elements.iter()
+                    .map(|e| format!("'{}'", self.escape_python_string(e)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{} = [{}]", name, elements_str)
+            },
             Word::Variable(var) => {
                 if var == "i" { "i".to_string() }
                 else if var == "1" { "sys.argv[1] if len(sys.argv) > 1 else ''".to_string() }
@@ -783,11 +1095,63 @@ impl PythonGenerator {
                     format!("'{{{}}}'", brace.items.iter().map(|item| self.brace_item_to_string(item)).collect::<Vec<_>>().join(", "))
                 }
             }
-            Word::MapAccess(_map_name, key) => format!("map.get('{}', '')", key), // TODO: implement map access
-            Word::MapKeys(_map_name) => "list(map.keys())".to_string(), // TODO: implement map keys
-            Word::MapLength(_map_name) => "len(map)".to_string(), // TODO: implement map length
+            Word::MapAccess(map_name, key) => {
+                if key == "@" {
+                    // Special case: @ means all elements
+                    format!("' '.join({})", map_name)
+                } else {
+                    format!("{}.get('{}', '')", map_name, key)
+                }
+            }
+            Word::MapKeys(map_name) => format!("list({}.keys())", map_name),
+            Word::MapLength(map_name) => format!("len({})", map_name),
             Word::CommandSubstitution(_) => "''".to_string(), // TODO: implement command substitution
-            Word::StringInterpolation(_) => "''".to_string(), // TODO: implement string interpolation
+            Word::StringInterpolation(interp) => {
+                // Convert string interpolation parts to Python format
+                let mut parts = Vec::new();
+                for part in &interp.parts {
+                    match part {
+                        crate::ast::StringPart::Literal(s) => {
+                            parts.push(format!("'{}'", s));
+                        }
+                        crate::ast::StringPart::Variable(var) => {
+                            if var == "i" { 
+                                parts.push("i".to_string());
+                            } else if var == "1" { 
+                                parts.push("sys.argv[1] if len(sys.argv) > 1 else ''".to_string());
+                            } else if var == "2" { 
+                                parts.push("sys.argv[2] if len(sys.argv) > 2 else ''".to_string());
+                            } else if var == "3" { 
+                                parts.push("sys.argv[3] if len(sys.argv) > 3 else ''".to_string());
+                            } else if var == "4" { 
+                                parts.push("sys.argv[4] if len(sys.argv) > 4 else ''".to_string());
+                            } else if var == "5" { 
+                                parts.push("sys.argv[5] if len(sys.argv) > 5 else ''".to_string());
+                            } else { 
+                                parts.push(format!("'${}'", var));
+                            }
+                        }
+                        crate::ast::StringPart::MapAccess(map_name, key) => {
+                            if key == "@" {
+                                // Special case: @ means all elements
+                                parts.push(format!("' '.join({})", map_name));
+                            } else {
+                                parts.push(format!("{}.get('{}', '')", map_name, key));
+                            }
+                        }
+                        crate::ast::StringPart::MapKeys(map_name) => {
+                            parts.push(format!("list({}.keys())", map_name));
+                        }
+                        crate::ast::StringPart::MapLength(map_name) => {
+                            parts.push(format!("len({})", map_name));
+                        }
+                        _ => {
+                            parts.push("''".to_string()); // TODO: implement other parts
+                        }
+                    }
+                }
+                parts.join(" + ")
+            }
             Word::ParameterExpansion(_) => "''".to_string(), // TODO: implement parameter expansion
         }
     }

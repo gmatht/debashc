@@ -272,7 +272,7 @@ pub enum Token {
     DollarDoubleQuotedString,
 
     // Identifiers and words
-    #[regex(r"[a-zA-Z_][a-zA-Z0-9_.*?-]*|/[a-zA-Z0-9_.*?-]*", priority = 3)]
+    #[regex(r"[a-zA-Z_][a-zA-Z0-9_.*?-]*", priority = 2)]
     Identifier,
 
     #[regex(r"[0-9]+")]

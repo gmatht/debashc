@@ -160,6 +160,7 @@ pub enum Word {
     Literal(String),
     Variable(String),
     ParameterExpansion(ParameterExpansion),
+    Array(String, Vec<String>), // array_name, elements
     MapAccess(String, String), // map_name, key
     MapKeys(String), // !map[@] -> get keys of associative array
     MapLength(String), // #arr[@] -> get length of array
@@ -198,6 +199,7 @@ impl Word {
                     ParameterExpansionOperator::Dirname => format!("${{{}}}%/*", pe.variable),
                 }
             },
+            Word::Array(name, elements) => format!("{}=({})", name, elements.join(" ")),
             Word::MapAccess(map_name, key) => format!("{}[{}]", map_name, key),
             Word::MapKeys(map_name) => format!("!{}[@]", map_name),
             Word::MapLength(map_name) => format!("#{}[@]", map_name),
@@ -285,6 +287,7 @@ impl Word {
     pub fn as_variable(&self) -> Option<&str> {
         match self {
             Word::Variable(var) => Some(var),
+            Word::Array(name, _) => Some(name),
             Word::ParameterExpansion(pe) => Some(&pe.variable),
             Word::MapAccess(map_name, _) => Some(map_name),
             Word::MapKeys(map_name) => Some(map_name),
@@ -313,6 +316,13 @@ impl Word {
                     ParameterExpansionOperator::ErrorIfUnset(error) => error.contains(ch),
                     _ => false,
                 }
+            },
+            Word::Array(name, elements) => {
+                if name.contains(ch) { return true; }
+                for element in elements {
+                    if element.contains(ch) { return true; }
+                }
+                false
             },
             Word::MapAccess(map_name, key) => map_name.contains(ch) || key.contains(ch),
             Word::MapKeys(map_name) => map_name.contains(ch),
@@ -383,6 +393,16 @@ impl Word {
             Word::Literal(s) => s.splitn(n, pat).map(|s| s.to_string()).collect(),
             Word::Variable(var) => var.splitn(n, pat).map(|s| s.to_string()).collect(),
             Word::ParameterExpansion(pe) => pe.variable.splitn(n, pat).map(|s| s.to_string()).collect(),
+            Word::Array(name, elements) => {
+                let mut result = name.splitn(n, pat).map(|s| s.to_string()).collect::<Vec<_>>();
+                if result.len() < n {
+                    for element in elements {
+                        if result.len() >= n { break; }
+                        result.extend(element.splitn(n - result.len(), pat).map(|s| s.to_string()));
+                    }
+                }
+                result
+            },
             Word::MapAccess(map_name, key) => {
                 let mut result = map_name.splitn(n, pat).map(|s| s.to_string()).collect::<Vec<_>>();
                 if result.len() < n {
@@ -403,6 +423,13 @@ impl Word {
             Word::Literal(s) => s.strip_prefix(prefix).map(|s| s.to_string()),
             Word::Variable(var) => var.strip_prefix(prefix).map(|s| s.to_string()),
             Word::ParameterExpansion(pe) => pe.variable.strip_prefix(prefix).map(|s| s.to_string()),
+            Word::Array(name, elements) => {
+                if let Some(stripped) = name.strip_prefix(prefix) {
+                    Some(format!("{}=({})", stripped, elements.join(" ")))
+                } else {
+                    None
+                }
+            },
             Word::MapAccess(map_name, key) => {
                 if let Some(stripped) = map_name.strip_prefix(prefix) {
                     Some(format!("{}[{}]", stripped, key))
@@ -423,6 +450,13 @@ impl Word {
             Word::Literal(s) => s.strip_prefix(prefix).map(|s| s.to_string()),
             Word::Variable(var) => var.strip_prefix(prefix).map(|s| s.to_string()),
             Word::ParameterExpansion(pe) => pe.variable.strip_prefix(prefix).map(|s| s.to_string()),
+            Word::Array(name, elements) => {
+                if let Some(stripped) = name.strip_prefix(prefix) {
+                    Some(format!("{}=({})", stripped, elements.join(" ")))
+                } else {
+                    None
+                }
+            },
             Word::MapAccess(map_name, key) => {
                 if let Some(stripped) = map_name.strip_prefix(prefix) {
                     Some(format!("{}[{}]", stripped, key))
@@ -443,6 +477,11 @@ impl Word {
             Word::Literal(s) => s.replace(from, to),
             Word::Variable(var) => var.replace(from, to),
             Word::ParameterExpansion(pe) => pe.variable.replace(from, to),
+            Word::Array(name, elements) => {
+                let new_name = name.replace(from, to);
+                let new_elements: Vec<String> = elements.iter().map(|e| e.replace(from, to)).collect();
+                format!("{}=({})", new_name, new_elements.join(" "))
+            },
             Word::MapAccess(map_name, key) => {
                 let new_map_name = map_name.replace(from, to);
                 let new_key = key.replace(from, to);
@@ -461,6 +500,11 @@ impl Word {
             Word::Literal(s) => s.replace(from, to),
             Word::Variable(var) => var.replace(from, to),
             Word::ParameterExpansion(pe) => pe.variable.replace(from, to),
+            Word::Array(name, elements) => {
+                let new_name = name.replace(from, to);
+                let new_elements: Vec<String> = elements.iter().map(|e| e.replace(from, to)).collect();
+                format!("{}=({})", new_name, new_elements.join(" "))
+            },
             Word::MapAccess(map_name, key) => {
                 let new_map_name = map_name.replace(from, to);
                 let new_key = key.replace(from, to);

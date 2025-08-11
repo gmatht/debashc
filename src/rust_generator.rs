@@ -17,6 +17,7 @@ impl RustGenerator {
         let mut needs_io = false;
         let mut needs_thread = false;
         let mut needs_duration = false;
+        let mut needs_collections = false;
         let mut has_early_return = false;
 
         // First pass - analyze what imports we need and check for early returns
@@ -41,6 +42,14 @@ impl RustGenerator {
                     if cmd.name == "sleep" {
                         needs_thread = true;
                         needs_duration = true;
+                    }
+                    
+                    // Check for associative array assignments
+                    for (var, _) in &cmd.env_vars {
+                        if var.contains('[') {
+                            needs_collections = true;
+                            break;
+                        }
                     }
                 }
                 Command::If(_) => {
@@ -82,6 +91,9 @@ impl RustGenerator {
         }
         if needs_duration {
             output.push_str("use std::time::Duration;\n");
+        }
+        if needs_collections {
+            output.push_str("use std::collections;\n");
         }
         if output.ends_with('\n') {
             output.push('\n');
@@ -127,14 +139,57 @@ impl RustGenerator {
     fn generate_simple_command(&self, cmd: &SimpleCommand) -> String {
         let mut output = String::new();
         
-        // Handle environment variables
+        // Handle environment variables and array assignments
+        let mut has_associative_array = false;
+        let mut associative_array_name = String::new();
+        
         for (var, value) in &cmd.env_vars {
-            output.push_str(&format!("env::set_var(\"{}\", \"{}\");\n", var, value));
+            if var.contains('[') {
+                // This is an associative array assignment like map[foo]=bar
+                if !has_associative_array {
+                    // Extract the array name (everything before the first [)
+                    if let Some(bracket_pos) = var.find('[') {
+                        associative_array_name = var[..bracket_pos].to_string();
+                        output.push_str(&format!("let mut {}: std::collections::HashMap<String, String> = std::collections::HashMap::new();\n", associative_array_name));
+                        has_associative_array = true;
+                    }
+                }
+                
+                // Extract the key and value
+                if let Some(bracket_pos) = var.find('[') {
+                    if let Some(end_bracket_pos) = var.rfind(']') {
+                        let key = &var[bracket_pos + 1..end_bracket_pos];
+                        let value_str = self.word_to_string(value);
+                        // Remove quotes if present
+                        let clean_value = if value_str.starts_with('"') && value_str.ends_with('"') {
+                            &value_str[1..value_str.len()-1]
+                        } else {
+                            &value_str
+                        };
+                        output.push_str(&format!("{}.insert(\"{}\".to_string(), \"{}\".to_string());\n", associative_array_name, key, clean_value));
+                    }
+                }
+            } else {
+                match value {
+                    Word::Array(name, elements) => {
+                        // Handle array declaration
+                        let elements_str = elements.iter()
+                            .map(|e| format!("\"{}\"", self.escape_rust_string(e)))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        output.push_str(&format!("let {}: Vec<&str> = vec![{}];\n", name, elements_str));
+                    }
+                    _ => {
+                        // Handle regular environment variable
+                        output.push_str(&format!("env::set_var(\"{}\", \"{}\");\n", var, value));
+                    }
+                }
+            }
         }
         
         // Handle variable assignments (e.g., i=5)
-        if cmd.name.to_string().contains('=') {
-            let name_str = cmd.name.to_string();
+        if self.word_to_string(&cmd.name).contains('=') {
+            let name_str = self.word_to_string(&cmd.name);
             let parts: Vec<&str> = name_str.splitn(2, '=').collect();
             if parts.len() == 2 {
                 let var_name = &parts[0];
@@ -156,24 +211,28 @@ impl RustGenerator {
             if cmd.args.is_empty() {
                 output.push_str("println!();\n");
             } else {
-                if cmd.args.len() == 1 && cmd.args[0] == "$#" {
+                if cmd.args.len() == 1 && self.word_to_string(&cmd.args[0]) == "$#" {
                     output.push_str("let argc = std::env::args().count().saturating_sub(1);\n");
                     output.push_str("println!(\"{}\", argc);\n");
-                } else if cmd.args.len() == 1 && (cmd.args[0] == "$@" || cmd.args[0] == "${@}") {
+                } else if cmd.args.len() == 1 && (self.word_to_string(&cmd.args[0]) == "$@" || self.word_to_string(&cmd.args[0]) == "${@}") {
                     output.push_str("let joined = std::env::args().skip(1).collect::<Vec<_>>().join(\" \" );\n");
                     output.push_str("println!(\"{}\", joined);\n");
                 } else {
-                    // Check if we have any variables to expand
-                    let has_vars = cmd.args.iter().any(|arg| Self::extract_var_name(arg).is_some());
+                    // Check if we have any complex words that need special handling
+                    let has_complex_words = cmd.args.iter().any(|arg| {
+                        matches!(arg, Word::Variable(_) | Word::MapAccess(_, _) | Word::MapLength(_) | 
+                                       Word::MapKeys(_) | Word::ParameterExpansion(_) | Word::Arithmetic(_) |
+                                       Word::StringInterpolation(_))
+                    });
                     
-                    if !has_vars && cmd.args.len() == 1 {
+                    if !has_complex_words && cmd.args.len() == 1 {
                         // Simple case: single literal string
                         match &cmd.args[0] {
                             Word::Variable(var) => {
                                 output.push_str(&format!("println!(\"{{}}\", {});\n", var));
                             }
                             _ => {
-                                let arg_str = cmd.args[0].to_string();
+                                let arg_str = &cmd.args[0];
                                 let clean_str = if arg_str.starts_with('"') && arg_str.ends_with('"') {
                                     &arg_str[1..arg_str.len()-1]
                                 } else {
@@ -183,18 +242,18 @@ impl RustGenerator {
                                 output.push_str(&format!("println!(\"{}\");\n", escaped));
                             }
                         }
-                    } else if !has_vars {
+                    } else if !has_complex_words {
                         // Multiple literal strings - join them with space
                         let escaped = cmd.args.iter()
                             .map(|arg| {
                                 match arg {
                                     Word::Variable(var) => format!("{{{}}}", var),
                                     _ => {
-                                        let arg_str = arg.to_string();
-                                        let clean_str = if arg_str.starts_with('"') && arg_str.ends_with('"') {
-                                            &arg_str[1..arg_str.len()-1]
+                                        let arg_str = arg;
+                                        let clean_str = if arg_str.to_string().starts_with('"') && arg_str.to_string().ends_with('"') {
+                                            &arg_str.to_string()[1..arg_str.to_string().len()-1]
                                         } else {
-                                            &arg_str
+                                            &arg_str.to_string()
                                         };
                                         self.escape_rust_string(clean_str)
                                     }
@@ -204,27 +263,73 @@ impl RustGenerator {
                             .join(" ");
                         output.push_str(&format!("println!(\"{}\");\n", escaped));
                     } else {
-                        // Complex case with variables - use Vec approach
-                        output.push_str("let __echo_parts: Vec<String> = vec![\n");
-                        for arg in &cmd.args {
-                            match arg {
-                                Word::Variable(var) => {
-                                    output.push_str(&format!("    {}.to_string(),\n", var));
-                                }
-                                _ => {
-                                    let arg_str = arg.to_string();
-                                    let clean_str = if arg_str.starts_with('"') && arg_str.ends_with('"') {
-                                        &arg_str[1..arg_str.len()-1]
-                                    } else {
-                                        &arg_str
-                                    };
-                                    let escaped = self.escape_rust_string(clean_str);
-                                    output.push_str(&format!("    \"{}\".to_string(),\n", escaped));
+                        // Check if we can inline the complex case without __echo_parts
+                        let can_inline = cmd.args.len() <= 3 && cmd.args.iter().all(|arg| {
+                            matches!(arg, 
+                                Word::Variable(_) | 
+                                Word::Literal(_) |
+                                Word::Arithmetic(_) |
+                                Word::ParameterExpansion(_)
+                            )
+                        });
+                        
+                        if can_inline {
+                            // Inline simple complex cases directly into println!
+                            let mut format_parts = Vec::new();
+                            let mut args = Vec::new();
+                            
+                            for arg in &cmd.args {
+                                match arg {
+                                    Word::Variable(var) => {
+                                        format_parts.push("{}");
+                                        args.push(format!("{}", var));
+                                    }
+                                    Word::Literal(lit) => {
+                                        let clean_str = if lit.starts_with('"') && lit.ends_with('"') {
+                                            &lit[1..lit.len()-1]
+                                        } else {
+                                            lit
+                                        };
+                                        let escaped = self.escape_rust_string(clean_str);
+                                        format_parts.push(&escaped);
+                                    }
+                                    Word::Arithmetic(expr) => {
+                                        format_parts.push("{}");
+                                        args.push(format!("({})", expr.expression));
+                                    }
+                                    Word::ParameterExpansion(pe) => {
+                                        format_parts.push("{}");
+                                        let pe_str = match &pe.operator {
+                                            ParameterExpansionOperator::UppercaseAll => format!("{}.to_uppercase()", pe.variable),
+                                            ParameterExpansionOperator::LowercaseAll => format!("{}.to_lowercase()", pe.variable),
+                                            ParameterExpansionOperator::UppercaseFirst => format!("{}.chars().next().unwrap_or(' ').to_uppercase().collect::<String>() + &{}[1..]", pe.variable, pe.variable),
+                                            _ => format!("${{{}}}", pe.variable),
+                                        };
+                                        args.push(pe_str);
+                                    }
+                                    _ => {
+                                        // Fallback to __echo_parts for unexpected cases
+                                        can_inline = false;
+                                        break;
+                                    }
                                 }
                             }
+                            
+                            if can_inline && args.is_empty() {
+                                // All literals - no format args needed
+                                output.push_str(&format!("println!(\"{}\");\n", format_parts.join(" ")));
+                            } else if can_inline {
+                                // Mixed literals and variables - use format args
+                                let format_str = format_parts.join(" ");
+                                output.push_str(&format!("println!(\"{}\", {});\n", format_str, args.join(", ")));
+                            } else {
+                                // Fallback to __echo_parts for complex cases
+                                self.generate_echo_with_parts(output, &cmd.args);
+                            }
+                        } else {
+                            // Complex case that needs __echo_parts
+                            self.generate_echo_with_parts(output, &cmd.args);
                         }
-                        output.push_str("];\n");
-                        output.push_str("println!(\"{}\", __echo_parts.join(\" \"));\n");
                     }
                     // Ensure success status
                     //output.push_str("/* success */\n");
@@ -238,18 +343,18 @@ impl RustGenerator {
             output.push_str("/* builtin */\n");
         } else if cmd.name == "sleep" {
             // Use std::thread::sleep
-            let dur = cmd.args.get(0).cloned().unwrap_or_else(|| Word::Literal("1".to_string()));
+                            let dur = cmd.args.get(0).cloned().unwrap_or_else(|| Word::Literal("1".to_string()));
             output.push_str(&format!("thread::sleep(Duration::from_secs_f64({}f64));\n", dur));
         } else if cmd.name == "cd" {
             // Special handling for cd
-            let dir = if cmd.args.is_empty() { ".".to_string() } else { cmd.args[0].to_string() };
+                            let dir = if cmd.args.is_empty() { "." } else { &cmd.args[0] };
             output.push_str(&format!("if let Err(_) = env::set_current_dir(\"{}\") {{\n", dir));
             output.push_str(&self.indent());
             output.push_str("    return std::process::ExitCode::FAILURE;\n");
             output.push_str("}\n");
         } else if cmd.name == "ls" {
             // Special handling for ls
-            let args = if cmd.args.is_empty() { "." } else { &cmd.args[0].to_string() };
+                            let args = if cmd.args.is_empty() { "." } else { &cmd.args[0] };
             output.push_str(&format!("match fs::read_dir(\"{}\") {{\n", args));
             output.push_str(&self.indent());
             output.push_str("    Ok(entries) => {\n");
@@ -281,8 +386,8 @@ impl RustGenerator {
         } else if cmd.name == "grep" {
             // Special handling for grep
             if cmd.args.len() >= 2 {
-                let pattern = cmd.args[0].to_string();
-                let file = cmd.args[1].to_string();
+                let pattern = &cmd.args[0];
+                let file = &cmd.args[1];
                 output.push_str(&format!("match fs::read_to_string(\"{}\") {{\n", file));
                 output.push_str(&self.indent());
                 output.push_str("    Ok(content) => {\n");
@@ -345,8 +450,8 @@ impl RustGenerator {
         } else if cmd.name == "mv" {
             // Special handling for mv
             if cmd.args.len() >= 2 {
-                let src = cmd.args[0].to_string();
-                let dst = cmd.args[1].to_string();
+                let src = &cmd.args[0];
+                let dst = &cmd.args[1];
                 output.push_str(&format!("if let Err(_) = fs::rename(\"{}\", \"{}\") {{\n", src, dst));
                 output.push_str(&self.indent());
                 output.push_str("    return std::process::ExitCode::FAILURE;\n");
@@ -355,8 +460,8 @@ impl RustGenerator {
         } else if cmd.name == "cp" {
             // Special handling for cp
             if cmd.args.len() >= 2 {
-                let src = cmd.args[0].to_string();
-                let dst = cmd.args[1].to_string();
+                let src = &cmd.args[0];
+                let dst = &cmd.args[1];
                 output.push_str(&format!("if let Err(_) = fs::copy(\"{}\", \"{}\") {{\n", src, dst));
                 output.push_str(&self.indent());
                 output.push_str("    return std::process::ExitCode::FAILURE;\n");
@@ -365,7 +470,7 @@ impl RustGenerator {
         } else if cmd.name == "read" {
             // Read a line from stdin into a variable
             if let Some(var) = cmd.args.get(0) {
-                let var_name = var.to_string();
+                let var_name = &var;
                 output.push_str(&format!("let mut {} = String::new();\n", var_name));
                 output.push_str(&format!("if let Err(_) = io::stdin().read_line(&mut {}) {{\n", var_name));
                 output.push_str(&self.indent());
@@ -383,7 +488,36 @@ impl RustGenerator {
                 output.push_str("    return std::process::ExitCode::FAILURE;\n");
                 output.push_str("}\n");
             } else {
-                let args_str = cmd.args.iter().map(|arg| format!("\"{}\"", arg.to_string())).collect::<Vec<_>>().join(", ");
+                let args_str = cmd.args.iter().map(|arg| {
+                    match arg {
+                        Word::Variable(var) => format!("{{{}}}", var),
+                        Word::StringInterpolation(interp) => {
+                            // Handle string interpolation in command arguments
+                            if interp.parts.len() == 1 {
+                                match &interp.parts[0] {
+                                    StringPart::Variable(var) => {
+                                        // For variables, just use the variable name
+                                        format!("{{{}}}", var)
+                                    }
+                                    StringPart::Literal(s) => {
+                                        format!("\"{}\"", self.escape_rust_string(s))
+                                    }
+                                    _ => {
+                                        let arg_str = self.word_to_string(arg);
+                                        format!("\"{}\"", self.escape_rust_string(&arg_str))
+                                    }
+                                }
+                            } else {
+                                let arg_str = self.word_to_string(arg);
+                                format!("\"{}\"", self.escape_rust_string(&arg_str))
+                            }
+                        }
+                        _ => {
+                            let arg_str = self.word_to_string(arg);
+                            format!("\"{}\"", self.escape_rust_string(&arg_str))
+                        }
+                    }
+                }).collect::<Vec<_>>().join(", ");
                 output.push_str(&format!("if let Err(_) = Command::new(\"{}\")\n", cmd.name));
                 output.push_str(&self.indent());
                 output.push_str(&format!("    .args(&[{}])\n", args_str));
@@ -500,6 +634,19 @@ impl RustGenerator {
                 for arg in &cmd.args {
                     if let Word::Literal(var) = arg {
                         output.push_str(&format!("env::remove_var(\"{}\");\n", var));
+                    }
+                }
+            }
+            "declare" => {
+                // Handle declare command for arrays
+                for arg in &cmd.args {
+                    if let Word::Literal(opt) = arg {
+                        if opt == "-A" {
+                            // Declare associative array - for now just comment it
+                            output.push_str("// declare -A: associative array declaration\n");
+                        } else {
+                            output.push_str(&format!("// declare {}\n", opt));
+                        }
                     }
                 }
             }
@@ -655,7 +802,7 @@ impl RustGenerator {
             output.push_str("}\n");
         } else {
             // For loop with items
-            if for_loop.items.len() == 1 && (for_loop.items[0].to_string() == "$@" || for_loop.items[0].to_string() == "${@}") {
+            if for_loop.items.len() == 1 && (self.word_to_string(&for_loop.items[0]) == "$@" || self.word_to_string(&for_loop.items[0]) == "${@}") {
                 // Special case: iterate over command line arguments
                 output.push_str("for arg in std::env::args().skip(1) {\n");
                 self.indent_level += 1;
@@ -665,19 +812,117 @@ impl RustGenerator {
                 output.push_str(&self.generate_block(&for_loop.body));
                 self.indent_level -= 1;
                 output.push_str("}\n");
+            } else if for_loop.items.len() == 1 {
+                // Check for special array iteration case: "${arr[@]}"
+                match &for_loop.items[0] {
+                    Word::StringInterpolation(interp) => {
+                        if interp.parts.len() == 1 {
+                            match &interp.parts[0] {
+                                StringPart::MapAccess(map_name, key) if key == "@" => {
+                                    // Special case: iterate over all array elements
+                                    output.push_str(&format!("for {} in &{} {{\n", for_loop.variable, map_name));
+                                    self.indent_level += 1;
+                                    output.push_str(&self.indent());
+                                    output.push_str(&format!("let {} = {};\n", for_loop.variable, for_loop.variable));
+                                    output.push_str(&self.indent());
+                                    output.push_str(&self.generate_block(&for_loop.body));
+                                    self.indent_level -= 1;
+                                    output.push_str("}\n");
+                                    return output;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                
+                // Regular for loop with items - handle brace expansion
+                let mut expanded_items = Vec::new();
+                for item in &for_loop.items {
+                    if let Some(expanded) = self.expand_brace_expression(&self.word_to_string(item)) {
+                        expanded_items.extend(expanded);
+                    } else {
+                        // Handle StringInterpolation specially for array iteration
+                        match item {
+                            Word::StringInterpolation(interp) => {
+                                if interp.parts.len() == 1 {
+                                    match &interp.parts[0] {
+                                        StringPart::MapAccess(map_name, key) if key == "@" => {
+                                            // This should have been caught above, but handle it here too
+                                            expanded_items.push(map_name.clone());
+                                        }
+                                        _ => {
+                                            expanded_items.push(self.word_to_string(item));
+                                        }
+                                    }
+                                } else {
+                                    expanded_items.push(self.word_to_string(item));
+                                }
+                            }
+                            _ => {
+                                expanded_items.push(self.word_to_string(item));
+                            }
+                        }
+                    }
+                }
+                
+                // Check if we have a single array reference
+                if expanded_items.len() == 1 && !expanded_items[0].contains('"') && !expanded_items[0].contains(' ') {
+                    // Single array reference - iterate over the array
+                    output.push_str(&format!("for {} in &{} {{\n", for_loop.variable, expanded_items[0]));
+                } else {
+                    // Multiple items or complex items - use array literal
+                    let items_str = expanded_items.iter().map(|item| format!("\"{}\"", item)).collect::<Vec<_>>().join(", ");
+                    output.push_str(&format!("for {} in &[{}] {{\n", for_loop.variable, items_str));
+                }
+                self.indent_level += 1;
+                output.push_str(&self.indent());
+                // Generate the body
+                let body_chunk = self.generate_block(&for_loop.body);
+                output.push_str(&body_chunk);
+                self.indent_level -= 1;
+                output.push_str("}\n");
             } else {
                 // Regular for loop with items - handle brace expansion
                 let mut expanded_items = Vec::new();
                 for item in &for_loop.items {
-                    if let Some(expanded) = self.expand_brace_expression(&item.to_string()) {
+                    if let Some(expanded) = self.expand_brace_expression(&self.word_to_string(item)) {
                         expanded_items.extend(expanded);
                     } else {
-                        expanded_items.push(item.to_string());
+                        // Handle StringInterpolation specially for array iteration
+                        match item {
+                            Word::StringInterpolation(interp) => {
+                                if interp.parts.len() == 1 {
+                                    match &interp.parts[0] {
+                                        StringPart::MapAccess(map_name, key) if key == "@" => {
+                                            // This should have been caught above, but handle it here too
+                                            expanded_items.push(map_name.clone());
+                                        }
+                                        _ => {
+                                            expanded_items.push(self.word_to_string(item));
+                                        }
+                                    }
+                                } else {
+                                    expanded_items.push(self.word_to_string(item));
+                                }
+                            }
+                            _ => {
+                                expanded_items.push(self.word_to_string(item));
+                            }
+                        }
                     }
                 }
                 
-                let items_str = expanded_items.iter().map(|item| format!("\"{}\"", item)).collect::<Vec<_>>().join(", ");
-                output.push_str(&format!("for {} in &[{}] {{\n", for_loop.variable, items_str));
+                // Check if we have a single array reference
+                if expanded_items.len() == 1 && !expanded_items[0].contains('"') && !expanded_items[0].contains(' ') {
+                    // Single array reference - iterate over the array
+                    output.push_str(&format!("for {} in &{} {{\n", for_loop.variable, expanded_items[0]));
+                } else {
+                    // Multiple items or complex items - use array literal
+                    let items_str = expanded_items.iter().map(|item| format!("\"{}\"", item)).collect::<Vec<_>>().join(", ");
+                    output.push_str(&format!("for {} in &[{}] {{\n", for_loop.variable, items_str));
+                }
                 self.indent_level += 1;
                 output.push_str(&self.indent());
                 // Generate the body
@@ -757,7 +1002,7 @@ impl RustGenerator {
                         match test_op.as_str() {
                             "-f" => {
                                 if let Some(file) = cmd.args.get(1) {
-                                    let file_str = file.to_string();
+                                    let file_str = &file;
                                     let clean_file = if file_str.starts_with('"') && file_str.ends_with('"') {
                                         &file_str[1..file_str.len()-1]
                                     } else {
@@ -768,7 +1013,7 @@ impl RustGenerator {
                             }
                             "-d" => {
                                 if let Some(dir) = cmd.args.get(1) {
-                                    let dir_str = dir.to_string();
+                                    let dir_str = &dir;
                                     let clean_dir = if dir_str.starts_with('"') && dir_str.ends_with('"') {
                                         &dir_str[1..dir_str.len()-1]
                                     } else {
@@ -779,7 +1024,7 @@ impl RustGenerator {
                             }
                             "-e" => {
                                 if let Some(path) = cmd.args.get(1) {
-                                    let path_str = path.to_string();
+                                    let path_str = &path;
                                     let clean_path = if path_str.starts_with('"') && path_str.ends_with('"') {
                                         &path_str[1..path_str.len()-1]
                                     } else {
@@ -856,18 +1101,231 @@ impl RustGenerator {
         out
     }
     
+    fn word_to_string(&self, word: &Word) -> String {
+        match word {
+            Word::Literal(s) => s.clone(),
+            Word::Variable(var) => {
+                // Special case for $@ - convert to Rust equivalent
+                if var == "@" {
+                    "std::env::args().skip(1).collect::<Vec<_>>()".to_string()
+                } else {
+                    format!("${}", var)
+                }
+            },
+            Word::Array(name, elements) => {
+                // Convert array declaration to Rust Vec
+                let elements_str = elements.iter()
+                    .map(|e| format!("\"{}\"", self.escape_rust_string(e)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("let {}: Vec<&str> = vec![{}];", name, elements_str)
+            },
+            Word::ParameterExpansion(pe) => {
+                match &pe.operator {
+                    ParameterExpansionOperator::UppercaseAll => format!("${{{}}}", pe.variable),
+                    ParameterExpansionOperator::LowercaseAll => format!("${{{}}}", pe.variable),
+                    ParameterExpansionOperator::UppercaseFirst => format!("${{{}}}", pe.variable),
+                    ParameterExpansionOperator::RemoveLongestPrefix(pattern) => format!("${{{}}}##{}", pe.variable, pattern),
+                    ParameterExpansionOperator::RemoveShortestPrefix(pattern) => format!("${{{}}}#{}", pe.variable, pattern),
+                    ParameterExpansionOperator::RemoveLongestSuffix(pattern) => format!("${{{}}}%%{}", pe.variable, pattern),
+                    ParameterExpansionOperator::RemoveShortestSuffix(pattern) => format!("${{{}}}%{}", pe.variable, pattern),
+                    ParameterExpansionOperator::SubstituteAll(pattern, replacement) => format!("${{{}}}//{}/{}", pe.variable, pattern, replacement),
+                    ParameterExpansionOperator::DefaultValue(default) => format!("${{{}}}:-{}", pe.variable, default),
+                    ParameterExpansionOperator::AssignDefault(default) => format!("${{{}}}:={}", pe.variable, default),
+                    ParameterExpansionOperator::ErrorIfUnset(error) => format!("${{{}}}:?{}", pe.variable, error),
+                    ParameterExpansionOperator::Basename => format!("${{{}}}##*/", pe.variable),
+                    ParameterExpansionOperator::Dirname => format!("${{{}}}%/*", pe.variable),
+                }
+            },
+            Word::MapAccess(map_name, key) => {
+                // Convert array access to Rust Vec access
+                if key == "@" {
+                    // Special case: array iteration
+                    format!("{}", map_name)
+                } else {
+                    // Regular array access - convert to Rust Vec access
+                    format!("{}.get({}).unwrap_or(&String::new())", map_name, key)
+                }
+            },
+            Word::MapKeys(map_name) => {
+                // Convert array keys to Rust Vec iteration
+                format!("{}", map_name)
+            },
+            Word::MapLength(map_name) => {
+                // Convert array length to Rust Vec length
+                format!("{}.len()", map_name)
+            },
+            Word::Arithmetic(expr) => expr.expression.clone(),
+            Word::BraceExpansion(expansion) => {
+                let mut result = String::new();
+                if let Some(ref prefix) = expansion.prefix {
+                    result.push_str(prefix);
+                }
+                for (i, item) in expansion.items.iter().enumerate() {
+                    if i > 0 {
+                        result.push(',');
+                    }
+                    match item {
+                        BraceItem::Literal(s) => result.push_str(s),
+                        BraceItem::Range(range) => {
+                            result.push_str(&range.start);
+                            result.push_str("..");
+                            result.push_str(&range.end);
+                            if let Some(ref step) = range.step {
+                                result.push_str("..");
+                                result.push_str(step);
+                            }
+                        }
+                        BraceItem::Sequence(seq) => {
+                            result.push_str(&seq.join(","));
+                        }
+                    }
+                }
+                if let Some(ref suffix) = expansion.suffix {
+                    result.push_str(suffix);
+                }
+                format!("{{{}}}", result)
+            }
+            Word::CommandSubstitution(_) => "$(...)".to_string(),
+            Word::StringInterpolation(interp) => {
+                let mut result = String::new();
+                for part in &interp.parts {
+                    match part {
+                        StringPart::Literal(s) => result.push_str(s),
+                        StringPart::Variable(var) => {
+                            // Special case for $@ - convert to Rust equivalent
+                            if var == "@" {
+                                result.push_str("std::env::args().skip(1).collect::<Vec<_>>()");
+                            } else {
+                                result.push_str(&format!("${}", var));
+                            }
+                        },
+                        StringPart::ParameterExpansion(pe) => {
+                            match &pe.operator {
+                                ParameterExpansionOperator::UppercaseAll => result.push_str(&format!("${{{}}}", pe.variable)),
+                                ParameterExpansionOperator::LowercaseAll => result.push_str(&format!("${{{}}}", pe.variable)),
+                                ParameterExpansionOperator::UppercaseFirst => result.push_str(&format!("${{{}}}", pe.variable)),
+                                ParameterExpansionOperator::RemoveLongestPrefix(pattern) => result.push_str(&format!("${{{}}}##{}", pe.variable, pattern)),
+                                ParameterExpansionOperator::RemoveShortestPrefix(pattern) => result.push_str(&format!("${{{}}}#{}", pe.variable, pattern)),
+                                ParameterExpansionOperator::RemoveLongestSuffix(pattern) => result.push_str(&format!("${{{}}}%%{}", pe.variable, pattern)),
+                                ParameterExpansionOperator::RemoveShortestSuffix(pattern) => result.push_str(&format!("${{{}}}%{}", pe.variable, pattern)),
+                                ParameterExpansionOperator::SubstituteAll(pattern, replacement) => result.push_str(&format!("${{{}}}//{}/{}", pe.variable, pattern, replacement)),
+                                ParameterExpansionOperator::DefaultValue(default) => result.push_str(&format!("${{{}}}:-{}", pe.variable, default)),
+                                ParameterExpansionOperator::AssignDefault(default) => result.push_str(&format!("${{{}}}:={}", pe.variable, default)),
+                                ParameterExpansionOperator::ErrorIfUnset(error) => result.push_str(&format!("${{{}}}:?{}", pe.variable, error)),
+                                ParameterExpansionOperator::Basename => result.push_str(&format!("${{{}}}##*/", pe.variable)),
+                                ParameterExpansionOperator::Dirname => result.push_str(&format!("${{{}}}%/*", pe.variable)),
+                            }
+                        },
+                        StringPart::MapAccess(map_name, key) => {
+                            // Convert Bash array access to Rust equivalent
+                            if key == "@" {
+                                // Special case: array iteration
+                                result.push_str(&format!("{}", map_name));
+                            } else {
+                                // Regular array access - convert to Rust Vec access
+                                result.push_str(&format!("{}.get({}).unwrap_or(&String::new())", map_name, key));
+                            }
+                        },
+                        StringPart::MapKeys(map_name) => {
+                            // Convert Bash array keys to Rust equivalent
+                            result.push_str(&format!("{}", map_name));
+                        },
+                        StringPart::MapLength(map_name) => {
+                            // Convert Bash array length to Rust equivalent
+                            result.push_str(&format!("{}.len()", map_name));
+                        },
+                        StringPart::Arithmetic(expr) => result.push_str(&expr.expression),
+                        StringPart::CommandSubstitution(_) => result.push_str("$(...)"),
+                    }
+                }
+                result
+            }
+        }
+    }
+
     fn escape_rust_string(&self, s: &str) -> String {
-        // First, unescape any \" sequences to " to avoid double-escaping
-        let unescaped = s.replace("\\\"", "\"");
-        // Then escape quotes and other characters for Rust
-        let escaped = unescaped
-            .replace("\\", "\\\\")  // Must escape backslashes first
-            .replace("\"", "\\\"")  // Then escape quotes
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-            .replace("\t", "\\t");
-        // For single quotes, no escaping needed in Rust strings
-        escaped
+        // Handle ANSI-C escape sequences and other special characters
+        let mut result = String::new();
+        let mut chars = s.chars().peekable();
+        
+        while let Some(ch) = chars.next() {
+            match ch {
+                '\\' => {
+                    if let Some(next_ch) = chars.next() {
+                        match next_ch {
+                            'n' => result.push_str("\\n"),
+                            'r' => result.push_str("\\r"),
+                            't' => result.push_str("\\t"),
+                            'a' => result.push_str("\\x07"), // bell
+                            'b' => result.push_str("\\x08"), // backspace
+                            'f' => result.push_str("\\x0c"), // formfeed
+                            'v' => result.push_str("\\x0b"), // vertical tab
+                            '\\' => result.push_str("\\\\"),
+                            '"' => result.push_str("\\\""),
+                            '\'' => result.push_str("\\'"),
+                            'x' => {
+                                // Hex escape: \xHH
+                                let mut hex = String::new();
+                                for _ in 0..2 {
+                                    if let Some(hex_ch) = chars.next() {
+                                        if hex_ch.is_ascii_hexdigit() {
+                                            hex.push(hex_ch);
+                                        } else {
+                                            break;
+                                        }
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                if hex.len() == 2 {
+                                    result.push_str(&format!("\\x{}", hex));
+                                } else {
+                                    result.push_str("\\\\x");
+                                    result.push_str(&hex);
+                                }
+                            }
+                            'u' => {
+                                // Unicode escape: \uHHHH
+                                let mut hex = String::new();
+                                for _ in 0..4 {
+                                    if let Some(hex_ch) = chars.next() {
+                                        if hex_ch.is_ascii_hexdigit() {
+                                            hex.push(hex_ch);
+                                        } else {
+                                            break;
+                                        }
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                if hex.len() == 4 {
+                                    result.push_str(&format!("\\u{}", hex));
+                                } else {
+                                    result.push_str("\\\\u");
+                                    result.push_str(&hex);
+                                }
+                            }
+                            _ => {
+                                // Unknown escape sequence, treat as literal
+                                result.push_str("\\\\");
+                                result.push(next_ch);
+                            }
+                        }
+                    } else {
+                        // Trailing backslash
+                        result.push_str("\\\\");
+                    }
+                }
+                '"' => result.push_str("\\\""),
+                '\n' => result.push_str("\\n"),
+                '\r' => result.push_str("\\r"),
+                '\t' => result.push_str("\\t"),
+                _ => result.push(ch),
+            }
+        }
+        
+        result
     }
     
     fn expand_brace_expression(&self, s: &str) -> Option<Vec<String>> {
@@ -916,6 +1374,109 @@ impl RustGenerator {
             }
         }
         None
+    }
+
+    fn generate_echo_with_parts(&mut self, output: &mut String, args: &[Word]) {
+        output.push_str("let __echo_parts: Vec<String> = vec![\n");
+        for arg in args {
+            match arg {
+                Word::Variable(var) => {
+                    output.push_str(&format!("    {}.to_string(),\n", var));
+                }
+                Word::MapAccess(map_name, key) => {
+                    if key == "@" {
+                        output.push_str(&format!("    {}.join(\" \"),\n", map_name));
+                    } else {
+                        output.push_str(&format!("    {}.get({}).unwrap_or(&String::new()),\n", map_name, key));
+                    }
+                }
+                Word::MapLength(map_name) => {
+                    output.push_str(&format!("    {}.len(),\n", map_name));
+                }
+                Word::MapKeys(map_name) => {
+                    output.push_str(&format!("    {}.join(\" \"),\n", map_name));
+                }
+                Word::ParameterExpansion(pe) => {
+                    let pe_str = match &pe.operator {
+                        ParameterExpansionOperator::UppercaseAll => format!("{}.to_uppercase()", pe.variable),
+                        ParameterExpansionOperator::LowercaseAll => format!("{}.to_lowercase()", pe.variable),
+                        ParameterExpansionOperator::UppercaseFirst => format!("{}.chars().next().unwrap_or(' ').to_uppercase().collect::<String>() + &{}[1..]", pe.variable, pe.variable),
+                        _ => format!("${{{}}}", pe.variable),
+                    };
+                    output.push_str(&format!("    {},\n", pe_str));
+                }
+                Word::Arithmetic(expr) => {
+                    output.push_str(&format!("    ({}),\n", expr.expression));
+                }
+                Word::StringInterpolation(interp) => {
+                    let mut interp_parts = Vec::new();
+                    for part in &interp.parts {
+                        match part {
+                            StringPart::Literal(s) => {
+                                interp_parts.push(format!("\"{}\"", self.escape_rust_string(s)));
+                            }
+                            StringPart::Variable(var) => {
+                                if var == "@" {
+                                    interp_parts.push("std::env::args().skip(1).collect::<Vec<_>>()".to_string());
+                                } else {
+                                    interp_parts.push(format!("${}", var));
+                                }
+                            }
+                            StringPart::MapAccess(map_name, key) => {
+                                if key == "@" {
+                                    interp_parts.push(format!("{}", map_name));
+                                } else {
+                                    interp_parts.push(format!("{}.get({}).unwrap_or(&String::new())", map_name, key));
+                                }
+                            }
+                            StringPart::MapKeys(map_name) => {
+                                interp_parts.push(format!("{}", map_name));
+                            }
+                            StringPart::MapLength(map_name) => {
+                                interp_parts.push(format!("{}.len()", map_name));
+                            }
+                            StringPart::Arithmetic(expr) => {
+                                interp_parts.push(format!("({})", expr.expression));
+                            }
+                            StringPart::ParameterExpansion(pe) => {
+                                let pe_str = match &pe.operator {
+                                    ParameterExpansionOperator::UppercaseAll => format!("{}.to_uppercase()", pe.variable),
+                                    ParameterExpansionOperator::LowercaseAll => format!("{}.to_lowercase()", pe.variable),
+                                    ParameterExpansionOperator::UppercaseFirst => format!("{}.chars().next().unwrap_or(' ').to_uppercase().collect::<String>() + &{}[1..]", pe.variable, pe.variable),
+                                    _ => format!("${{{}}}", pe.variable),
+                                };
+                                interp_parts.push(pe_str);
+                            }
+                            StringPart::CommandSubstitution(_) => {
+                                interp_parts.push("$(...)".to_string());
+                            }
+                            _ => {
+                                // For any other unhandled cases, convert to string representation
+                                interp_parts.push(format!("\"{:?}\"", part));
+                            }
+                        }
+                    }
+                    // Join the parts and convert to string
+                    if interp_parts.len() == 1 {
+                        output.push_str(&format!("    {}.to_string(),\n", interp_parts[0]));
+                    } else {
+                        output.push_str(&format!("    ({}).to_string(),\n", interp_parts.join(" + ")));
+                    }
+                }
+                _ => {
+                    let arg_str = arg;
+                    let clean_str = if arg_str.starts_with('"') && arg_str.ends_with('"') {
+                        &arg_str[1..arg_str.len()-1]
+                    } else {
+                        &arg_str
+                    };
+                    let escaped = self.escape_rust_string(clean_str);
+                    output.push_str(&format!("    \"{}\",\n", escaped));
+                }
+            }
+        }
+        output.push_str("];\n");
+        output.push_str("println!(\"{}\", __echo_parts.join(\" \"));\n");
     }
 }
 

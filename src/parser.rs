@@ -212,7 +212,28 @@ impl Parser {
         while let Some(token) = self.lexer.peek() {
             match token {
                 Token::Identifier => {
-                    if let Some(Token::Assign) = self.lexer.peek_n(1) {
+                                    if let Some(Token::Assign) = self.lexer.peek_n(1) {
+                    if matches!(self.lexer.peek_n(2), Some(Token::ParenOpen)) {
+                        // Handle array declaration like: arr=(one two three)
+                        let var_name = self.get_identifier_text()?;
+                        self.lexer.next(); // consume =
+                        self.lexer.next(); // consume (
+                        let elements = self.parse_array_elements()?;
+                        let array_word = Word::Array(var_name.clone(), elements);
+                        env_vars.insert(var_name, array_word);
+                        self.skip_whitespace_and_comments();
+                    } else {
+                        // Handle regular assignment like: var=value
+                        let var_name = self.get_identifier_text()?;
+                        self.lexer.next(); // consume =
+                        // Parse the value as a Word (which can be a string, arithmetic expression, etc.)
+                        let value_word = self.parse_environment_variable_value()?;
+                        env_vars.insert(var_name, value_word);
+                        
+                        // Skip whitespace after the environment variable
+                        self.skip_whitespace_and_comments();
+                    }
+                } else if matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) {
                         let var_name = self.get_identifier_text()?;
                         self.lexer.next(); // consume =
                         // Parse the value as a Word (which can be a string, arithmetic expression, etc.)
@@ -1164,6 +1185,40 @@ impl Parser {
                 } else {
                     // Fall back to the old method
                     let var_name = self.parse_braced_variable_name()?;
+                    
+                    // Check if this is array syntax first
+                    if var_name.starts_with('#') && var_name.contains('[') && var_name.contains(']') {
+                        // This is ${#arr[@]} - array length
+                        if let Some(bracket_start) = var_name.find('[') {
+                            if let Some(bracket_end) = var_name.rfind(']') {
+                                let array_name = &var_name[1..bracket_start]; // Remove # prefix
+                                return Ok(Word::MapLength(array_name.to_string()));
+                            }
+                        }
+                    } else if var_name.starts_with('!') && var_name.contains('[') && var_name.contains(']') {
+                        // This is ${!map[@]} - get keys of associative array
+                        if let Some(bracket_start) = var_name.find('[') {
+                            if let Some(bracket_end) = var_name.rfind(']') {
+                                let map_name = &var_name[1..bracket_start]; // Remove ! prefix
+                                return Ok(Word::MapKeys(map_name.to_string()));
+                            }
+                        }
+                    } else if var_name.contains('[') && var_name.contains(']') {
+                        // This is a map/array access like ${map[foo]} or ${arr[1]}
+                        if let Some(bracket_start) = var_name.find('[') {
+                            if let Some(bracket_end) = var_name.rfind(']') {
+                                let map_name = &var_name[..bracket_start];
+                                let key = &var_name[bracket_start + 1..bracket_end];
+                                
+                                // Special case: if key is "@", this is array iteration
+                                if key == "@" {
+                                    return Ok(Word::MapAccess(map_name.to_string(), "@".to_string()));
+                                }
+                                
+                                return Ok(Word::MapAccess(map_name.to_string(), key.to_string()));
+                            }
+                        }
+                    }
                     
                     // Check if this is a parameter expansion with operators
                     // Check longer patterns first to avoid partial matches
@@ -2566,6 +2621,50 @@ impl Parser {
         } else {
             Ok(Word::Literal(String::new()))
         }
+    }
+
+    fn parse_array_elements(&mut self) -> Result<Vec<String>, ParserError> {
+        let mut elements = Vec::new();
+        let mut current_element = String::new();
+        
+        loop {
+            match self.lexer.peek() {
+                Some(Token::ParenClose) => {
+                    if !current_element.is_empty() {
+                        elements.push(current_element.trim().to_string());
+                    }
+                    self.lexer.next(); // consume )
+                    break;
+                }
+                Some(Token::Space) | Some(Token::Tab) | Some(Token::Newline) => {
+                    if !current_element.is_empty() {
+                        elements.push(current_element.trim().to_string());
+                        current_element.clear();
+                    }
+                    self.lexer.next(); // consume whitespace
+                }
+                Some(Token::Identifier) | Some(Token::Number) => {
+                    let text = self.lexer.get_current_text().unwrap_or_default();
+                    current_element.push_str(&text);
+                    self.lexer.next();
+                }
+                Some(Token::DoubleQuotedString) | Some(Token::SingleQuotedString) => {
+                    let text = self.get_string_text()?;
+                    current_element.push_str(&text);
+                }
+                Some(Token::Dollar) => {
+                    let var_expansion = self.parse_variable_expansion()?;
+                    current_element.push_str(&var_expansion.to_string());
+                }
+                _ => {
+                    let text = self.lexer.get_current_text().unwrap_or_default();
+                    current_element.push_str(&text);
+                    self.lexer.next();
+                }
+            }
+        }
+        
+        Ok(elements)
     }
 
     fn update_shopt_state(&mut self, option: &str, enable: bool) {

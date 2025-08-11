@@ -128,7 +128,21 @@ impl PerlGenerator {
         } else if cmd.name == "true" && !cmd.env_vars.is_empty() && cmd.args.is_empty() {
             // Assignment-only shell locals: e.g., a=1
             for (var, value) in &cmd.env_vars {
-                if let Word::Literal(literal) = value {
+                if let Word::Array(_, elements) = value {
+                    // Handle array assignment: arr=(one two three) -> @arr = ("one", "two", "three")
+                    let elements_perl: Vec<String> = elements.iter()
+                        .map(|s| self.perl_string_literal(s))
+                        .collect();
+                    if self.subshell_depth > 0 || !self.declared_locals.contains(var) {
+                        output.push_str(&format!("my @{} = ({});\n", var, elements_perl.join(", ")));
+                    } else {
+                        output.push_str(&format!("@{} = ({});\n", var, elements_perl.join(", ")));
+                    }
+                    if self.subshell_depth == 0 {
+                        self.declared_locals.insert(var.clone());
+                    }
+                    continue; // Skip the regular assignment below
+                } else if let Word::Literal(literal) = value {
                     if literal.starts_with("(") && literal.ends_with(")") {
                         // Handle array assignment: arr=(one two three) -> @arr = ("one", "two", "three")
                         let content = &literal[1..literal.len()-1];
@@ -1782,6 +1796,7 @@ impl PerlGenerator {
             
             // Handle subsequent commands
             for (_i, command) in pipeline.commands.iter().enumerate().skip(1) {
+
                 if let Command::Simple(cmd) = command {
                     if cmd.name == "sort" {
                         // Handle sort command with flags
@@ -2991,6 +3006,14 @@ impl PerlGenerator {
     fn word_to_perl(&self, word: &Word) -> String {
         match word {
             Word::Literal(s) => self.escape_perl_string(s),
+            Word::Array(name, elements) => {
+                // Convert array declaration to Perl array
+                let elements_str = elements.iter()
+                    .map(|e| format!("'{}'", e.replace("'", "\\'")))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("@{} = ({});", name, elements_str)
+            },
             Word::ParameterExpansion(pe) => self.generate_parameter_expansion(pe),
             Word::Variable(var) => {
                 // Handle parameter expansion operators
@@ -3297,6 +3320,14 @@ impl PerlGenerator {
             Word::Literal(s) => {
                 // For test commands, use single quotes to match test expectations
                 format!("'{}'", self.escape_perl_string(s))
+            },
+            Word::Array(name, elements) => {
+                // Convert array declaration to Perl array
+                let elements_str = elements.iter()
+                    .map(|e| format!("'{}'", e.replace("'", "\\'")))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("@{} = ({});", name, elements_str)
             },
             Word::ParameterExpansion(pe) => self.generate_parameter_expansion(pe),
             Word::Variable(var) => {
