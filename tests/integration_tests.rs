@@ -1315,13 +1315,14 @@ fn test_examples_output_equivalence() {
             continue;
         }
         
-        // Run the shell script
-        let mut shell_child = Command::new("sh")
-            .arg(&path)
+        // Run the shell script using WSL bash for proper Unix command compatibility
+        let unix_path = path.to_string_lossy().replace("\\", "/");
+        let mut shell_child = Command::new("wsl")
+            .args(&["bash", &unix_path])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("Failed to spawn shell script");
+            .expect("Failed to spawn wsl bash");
         let start = std::time::Instant::now();
         let shell_output = loop {
             if let Some(_status) = shell_child.try_wait().expect("wait on shell child failed") {
@@ -1686,12 +1687,13 @@ fn test_examples_python_generation() {
 // ============================================================================
 
 fn run_shell_script_capture(path: &std::path::Path) -> std::process::Output {
-    let mut child = Command::new("sh")
-        .arg(path)
+    let unix_path = path.to_string_lossy().replace("\\", "/");
+    let mut child = Command::new("wsl")
+        .args(&["bash", &unix_path])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("Failed to spawn sh");
+        .expect("Failed to spawn wsl bash");
     let start = std::time::Instant::now();
     loop {
         match child.try_wait() {
@@ -1914,12 +1916,13 @@ fn test_examples_python_output_equivalence() {
                 return;
             }
             // Run the shell script
-            let mut shell_child = Command::new("sh")
-                .arg(&path_clone)
+            let unix_path = path_clone.to_string_lossy().replace("\\", "/");
+            let mut shell_child = Command::new("wsl")
+                .args(&["bash", &unix_path])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
-                .expect("Failed to spawn shell script");
+                .expect("Failed to spawn wsl bash");
             let start = std::time::Instant::now();
             let shell_output = loop {
                 if let Some(_status) = shell_child.try_wait().expect("wait on shell failed") {

@@ -71,11 +71,48 @@ impl PythonGenerator {
                     output.push_str("import sys\n");
                     output.push_str("print(' '.join(sys.argv[1:]))\n");
                 } else {
-                    let args = cmd.args.join(" ");
+                    // Convert each argument to a Python string literal first
+                    let mut python_args = Vec::new();
+                    for arg in &cmd.args {
+                        match arg {
+                            Word::Literal(s) => {
+                                // Handle ANSI-C quoting and escape sequences
+                                if s.contains('\\') {
+                                    // Convert escape sequences to Python format
+                                    let converted = self.convert_escape_sequences(s);
+                                    python_args.push(format!("'{}'", converted));
+                                } else {
+                                    python_args.push(format!("'{}'", s));
+                                }
+                            }
+                            Word::Variable(var) => {
+                                if var == "i" { 
+                                    python_args.push("i".to_string());
+                                } else if var == "1" { 
+                                    python_args.push("sys.argv[1] if len(sys.argv) > 1 else ''".to_string());
+                                } else if var == "2" { 
+                                    python_args.push("sys.argv[2] if len(sys.argv) > 2 else ''".to_string());
+                                } else if var == "3" { 
+                                    python_args.push("sys.argv[3] if len(sys.argv) > 3 else ''".to_string());
+                                } else if var == "4" { 
+                                    python_args.push("sys.argv[4] if len(sys.argv) > 4 else ''".to_string());
+                                } else if var == "5" { 
+                                    python_args.push("sys.argv[5] if len(sys.argv) > 5 else ''".to_string());
+                                } else { 
+                                    python_args.push(format!("'${}'", var));
+                                }
+                            }
+                            _ => {
+                                python_args.push(self.word_to_string(arg));
+                            }
+                        }
+                    }
+                    
                     // Check if we need f-string interpolation
-                    if args.contains('$') {
+                    let args_str = python_args.join(" + ");
+                    if args_str.contains('$') {
                         // Convert shell variables to Python f-string variables
-                        let mut converted_args = args.clone();
+                        let mut converted_args = args_str.clone();
                         converted_args = converted_args.replace("$i", "{i}");
                         converted_args = converted_args.replace("$1", "{sys.argv[1] if len(sys.argv) > 1 else ''}");
                         converted_args = converted_args.replace("$2", "{sys.argv[2] if len(sys.argv) > 2 else ''}");
@@ -88,9 +125,8 @@ impl PythonGenerator {
                         
                         output.push_str(&format!("print(f\"{}\")\n", converted_args));
                     } else {
-                        // No variables, use regular print
-                        let escaped_args = self.escape_python_string(&args);
-                        output.push_str(&format!("print({})\n", escaped_args));
+                        // No variables, use regular print with concatenation
+                        output.push_str(&format!("print({})\n", args_str));
                     }
                 }
             }
@@ -573,6 +609,137 @@ impl PythonGenerator {
             // Use double quotes for strings without double quotes
             format!("\"{}\"", s)
         }
+    }
+    
+    fn convert_escape_sequences(&self, s: &str) -> String {
+        // Convert shell escape sequences to Python-compatible format
+        let mut result = String::new();
+        let mut chars = s.chars().peekable();
+        
+        while let Some(ch) = chars.next() {
+            if ch == '\\' {
+                if let Some(next_ch) = chars.next() {
+                    match next_ch {
+                        'a' => result.push('\x07'), // bell
+                        'b' => result.push('\x08'), // backspace
+                        'f' => result.push('\x0c'), // formfeed
+                        'n' => result.push('\n'),   // newline
+                        'r' => result.push('\r'),   // carriage return
+                        't' => result.push('\t'),   // tab
+                        'v' => result.push('\x0b'), // vertical tab
+                        '\\' => result.push('\\'),  // backslash
+                        '\'' => result.push('\''),  // single quote
+                        '"' => result.push('"'),    // double quote
+                        '0'..='7' => {
+                            // Octal escape sequence
+                            let mut octal = String::new();
+                            octal.push(next_ch);
+                            if let Some(&'0'..='7') = chars.peek() {
+                                octal.push(chars.next().unwrap());
+                                if let Some(&'0'..='7') = chars.peek() {
+                                    octal.push(chars.next().unwrap());
+                                }
+                            }
+                            if let Ok(byte) = u8::from_str_radix(&octal, 8) {
+                                result.push(byte as char);
+                            } else {
+                                result.push('\\');
+                                result.push_str(&octal);
+                            }
+                        }
+                        'x' => {
+                            // Hex escape sequence
+                            let mut hex = String::new();
+                            if let Some(&'0'..='9' | 'a'..='f' | 'A'..='F') = chars.peek() {
+                                hex.push(chars.next().unwrap().to_ascii_lowercase());
+                                if let Some(&'0'..='9' | 'a'..='f' | 'A'..='F') = chars.peek() {
+                                    hex.push(chars.next().unwrap().to_ascii_lowercase());
+                                }
+                            }
+                            if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                                result.push(byte as char);
+                            } else {
+                                result.push('\\');
+                                result.push('x');
+                                result.push_str(&hex);
+                            }
+                        }
+                        'u' => {
+                            // Unicode escape sequence (4 hex digits)
+                            let mut hex = String::new();
+                            for _ in 0..4 {
+                                if let Some(&'0'..='9' | 'a'..='f' | 'A'..='F') = chars.peek() {
+                                    hex.push(chars.next().unwrap().to_ascii_lowercase());
+                                } else {
+                                    break;
+                                }
+                            }
+                            if hex.len() == 4 {
+                                if let Ok(codepoint) = u32::from_str_radix(&hex, 16) {
+                                    if let Some(ch) = char::from_u32(codepoint) {
+                                        result.push(ch);
+                                    } else {
+                                        result.push('\\');
+                                        result.push('u');
+                                        result.push_str(&hex);
+                                    }
+                                } else {
+                                    result.push('\\');
+                                    result.push('u');
+                                    result.push_str(&hex);
+                                }
+                            } else {
+                                result.push('\\');
+                                result.push('u');
+                                result.push_str(&hex);
+                            }
+                        }
+                        'U' => {
+                            // Unicode escape sequence (8 hex digits)
+                            let mut hex = String::new();
+                            for _ in 0..8 {
+                                if let Some(&'0'..='9' | 'a'..='f' | 'A'..='F') = chars.peek() {
+                                    hex.push(chars.next().unwrap().to_ascii_lowercase());
+                                } else {
+                                    break;
+                                }
+                            }
+                            if hex.len() == 8 {
+                                if let Ok(codepoint) = u32::from_str_radix(&hex, 16) {
+                                    if let Some(ch) = char::from_u32(codepoint) {
+                                        result.push(ch);
+                                    } else {
+                                        result.push('\\');
+                                        result.push('U');
+                                        result.push_str(&hex);
+                                    }
+                                } else {
+                                    result.push('\\');
+                                    result.push('U');
+                                    result.push_str(&hex);
+                                }
+                            } else {
+                                result.push('\\');
+                                result.push('U');
+                                result.push_str(&hex);
+                            }
+                        }
+                        _ => {
+                            // Unknown escape sequence, keep as-is
+                            result.push('\\');
+                            result.push(next_ch);
+                        }
+                    }
+                } else {
+                    // Backslash at end of string
+                    result.push('\\');
+                }
+            } else {
+                result.push(ch);
+            }
+        }
+        
+        result
     }
     
     fn parse_arithmetic_expansion(&self, s: &str) -> String {

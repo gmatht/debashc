@@ -1764,6 +1764,9 @@ impl PerlGenerator {
                             output.push_str(&format!("        $cat_content_{} .= $line;\n", pipeline_id));
                             output.push_str("    }\n");
                             output.push_str(&format!("    close($fh_{});\n", pipeline_id));
+                            output.push_str("} else {\n");
+                            output.push_str(&format!("    warn \"cat: {}: No such file or directory\";\n", file));
+                            output.push_str(&format!("    exit(1);\n"));
                             output.push_str("}\n");
                             output.push_str(&format!("$output_{} = $cat_content_{};\n", pipeline_id, pipeline_id));
                         }
