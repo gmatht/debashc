@@ -1,6 +1,7 @@
 pub mod lexer;
 pub mod parser;
 pub mod ast;
+pub mod debug;
 pub mod perl_generator;
 pub mod rust_generator;
 pub mod python_generator;

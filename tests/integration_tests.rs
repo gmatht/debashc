@@ -18,6 +18,9 @@ use std::thread;
 use std::sync::mpsc;
 use std::path::PathBuf;
 
+// Use the debug macros from the debug module
+use debashc::debug::debug_println;
+
 fn list_sh_examples() -> Vec<PathBuf> {
     let mut examples: Vec<PathBuf> = Vec::new();
     if let Ok(entries) = fs::read_dir("examples") {
@@ -381,12 +384,12 @@ fn test_ast_variables_no_special_characters() {
     
     for (input, description) in test_cases {
         let input_str = format!("echo ${{{}}}", input);
-        println!("DEBUG: Testing input: '{}'", input_str);
+        debug_println!("DEBUG: Testing input: '{}'", input_str);
         let mut parser = Parser::new(&input_str);
         let parse_result = parser.parse();
         
         if parse_result.is_err() {
-            println!("DEBUG: Parse failed with error: {:?}", parse_result.as_ref().err());
+            debug_println!("DEBUG: Parse failed with error: {:?}", parse_result.as_ref().err());
         }
         
         // The parser should succeed for these valid parameter expansions

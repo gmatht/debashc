@@ -33,6 +33,9 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use std::thread;
 
+// Use the debug module for controlling DEBUG output
+use debashc::{debug_println, debug_eprintln, debug::set_debug_enabled};
+
 #[derive(Debug)]
 struct TestResult {
     success: bool,
@@ -121,34 +124,34 @@ fn main() {
                 ast_options.compact = false;
                 ast_options.indent = true;
                 ast_options.newlines = true;
-                println!("DEBUG: Set --ast-pretty: compact={}, indent={}, newlines={}", 
+                debug_println!("DEBUG: Set --ast-pretty: compact={}, indent={}, newlines={}", 
                         ast_options.compact, ast_options.indent, ast_options.newlines);
             }
             "--ast-compact" => {
                 ast_options.compact = true;
                 ast_options.indent = false;
                 ast_options.newlines = false;
-                println!("DEBUG: Set --ast-compact: compact={}, indent={}, newlines={}", 
+                debug_println!("DEBUG: Set --ast-compact: compact={}, indent={}, newlines={}", 
                         ast_options.compact, ast_options.indent, ast_options.newlines);
             }
             "--ast-indent" => {
                 ast_options.indent = true;
-                println!("DEBUG: Set --ast-indent: compact={}, indent={}, newlines={}", 
+                debug_println!("DEBUG: Set --ast-indent: compact={}, indent={}, newlines={}", 
                         ast_options.compact, ast_options.indent, ast_options.newlines);
             }
             "--ast-no-indent" => {
                 ast_options.indent = false;
-                println!("DEBUG: Set --ast-no-indent: compact={}, indent={}, newlines={}", 
+                debug_println!("DEBUG: Set --ast-no-indent: compact={}, indent={}, newlines={}", 
                         ast_options.compact, ast_options.indent, ast_options.newlines);
             }
             "--ast-newlines" => {
                 ast_options.newlines = true;
-                println!("DEBUG: Set --ast-newlines: compact={}, indent={}, newlines={}", 
+                debug_println!("DEBUG: Set --ast-newlines: compact={}, indent={}, newlines={}", 
                         ast_options.compact, ast_options.indent, ast_options.newlines);
             }
             "--ast-no-newlines" => {
                 ast_options.newlines = false;
-                println!("DEBUG: Set --ast-no-newlines: compact={}, indent={}, newlines={}", 
+                debug_println!("DEBUG: Set --ast-no-newlines: compact={}, indent={}, newlines={}", 
                         ast_options.compact, ast_options.indent, ast_options.newlines);
             }
             _ => {
@@ -159,7 +162,7 @@ fn main() {
         i += 1;
     }
     
-    println!("DEBUG: Final AST options: compact={}, indent={}, newlines={}", 
+    debug_println!("DEBUG: Final AST options: compact={}, indent={}, newlines={}", 
             ast_options.compact, ast_options.indent, ast_options.newlines);
     
     let command = &args[1];
@@ -169,6 +172,9 @@ fn main() {
             test_all_examples();
         }
         "--next-fail" => {
+            // Disable DEBUG output for --next-fail mode
+            set_debug_enabled(false);
+            
             // Parse optional generator list after --next-fail
             let mut generators = Vec::new();
             let mut i = 2;

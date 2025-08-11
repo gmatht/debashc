@@ -2,6 +2,9 @@ use crate::ast::*;
 use std::collections::HashSet;
 // HashMap import removed as it's not used
 
+// Use the debug macros from the root of the crate
+use crate::debug_eprintln;
+
 pub struct PerlGenerator {
     indent_level: usize,
     declared_locals: HashSet<String>,
@@ -9,17 +12,21 @@ pub struct PerlGenerator {
     subshell_depth: usize,
     file_handle_counter: usize,
     pipeline_counter: usize,
+    used_modules: HashSet<String>,
+    needs_file_find: bool,
 }
 
 impl PerlGenerator {
-    pub fn new() -> Self {
-        Self { 
-            indent_level: 0, 
-            declared_locals: HashSet::new(), 
-            declared_functions: HashSet::new(), 
+        pub fn new() -> Self {
+        Self {
+            indent_level: 0,
+            declared_locals: HashSet::new(),
+            declared_functions: HashSet::new(),
             subshell_depth: 0,
             file_handle_counter: 0,
             pipeline_counter: 0,
+            used_modules: HashSet::new(),
+            needs_file_find: false,
         }
     }
 
@@ -34,11 +41,22 @@ impl PerlGenerator {
     }
 
     pub fn generate(&mut self, commands: &[Command]) -> String {
+        // First pass: scan all commands to determine if File::Find is needed
+        self.scan_for_file_find_usage(commands);
+        
         let mut output = String::new();
         output.push_str("#!/usr/bin/env perl\n");
         output.push_str("use strict;\n");
         output.push_str("use warnings;\n");
-        output.push_str("use File::Basename;\n\n");
+        output.push_str("use File::Basename;\n");
+        
+        // Add File::Find if needed
+        debug_eprintln!("DEBUG: needs_file_find = {}", self.needs_file_find);
+        if self.needs_file_find {
+            output.push_str("use File::Find;\n");
+        }
+        
+        output.push_str("\n");
 
         for command in commands {
             output.push_str(&self.generate_command(command));
@@ -48,13 +66,31 @@ impl PerlGenerator {
         output
     }
 
+    fn scan_for_file_find_usage(&mut self, commands: &[Command]) {
+        for command in commands {
+            match command {
+                Command::Pipeline(pipeline) => {
+                    for cmd in &pipeline.commands {
+                        if let Command::Simple(simple_cmd) = cmd {
+                            if simple_cmd.name == "find" {
+                                self.needs_file_find = true;
+                                return; // Early return once we find a find command
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn generate_command(&mut self, command: &Command) -> String {
-        eprintln!("DEBUG: generate_command called with: {:?}", command);
+        debug_eprintln!("DEBUG: generate_command called with: {:?}", command);
         match command {
             Command::Simple(cmd) => self.generate_simple_command(cmd),
             Command::ShoptCommand(cmd) => self.generate_shopt_command(cmd),
             Command::TestExpression(test_expr) => {
-                eprintln!("DEBUG: Routing to generate_test_expression");
+                debug_eprintln!("DEBUG: Routing to generate_test_expression");
                 self.generate_test_expression(test_expr)
             },
             Command::Pipeline(pipeline) => self.generate_pipeline(pipeline),
@@ -1634,8 +1670,64 @@ impl PerlGenerator {
                 }
                 output.push_str("}\n");
             } else {
-                // First command - capture output using system call
-                output.push_str(&format!("$output_{} = `{}`;\n", pipeline_id, self.command_to_string(&pipeline.commands[0])));
+                // First command - check if it's a find command and handle specially
+                if let Command::Simple(cmd) = &pipeline.commands[0] {
+                    if cmd.name == "find" {
+                        // Handle find command with Windows compatibility
+                        let mut find_args = Vec::new();
+                        for arg in &cmd.args {
+                            match arg {
+                                Word::Literal(s) => {
+                                    if s == "." {
+                                        find_args.push(".".to_string());
+                                    } else if s == "-name" {
+                                        find_args.push("-name".to_string());
+                                    } else {
+                                        // Convert glob pattern to regex for find
+                                        let pattern = self.convert_glob_to_regex(s);
+                                        find_args.push(pattern);
+                                    }
+                                }
+                                Word::StringInterpolation(interp) => {
+                                    if interp.parts.len() == 1 {
+                                        if let StringPart::Literal(s) = &interp.parts[0] {
+                                            // Convert glob pattern to regex for find
+                                            let pattern = self.convert_glob_to_regex(s);
+                                            find_args.push(pattern);
+                                        } else {
+                                            find_args.push(self.convert_string_interpolation_to_perl(interp));
+                                        }
+                                    } else {
+                                        find_args.push(self.convert_string_interpolation_to_perl(interp));
+                                    }
+                                }
+                                _ => find_args.push(self.word_to_perl(arg))
+                            }
+                        }
+                        
+                        // Use Perl's File::Find instead of system find for cross-platform compatibility
+                        if find_args.len() >= 3 && find_args[1] == "-name" {
+                            let pattern = &find_args[2];
+                            let dir = &find_args[0];
+                            self.needs_file_find = true;
+                            output.push_str(&format!("my @find_files_{};\n", pipeline_id));
+                            // The pattern is already a regex from convert_glob_to_regex, no need to escape again
+                            output.push_str(&format!("find({{wanted => sub {{ if ($_ =~ /{}/) {{ push @find_files_{}, $File::Find::name; }} }}, no_chdir => 1}}, '{}');\n", pattern, pipeline_id, dir));
+                            output.push_str(&format!("$output_{} = join(\"\\n\", @find_files_{});\n", pipeline_id, pipeline_id));
+                        } else {
+                            // Fallback to system find command
+                            let cmd_str = self.command_to_string(&pipeline.commands[0]);
+                            let escaped_cmd = cmd_str.replace("'", "'\"'\"'");
+                            output.push_str(&format!("$output_{} = `{}`;\n", pipeline_id, escaped_cmd));
+                        }
+                    } else {
+                        // First command - capture output using system call
+                        output.push_str(&format!("$output_{} = `{}`;\n", pipeline_id, self.command_to_string(&pipeline.commands[0])));
+                    }
+                } else {
+                    // First command - capture output using system call
+                    output.push_str(&format!("$output_{} = `{}`;\n", pipeline_id, self.command_to_string(&pipeline.commands[0])));
+                }
             }
             
             // Handle subsequent commands
@@ -1683,7 +1775,11 @@ impl PerlGenerator {
                             output.push_str("}\n");
                             output.push_str(&format!("my @uniq_result_{};\n", pipeline_id));
                             output.push_str(&format!("for my $key (keys %count_{}) {{\n", pipeline_id));
-                            output.push_str(&format!("    push @uniq_result_{}, \"$count_{}{{$key} $key}\";\n", pipeline_id, pipeline_id));
+                            output.push_str(&format!("    my $count_val = $count_{}{{", pipeline_id));
+                            output.push_str("$key");
+                            output.push_str("};\n");
+                            output.push_str(&format!("    my $count_str = \"$count_val $key\";\n"));
+                            output.push_str(&format!("    push @uniq_result_{}, $count_str;\n", pipeline_id));
                             output.push_str("}\n");
                             output.push_str(&format!("$output_{} = join(\"\\n\", @uniq_result_{});\n", pipeline_id, pipeline_id));
                         } else {
@@ -1727,7 +1823,63 @@ impl PerlGenerator {
                     } else if cmd.name == "grep" {
                         // Handle grep command
                         let pattern = if let Some(arg) = cmd.args.first() {
-                            self.word_to_perl(arg)
+                            // Convert grep pattern to proper Perl regex
+                            match arg {
+                                Word::Literal(s) => {
+                                                                            // Check if the pattern is already a regex pattern (contains regex metacharacters)
+                                        // Also check for escaped backslashes (\\), which indicate regex patterns
+                                        if s.contains('\\') || s.contains('^') || s.contains('$') || s.contains('[') || s.contains(']') || s.contains('(') || s.contains(')') || s.contains('|') || s.contains('+') || s.contains('*') || s.contains('?') {
+                                            // Pattern is already a regex, but may need conversion from shell escape to Perl escape
+                                            if s.contains('\\') {
+                                                // Convert shell backslash escapes to Perl regex escapes
+                                                s.replace("\\\\", "\\").replace("\\", "")
+                                            } else {
+                                                // Pattern is already a valid Perl regex
+                                                s.clone()
+                                            }
+                                        } else {
+                                            // Convert shell glob pattern to Perl regex
+                                            self.convert_glob_to_regex(s)
+                                        }
+                                }
+                                Word::StringInterpolation(interp) => {
+                                    // Handle string interpolation in grep patterns
+                                    if interp.parts.len() == 1 {
+                                        if let StringPart::Literal(s) = &interp.parts[0] {
+                                                                                    // Check if the pattern is already a regex pattern
+                                        // Also check for escaped backslashes (\\), which indicate regex patterns
+                                        if s.contains('\\') || s.contains('^') || s.contains('$') || s.contains('[') || s.contains(']') || s.contains('(') || s.contains(')') || s.contains('|') || s.contains('+') || s.contains('*') || s.contains('?') {
+                                            // Pattern is already a regex, but may need conversion from shell escape to Perl escape
+                                            if s.contains('\\') {
+                                                // Convert shell backslash escapes to Perl regex escapes
+                                                s.replace("\\\\", "\\").replace("\\", "")
+                                            } else {
+                                                // Pattern is already a valid Perl regex
+                                                s.clone()
+                                            }
+                                        } else {
+                                            // Convert shell glob pattern to Perl regex
+                                            self.convert_glob_to_regex(s)
+                                        }
+                                        } else {
+                                            // For other parts, use the converted string
+                                            self.convert_string_interpolation_to_perl(interp)
+                                        }
+                                    } else {
+                                        // For complex interpolations, reconstruct the full pattern and check if it's regex
+                                        let full_pattern = self.convert_string_interpolation_to_perl(interp);
+                                        // Check if the reconstructed pattern contains regex metacharacters
+                                        if full_pattern.contains('\\') || full_pattern.contains('^') || full_pattern.contains('$') || full_pattern.contains('[') || full_pattern.contains(']') || full_pattern.contains('(') || full_pattern.contains(')') || full_pattern.contains('|') || full_pattern.contains('+') || full_pattern.contains('*') || full_pattern.contains('?') {
+                                            // Pattern is already a regex, use as-is
+                                            full_pattern
+                                        } else {
+                                            // Convert shell glob pattern to Perl regex
+                                            self.convert_glob_to_regex(&full_pattern)
+                                        }
+                                    }
+                                }
+                                _ => self.word_to_perl(arg)
+                            }
                         } else {
                             "".to_string()
                         };
@@ -1738,6 +1890,111 @@ impl PerlGenerator {
                         output.push_str("    }\n");
                         output.push_str("}\n");
                         output.push_str(&format!("$output_{} = join(\"\\n\", @grep_lines_{});\n", pipeline_id, pipeline_id));
+                    } else if cmd.name == "xargs" {
+                        // Handle xargs command with cross-platform compatibility
+                        if let Some(grep_cmd) = cmd.args.first() {
+                            if grep_cmd.to_string() == "grep" {
+                                // Handle xargs grep -l pattern
+                                let pattern = if cmd.args.len() > 2 {
+                                    match &cmd.args[2] {
+                                        Word::Literal(s) => s.clone(),
+                                        Word::StringInterpolation(interp) => {
+                                            if interp.parts.len() == 1 {
+                                                if let StringPart::Literal(s) = &interp.parts[0] {
+                                                    s.clone()
+                                                } else {
+                                                    self.word_to_perl(&cmd.args[2])
+                                                }
+                                            } else {
+                                                self.word_to_perl(&cmd.args[2])
+                                            }
+                                        }
+                                        _ => self.word_to_perl(&cmd.args[2])
+                                    }
+                                } else {
+                                    "".to_string()
+                                };
+                                
+                                output.push_str(&format!("my @xargs_files_{};\n", pipeline_id));
+                                output.push_str(&format!("for my $file (split(/\\n/, $output_{})) {{\n", pipeline_id));
+                                output.push_str(&format!("    if ($file ne '') {{\n"));
+                                output.push_str(&format!("        # Use Perl's built-in file reading instead of system grep for cross-platform compatibility\n"));
+                                output.push_str(&format!("        my $found = 0;\n"));
+                                output.push_str(&format!("        if (open(my $fh, '<', $file)) {{\n"));
+                                output.push_str(&format!("            while (my $line = <$fh>) {{\n"));
+                                output.push_str(&format!("                if ($line =~ /{}/) {{\n", pattern));
+                                output.push_str(&format!("                    $found = 1;\n"));
+                                output.push_str(&format!("                    last;\n"));
+                                output.push_str(&format!("                }}\n"));
+                                output.push_str(&format!("            }}\n"));
+                                output.push_str(&format!("            close($fh);\n"));
+                                output.push_str(&format!("        }}\n"));
+                                output.push_str(&format!("        if ($found) {{\n"));
+                                output.push_str(&format!("            push @xargs_files_{}, $file;\n", pipeline_id));
+                                output.push_str(&format!("        }}\n"));
+                                output.push_str(&format!("    }}\n"));
+                                output.push_str(&format!("}}\n"));
+                                output.push_str(&format!("$output_{} = join(\"\\n\", @xargs_files_{});\n", pipeline_id, pipeline_id));
+                            } else {
+                                // Generic xargs handling - fallback to system command
+                                let cmd_str = self.command_to_string(command);
+                                let escaped_cmd = cmd_str.replace("'", "'\"'\"'");
+                                output.push_str(&format!("$output_{} = `echo \"$output_{}\" | {}`;\n", pipeline_id, pipeline_id, escaped_cmd));
+                            }
+                        } else {
+                            // No arguments to xargs - fallback to system command
+                            let cmd_str = self.command_to_string(command);
+                            let escaped_cmd = cmd_str.replace("'", "'\"'\"'");
+                            output.push_str(&format!("$output_{} = `echo \"$output_{}\" | {}`;\n", pipeline_id, pipeline_id, escaped_cmd));
+                        }
+                    } else if cmd.name == "find" {
+                        // Handle find command with Windows compatibility
+                        let mut find_args = Vec::new();
+                        for arg in &cmd.args {
+                            match arg {
+                                Word::Literal(s) => {
+                                    if s == "." {
+                                        find_args.push(".".to_string());
+                                    } else if s == "-name" {
+                                        find_args.push("-name".to_string());
+                                    } else {
+                                        // Convert glob pattern to regex for find
+                                        let pattern = self.convert_glob_to_regex(s);
+                                        find_args.push(pattern);
+                                    }
+                                }
+                                Word::StringInterpolation(interp) => {
+                                    if interp.parts.len() == 1 {
+                                        if let StringPart::Literal(s) = &interp.parts[0] {
+                                            // Convert glob pattern to regex for find
+                                            let pattern = self.convert_glob_to_regex(s);
+                                            find_args.push(pattern);
+                                        } else {
+                                            find_args.push(self.convert_string_interpolation_to_perl(interp));
+                                        }
+                                    } else {
+                                        find_args.push(self.convert_string_interpolation_to_perl(interp));
+                                    }
+                                }
+                                _ => find_args.push(self.word_to_perl(arg))
+                            }
+                        }
+                        
+                        // Use Perl's File::Find instead of system find for cross-platform compatibility
+                        if find_args.len() >= 3 && find_args[1] == "-name" {
+                            let pattern = &find_args[2];
+                            let dir = &find_args[0];
+                            self.needs_file_find = true;
+                            output.push_str(&format!("my @find_files_{};\n", pipeline_id));
+                            // The pattern is already a regex from convert_glob_to_regex, no need to escape again
+                            output.push_str(&format!("find({{wanted => sub {{ if ($_ =~ /{}/) {{ push @find_files_{}, $File::Find::name; }} }}, no_chdir => 1}}, '{}');\n", pattern, pipeline_id, dir));
+                            output.push_str(&format!("$output_{} = join(\"\\n\", @find_files_{});\n", pipeline_id, pipeline_id));
+                        } else {
+                            // Fallback to system find command
+                            let cmd_str = self.command_to_string(command);
+                            let escaped_cmd = cmd_str.replace("'", "'\"'\"'");
+                            output.push_str(&format!("$output_{} = `echo \"$output_{}\" | {}`;\n", pipeline_id, pipeline_id, escaped_cmd));
+                        }
                     } else {
                         // Other commands - pipe through
                         let cmd_str = self.command_to_string(command);
@@ -2545,26 +2802,26 @@ impl PerlGenerator {
                 }
                 StringPart::MapAccess(map_name, key) => {
                     // Convert map access to Perl array/hash access
-                    eprintln!("DEBUG: Processing MapAccess: map_name='{}', key='{}'", map_name, key);
+                    debug_eprintln!("DEBUG: Processing MapAccess: map_name='{}', key='{}'", map_name, key);
                     // For now, assume "map" is a hash and others are indexed arrays
                     if map_name == "map" {
                         // Convert map[key] to $map{key} for associative arrays
-                        eprintln!("DEBUG: Converting map access to hash access: $map{{{}}}", key);
+                        debug_eprintln!("DEBUG: Converting map access to hash access: $map{{{}}}", key);
                         result.push_str(&format!("${}{{{}}}", map_name, key));
                     } else {
                         // Convert arr[key] to $arr[key] for indexed arrays
-                        eprintln!("DEBUG: Converting array access to indexed access: ${}[{}]", map_name, key);
+                        debug_eprintln!("DEBUG: Converting array access to indexed access: ${}[{}]", map_name, key);
                         result.push_str(&format!("${}[{}]", map_name, key));
                     }
                 }
                 StringPart::MapKeys(map_name) => {
                     // Convert ${!map[@]} to keys(%map) in Perl
-                    eprintln!("DEBUG: Processing MapKeys: map_name='{}'", map_name);
+                    debug_eprintln!("DEBUG: Processing MapKeys: map_name='{}'", map_name);
                     result.push_str(&format!("keys(%{})", map_name));
                 }
                 StringPart::MapLength(map_name) => {
                     // Convert ${#arr[@]} to scalar(@arr) in Perl
-                    eprintln!("DEBUG: Processing MapLength: map_name='{}'", map_name);
+                    debug_eprintln!("DEBUG: Processing MapLength: map_name='{}'", map_name);
                     result.push_str(&format!("scalar(@{})", map_name));
                 }
                 StringPart::ParameterExpansion(pe) => {
@@ -2572,12 +2829,12 @@ impl PerlGenerator {
                 }
                 StringPart::Variable(var) => {
                     // Convert shell variables to Perl variables
-                    eprintln!("DEBUG: Processing variable: '{}'", var);
-                    eprintln!("DEBUG: Variable starts with '!': {}", var.starts_with('!'));
-                    eprintln!("DEBUG: Variable ends with '[@]': {}", var.ends_with("[@]"));
-                    eprintln!("DEBUG: Variable contains '[': {}", var.contains('['));
-                    eprintln!("DEBUG: Variable length: {}", var.len());
-                    eprintln!("DEBUG: Variable bytes: {:?}", var.as_bytes());
+                            debug_eprintln!("DEBUG: Processing variable: '{}'", var);
+        debug_eprintln!("DEBUG: Variable starts with '!': {}", var.starts_with('!'));
+        debug_eprintln!("DEBUG: Variable ends with '[@]': {}", var.ends_with("[@]"));
+        debug_eprintln!("DEBUG: Variable contains '[': {}", var.contains('['));
+        debug_eprintln!("DEBUG: Variable length: {}", var.len());
+        debug_eprintln!("DEBUG: Variable bytes: {:?}", var.as_bytes());
                     if var == "#" {
                         result.push_str("scalar(@ARGV)");
                     } else if var == "@" {
@@ -2613,35 +2870,35 @@ impl PerlGenerator {
                             result.push_str(&format!("scalar(@{})", array_name));
                         } else if var.starts_with('!') && var.ends_with("[@]") {
                             // This is !map[@] - convert to keys(%map) in Perl
-                            eprintln!("DEBUG: Found !map[@] pattern, converting to keys(%map)");
+                            debug_eprintln!("DEBUG: Found !map[@] pattern, converting to keys(%map)");
                             let array_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
-                            eprintln!("DEBUG: Array name extracted: '{}'", array_name);
+                            debug_eprintln!("DEBUG: Array name extracted: '{}'", array_name);
                             result.push_str(&format!("keys(%{})", array_name));
                         } else if var.starts_with('!') && var.contains('[') {
                             // This is !map[key] - convert to keys(%map) in Perl (more general pattern)
-                            eprintln!("DEBUG: Found !map[key] pattern, converting to keys(%map)");
+                            debug_eprintln!("DEBUG: Found !map[key] pattern, converting to keys(%map)");
                             if let Some(bracket_start) = var.find('[') {
                                 let array_name = &var[1..bracket_start]; // Remove ! prefix
-                                eprintln!("DEBUG: Array name extracted from !map[key]: '{}'", array_name);
+                                debug_eprintln!("DEBUG: Array name extracted from !map[key]: '{}'", array_name);
                                 result.push_str(&format!("keys(%{})", array_name));
                             } else {
                                 result.push_str(&format!("${}", var));
                             }
                         } else if var.starts_with('!') {
                             // This is !map - convert to keys(%map) in Perl (fallback)
-                            eprintln!("DEBUG: Found !map pattern (fallback), converting to keys(%map)");
+                            debug_eprintln!("DEBUG: Found !map pattern (fallback), converting to keys(%map)");
                             let array_name = &var[1..]; // Remove ! prefix
-                            eprintln!("DEBUG: Array name extracted from !map: '{}'", array_name);
+                            debug_eprintln!("DEBUG: Array name extracted from !map: '{}'", array_name);
                             result.push_str(&format!("keys(%{})", array_name));
                         } else if var.ends_with("[@]") {
                             // This is arr[@] - convert to @arr in Perl
-                            eprintln!("DEBUG: Found arr[@] pattern, converting to @arr");
+                            debug_eprintln!("DEBUG: Found arr[@] pattern, converting to @arr");
                             let array_name = &var[..var.len()-3]; // Remove [@] suffix
-                            eprintln!("DEBUG: Array name extracted from arr[@]: '{}'", array_name);
+                            debug_eprintln!("DEBUG: Array name extracted from arr[@]: '{}'", array_name);
                             result.push_str(&format!("@{}", array_name));
                         } else if var.contains('[') && var.ends_with(']') {
                             // This is arr[1] - convert to $arr[1] in Perl or $arr{key} for hashes
-                            eprintln!("DEBUG: Found arr[1] pattern, converting to array access");
+                            debug_eprintln!("DEBUG: Found arr[1] pattern, converting to array access");
                             if let Some(bracket_start) = var.find('[') {
                                 let array_name = &var[..bracket_start];
                                 let key = &var[bracket_start..];
@@ -2649,11 +2906,11 @@ impl PerlGenerator {
                                 if array_name == "map" {
                                     // Convert map[key] to $map{key} for associative arrays
                                     let key_content = &key[1..key.len()-1]; // Remove [ and ]
-                                    eprintln!("DEBUG: Converting map[key] to $map{{{}}}", key_content);
+                                    debug_eprintln!("DEBUG: Converting map[key] to $map{{{}}}", key_content);
                                     result.push_str(&format!("${}{{{}}}", array_name, key_content));
                                 } else {
                                     // Regular indexed array - use [] syntax in Perl
-                                    eprintln!("DEBUG: Converting arr[key] to ${}[{}]", array_name, key);
+                                    debug_eprintln!("DEBUG: Converting arr[key] to ${}[{}]", array_name, key);
                                     result.push_str(&format!("${}[{}]", array_name, key));
                                 }
                             } else {
@@ -2661,7 +2918,7 @@ impl PerlGenerator {
                             }
                         } else {
                             // For simple variable names, use $var instead of ${var}
-                            eprintln!("DEBUG: Simple variable, using ${}", var);
+                            debug_eprintln!("DEBUG: Simple variable, using ${}", var);
                             result.push_str(&format!("${}", var));
                         }
                     }
