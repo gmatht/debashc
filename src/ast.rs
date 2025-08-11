@@ -102,11 +102,64 @@ pub enum RedirectOperator {
     HereString, // <<<
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParameterExpansion {
+    pub variable: String,
+    pub operator: ParameterExpansionOperator,
+}
+
+impl std::fmt::Display for ParameterExpansion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.operator {
+            ParameterExpansionOperator::UppercaseAll => write!(f, "${{{0}^^}}", self.variable),
+            ParameterExpansionOperator::LowercaseAll => write!(f, "${{{0},,}}", self.variable),
+            ParameterExpansionOperator::UppercaseFirst => write!(f, "${{{0}^}}", self.variable),
+            ParameterExpansionOperator::RemoveLongestPrefix(pattern) => write!(f, "${{{0}##{1}}}", self.variable, pattern),
+            ParameterExpansionOperator::RemoveShortestPrefix(pattern) => write!(f, "${{{0}#{1}}}", self.variable, pattern),
+            ParameterExpansionOperator::RemoveLongestSuffix(pattern) => write!(f, "${{{0}%%{1}}}", self.variable, pattern),
+            ParameterExpansionOperator::RemoveShortestSuffix(pattern) => write!(f, "${{{0}%{1}}}", self.variable, pattern),
+            ParameterExpansionOperator::SubstituteAll(pattern, replacement) => write!(f, "${{{0}//{1}/{2}}}", self.variable, pattern, replacement),
+            ParameterExpansionOperator::DefaultValue(default) => write!(f, "${{{0}:-{1}}}", self.variable, default),
+            ParameterExpansionOperator::AssignDefault(default) => write!(f, "${{{0}:={1}}}", self.variable, default),
+            ParameterExpansionOperator::ErrorIfUnset(error) => write!(f, "${{{0}:?{1}}}", self.variable, error),
+            ParameterExpansionOperator::Basename => write!(f, "${{{0}##*/}}", self.variable),
+            ParameterExpansionOperator::Dirname => write!(f, "${{{0}%/*}}", self.variable),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParameterExpansionOperator {
+    // Case modification
+    UppercaseAll,      // ^^
+    LowercaseAll,      // ,,
+    UppercaseFirst,    // ^
+    
+    // Substring removal
+    RemoveLongestPrefix(String),  // ##pattern
+    RemoveShortestPrefix(String), // #pattern
+    RemoveLongestSuffix(String),  // %%pattern
+    RemoveShortestSuffix(String), // %pattern
+    
+    // Pattern substitution
+    SubstituteAll(String, String), // //pattern/replacement
+    
+    // Default values
+    DefaultValue(String),          // :-default
+    AssignDefault(String),         // :=default
+    ErrorIfUnset(String),         // :?error
+    
+    // Path manipulation
+    Basename,                      // ##*/
+    Dirname,                       // %/*
+}
+
 // New AST nodes for expressions
 #[derive(Debug, Clone, PartialEq)]
 pub enum Word {
     Literal(String),
     Variable(String),
+    ParameterExpansion(ParameterExpansion),
     MapAccess(String, String), // map_name, key
     MapKeys(String), // !map[@] -> get keys of associative array
     MapLength(String), // #arr[@] -> get length of array
@@ -128,6 +181,23 @@ impl Word {
         match self {
             Word::Literal(s) => s.clone(),
             Word::Variable(var) => format!("${}", var),
+            Word::ParameterExpansion(pe) => {
+                match &pe.operator {
+                    ParameterExpansionOperator::UppercaseAll => format!("${{{}}}", pe.variable),
+                    ParameterExpansionOperator::LowercaseAll => format!("${{{}}}", pe.variable),
+                    ParameterExpansionOperator::UppercaseFirst => format!("${{{}}}", pe.variable),
+                    ParameterExpansionOperator::RemoveLongestPrefix(pattern) => format!("${{{}}}##{}", pe.variable, pattern),
+                    ParameterExpansionOperator::RemoveShortestPrefix(pattern) => format!("${{{}}}#{}", pe.variable, pattern),
+                    ParameterExpansionOperator::RemoveLongestSuffix(pattern) => format!("${{{}}}%%{}", pe.variable, pattern),
+                    ParameterExpansionOperator::RemoveShortestSuffix(pattern) => format!("${{{}}}%{}", pe.variable, pattern),
+                    ParameterExpansionOperator::SubstituteAll(pattern, replacement) => format!("${{{}}}//{}/{}", pe.variable, pattern, replacement),
+                    ParameterExpansionOperator::DefaultValue(default) => format!("${{{}}}:-{}", pe.variable, default),
+                    ParameterExpansionOperator::AssignDefault(default) => format!("${{{}}}:={}", pe.variable, default),
+                    ParameterExpansionOperator::ErrorIfUnset(error) => format!("${{{}}}:?{}", pe.variable, error),
+                    ParameterExpansionOperator::Basename => format!("${{{}}}##*/", pe.variable),
+                    ParameterExpansionOperator::Dirname => format!("${{{}}}%/*", pe.variable),
+                }
+            },
             Word::MapAccess(map_name, key) => format!("{}[{}]", map_name, key),
             Word::MapKeys(map_name) => format!("!{}[@]", map_name),
             Word::MapLength(map_name) => format!("#{}[@]", map_name),
@@ -169,6 +239,23 @@ impl Word {
                     match part {
                         StringPart::Literal(s) => result.push_str(s),
                         StringPart::Variable(var) => result.push_str(&format!("${}", var)),
+                        StringPart::ParameterExpansion(pe) => {
+                            match &pe.operator {
+                                ParameterExpansionOperator::UppercaseAll => result.push_str(&format!("${{{}}}", pe.variable)),
+                                ParameterExpansionOperator::LowercaseAll => result.push_str(&format!("${{{}}}", pe.variable)),
+                                ParameterExpansionOperator::UppercaseFirst => result.push_str(&format!("${{{}}}", pe.variable)),
+                                ParameterExpansionOperator::RemoveLongestPrefix(pattern) => result.push_str(&format!("${{{}}}##{}", pe.variable, pattern)),
+                                ParameterExpansionOperator::RemoveShortestPrefix(pattern) => result.push_str(&format!("${{{}}}#{}", pe.variable, pattern)),
+                                ParameterExpansionOperator::RemoveLongestSuffix(pattern) => result.push_str(&format!("${{{}}}%%{}", pe.variable, pattern)),
+                                ParameterExpansionOperator::RemoveShortestSuffix(pattern) => result.push_str(&format!("${{{}}}%{}", pe.variable, pattern)),
+                                ParameterExpansionOperator::SubstituteAll(pattern, replacement) => result.push_str(&format!("${{{}}}//{}/{}", pe.variable, pattern, replacement)),
+                                ParameterExpansionOperator::DefaultValue(default) => result.push_str(&format!("${{{}}}:-{}", pe.variable, default)),
+                                ParameterExpansionOperator::AssignDefault(default) => result.push_str(&format!("${{{}}}:={}", pe.variable, default)),
+                                ParameterExpansionOperator::ErrorIfUnset(error) => result.push_str(&format!("${{{}}}:?{}", pe.variable, error)),
+                                ParameterExpansionOperator::Basename => result.push_str(&format!("${{{}}}##*/", pe.variable)),
+                                ParameterExpansionOperator::Dirname => result.push_str(&format!("${{{}}}%/*", pe.variable)),
+                            }
+                        },
                         StringPart::MapAccess(map_name, key) => result.push_str(&format!("${{{}}}[{}]", map_name, key)),
                         StringPart::MapKeys(map_name) => result.push_str(&format!("${{!{}}}[@]", map_name)),
                         StringPart::MapLength(map_name) => result.push_str(&format!("${{#{}}}[@]", map_name)),
@@ -198,6 +285,7 @@ impl Word {
     pub fn as_variable(&self) -> Option<&str> {
         match self {
             Word::Variable(var) => Some(var),
+            Word::ParameterExpansion(pe) => Some(&pe.variable),
             Word::MapAccess(map_name, _) => Some(map_name),
             Word::MapKeys(map_name) => Some(map_name),
             Word::MapLength(map_name) => Some(map_name),
@@ -210,6 +298,22 @@ impl Word {
         match self {
             Word::Literal(s) => s.contains(ch),
             Word::Variable(var) => var.contains(ch),
+            Word::ParameterExpansion(pe) => {
+                if pe.variable.contains(ch) {
+                    return true;
+                }
+                match &pe.operator {
+                    ParameterExpansionOperator::RemoveLongestPrefix(pattern) => pattern.contains(ch),
+                    ParameterExpansionOperator::RemoveShortestPrefix(pattern) => pattern.contains(ch),
+                    ParameterExpansionOperator::RemoveLongestSuffix(pattern) => pattern.contains(ch),
+                    ParameterExpansionOperator::RemoveShortestSuffix(pattern) => pattern.contains(ch),
+                    ParameterExpansionOperator::SubstituteAll(pattern, replacement) => pattern.contains(ch) || replacement.contains(ch),
+                    ParameterExpansionOperator::DefaultValue(default) => default.contains(ch),
+                    ParameterExpansionOperator::AssignDefault(default) => default.contains(ch),
+                    ParameterExpansionOperator::ErrorIfUnset(error) => error.contains(ch),
+                    _ => false,
+                }
+            },
             Word::MapAccess(map_name, key) => map_name.contains(ch) || key.contains(ch),
             Word::MapKeys(map_name) => map_name.contains(ch),
             Word::MapLength(map_name) => map_name.contains(ch),
@@ -245,6 +349,22 @@ impl Word {
                     match part {
                         StringPart::Literal(s) => { if s.contains(ch) { return true; } }
                         StringPart::Variable(var) => { if var.contains(ch) { return true; } }
+                        StringPart::ParameterExpansion(pe) => {
+                            if pe.variable.contains(ch) {
+                                return true;
+                            }
+                            match &pe.operator {
+                                ParameterExpansionOperator::RemoveLongestPrefix(pattern) => if pattern.contains(ch) { return true; },
+                                ParameterExpansionOperator::RemoveShortestPrefix(pattern) => if pattern.contains(ch) { return true; },
+                                ParameterExpansionOperator::RemoveLongestSuffix(pattern) => if pattern.contains(ch) { return true; },
+                                ParameterExpansionOperator::RemoveShortestSuffix(pattern) => if pattern.contains(ch) { return true; },
+                                ParameterExpansionOperator::SubstituteAll(pattern, replacement) => if pattern.contains(ch) || replacement.contains(ch) { return true; },
+                                ParameterExpansionOperator::DefaultValue(default) => if default.contains(ch) { return true; },
+                                ParameterExpansionOperator::AssignDefault(default) => if default.contains(ch) { return true; },
+                                ParameterExpansionOperator::ErrorIfUnset(error) => if error.contains(ch) { return true; },
+                                _ => {},
+                            }
+                        }
                         StringPart::MapAccess(map_name, key) => { if map_name.contains(ch) || key.contains(ch) { return true; } }
                         StringPart::MapKeys(map_name) => { if map_name.contains(ch) { return true; } }
                         StringPart::MapLength(map_name) => { if map_name.contains(ch) { return true; } }
@@ -262,6 +382,7 @@ impl Word {
         match self {
             Word::Literal(s) => s.splitn(n, pat).map(|s| s.to_string()).collect(),
             Word::Variable(var) => var.splitn(n, pat).map(|s| s.to_string()).collect(),
+            Word::ParameterExpansion(pe) => pe.variable.splitn(n, pat).map(|s| s.to_string()).collect(),
             Word::MapAccess(map_name, key) => {
                 let mut result = map_name.splitn(n, pat).map(|s| s.to_string()).collect::<Vec<_>>();
                 if result.len() < n {
@@ -281,6 +402,7 @@ impl Word {
         match self {
             Word::Literal(s) => s.strip_prefix(prefix).map(|s| s.to_string()),
             Word::Variable(var) => var.strip_prefix(prefix).map(|s| s.to_string()),
+            Word::ParameterExpansion(pe) => pe.variable.strip_prefix(prefix).map(|s| s.to_string()),
             Word::MapAccess(map_name, key) => {
                 if let Some(stripped) = map_name.strip_prefix(prefix) {
                     Some(format!("{}[{}]", stripped, key))
@@ -300,6 +422,7 @@ impl Word {
         match self {
             Word::Literal(s) => s.strip_prefix(prefix).map(|s| s.to_string()),
             Word::Variable(var) => var.strip_prefix(prefix).map(|s| s.to_string()),
+            Word::ParameterExpansion(pe) => pe.variable.strip_prefix(prefix).map(|s| s.to_string()),
             Word::MapAccess(map_name, key) => {
                 if let Some(stripped) = map_name.strip_prefix(prefix) {
                     Some(format!("{}[{}]", stripped, key))
@@ -319,6 +442,7 @@ impl Word {
         match self {
             Word::Literal(s) => s.replace(from, to),
             Word::Variable(var) => var.replace(from, to),
+            Word::ParameterExpansion(pe) => pe.variable.replace(from, to),
             Word::MapAccess(map_name, key) => {
                 let new_map_name = map_name.replace(from, to);
                 let new_key = key.replace(from, to);
@@ -336,6 +460,7 @@ impl Word {
         match self {
             Word::Literal(s) => s.replace(from, to),
             Word::Variable(var) => var.replace(from, to),
+            Word::ParameterExpansion(pe) => pe.variable.replace(from, to),
             Word::MapAccess(map_name, key) => {
                 let new_map_name = map_name.replace(from, to);
                 let new_key = key.replace(from, to);
@@ -365,6 +490,7 @@ impl PartialEq<str> for Word {
         match self {
             Word::Literal(s) => s == other,
             Word::Variable(var) => var == other,
+            Word::ParameterExpansion(pe) => pe.variable == other,
             Word::MapKeys(map_name) => map_name == other,
             Word::MapLength(map_name) => map_name == other,
             Word::Arithmetic(expr) => expr.expression == other,
@@ -447,6 +573,7 @@ pub struct StringInterpolation {
 pub enum StringPart {
     Literal(String),
     Variable(String),
+    ParameterExpansion(ParameterExpansion),
     MapAccess(String, String), // map_name, key
     MapKeys(String), // !map[@] -> get keys of associative array
     MapLength(String), // #arr[@] -> get length of array

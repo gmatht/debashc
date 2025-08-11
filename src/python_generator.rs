@@ -621,6 +621,7 @@ impl PythonGenerator {
             Word::MapLength(_map_name) => "len(map)".to_string(), // TODO: implement map length
             Word::CommandSubstitution(_) => "''".to_string(), // TODO: implement command substitution
             Word::StringInterpolation(_) => "''".to_string(), // TODO: implement string interpolation
+            Word::ParameterExpansion(_) => "''".to_string(), // TODO: implement parameter expansion
         }
     }
     

@@ -149,49 +149,8 @@ impl Parser {
     }
 
     fn parse_pipeline(&mut self) -> Result<Command, ParserError> {
-        let mut commands = Vec::new();
-        let mut operators = Vec::new();
-        
-        commands.push(self.parse_simple_command()?);
-        // Allow whitespace/comments between command and pipeline operators
-        self.skip_whitespace_and_comments();
-        
-        while let Some(_) = self.lexer.peek() {
-            // Skip any whitespace/comments before checking for an operator
-            self.skip_whitespace_and_comments();
-            let Some(token) = self.lexer.peek() else { break; };
-            match token {
-                Token::Pipe => {
-                    self.lexer.next();
-                    operators.push(PipeOperator::Pipe);
-                    self.skip_whitespace_and_comments();
-                    commands.push(self.parse_simple_command()?);
-                }
-                Token::And => {
-                    self.lexer.next();
-                    operators.push(PipeOperator::And);
-                    self.skip_whitespace_and_comments();
-                    commands.push(self.parse_simple_command()?);
-                }
-                Token::Or => {
-                    self.lexer.next();
-                    operators.push(PipeOperator::Or);
-                    self.skip_whitespace_and_comments();
-                    commands.push(self.parse_simple_command()?);
-                }
-                Token::Semicolon | Token::Newline => {
-                    // Stop parsing pipeline when we hit a command separator
-                    break;
-                }
-                _ => break,
-            }
-        }
-        
-        if commands.len() == 1 {
-            Ok(commands.remove(0))
-        } else {
-            Ok(Command::Pipeline(Pipeline { commands, operators }))
-        }
+        let first_command = self.parse_simple_command()?;
+        self.parse_pipeline_from_command(first_command)
     }
 
     fn parse_pipeline_from_command(&mut self, first_command: Command) -> Result<Command, ParserError> {
@@ -1111,13 +1070,14 @@ impl Parser {
                         let mut result = String::new();
                         for part in &interp.parts {
                             match part {
-                                StringPart::Literal(s) => result.push_str(s),
-                                StringPart::Variable(var) => result.push_str(&format!("${}", var)),
-                                StringPart::MapAccess(map_name, key) => result.push_str(&format!("${{{}}}[{}]", map_name, key)),
-                                StringPart::MapKeys(map_name) => result.push_str(&format!("${{!{}}}[@]", map_name)),
-                                StringPart::MapLength(map_name) => result.push_str(&format!("${{#{}}}[@]", map_name)),
-                                StringPart::Arithmetic(expr) => result.push_str(&expr.expression),
-                                StringPart::CommandSubstitution(_) => result.push_str("$(...)"),
+                                &StringPart::Literal(ref s) => result.push_str(s),
+                                &StringPart::Variable(ref var) => result.push_str(&format!("${}", var)),
+                                &StringPart::MapAccess(ref map_name, ref key) => result.push_str(&format!("${{{}}}[{}]", map_name, key)),
+                                &StringPart::MapKeys(ref map_name) => result.push_str(&format!("${{!{}}}[@]", map_name)),
+                                &StringPart::MapLength(ref map_name) => result.push_str(&format!("${{#{}}}[@]", map_name)),
+                                &StringPart::Arithmetic(ref expr) => result.push_str(&expr.expression),
+                                &StringPart::CommandSubstitution(_) => result.push_str("$(...)"),
+                                &StringPart::ParameterExpansion(ref pe) => result.push_str(&pe.to_string()),
                             }
                         }
                         Some(result)
@@ -1196,21 +1156,216 @@ impl Parser {
                 self.lexer.next(); // consume the token
                 let var_name = self.parse_braced_variable_name()?;
                 
-                // Check if this is a map access pattern like map[foo]
-                if var_name.contains('[') && var_name.contains(']') {
-                    if let Some(bracket_start) = var_name.find('[') {
-                        if let Some(bracket_end) = var_name.rfind(']') {
-                            let map_name = &var_name[..bracket_start];
-                            let key = &var_name[bracket_start + 1..bracket_end];
-                            Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
+                // Check if this is a parameter expansion with operators
+                if var_name.contains("^^") {
+                    let base_var = var_name.replace("^^", "");
+                    Ok(Word::ParameterExpansion(ParameterExpansion {
+                        variable: base_var,
+                        operator: ParameterExpansionOperator::UppercaseAll,
+                    }))
+                } else if var_name.contains(",,)") {
+                    let base_var = var_name.replace(",,)", "");
+                    Ok(Word::ParameterExpansion(ParameterExpansion {
+                        variable: base_var,
+                        operator: ParameterExpansionOperator::LowercaseAll,
+                    }))
+                } else if var_name.contains("^)") {
+                    let base_var = var_name.replace("^)", "");
+                    Ok(Word::ParameterExpansion(ParameterExpansion {
+                        variable: base_var,
+                        operator: ParameterExpansionOperator::UppercaseFirst,
+                    }))
+                } else if var_name.contains("^") && !var_name.contains("^^") {
+                    let base_var = var_name.replace("^", "");
+                    Ok(Word::ParameterExpansion(ParameterExpansion {
+                        variable: base_var,
+                        operator: ParameterExpansionOperator::UppercaseFirst,
+                    }))
+                } else if var_name.contains(",,)") {
+                    let base_var = var_name.replace(",,)", "");
+                    Ok(Word::ParameterExpansion(ParameterExpansion {
+                        variable: base_var,
+                        operator: ParameterExpansionOperator::LowercaseAll,
+                    }))
+                } else if var_name.contains("##*/") {
+                    let base_var = var_name.replace("##*/", "");
+                    Ok(Word::ParameterExpansion(ParameterExpansion {
+                        variable: base_var,
+                        operator: ParameterExpansionOperator::Basename,
+                    }))
+                } else if var_name.contains("%/*") {
+                    let base_var = var_name.replace("%/*", "");
+                    Ok(Word::ParameterExpansion(ParameterExpansion {
+                        variable: base_var,
+                        operator: ParameterExpansionOperator::Dirname,
+                    }))
+                } else if var_name.contains("//") {
+                    let parts: Vec<&str> = var_name.split("//").collect();
+                    if parts.len() == 3 {
+                        Ok(Word::ParameterExpansion(ParameterExpansion {
+                            variable: parts[0].to_string(),
+                            operator: ParameterExpansionOperator::SubstituteAll(parts[1].to_string(), parts[2].to_string()),
+                        }))
+                    } else {
+                        // Check if this is a map access pattern like map[foo]
+                        if var_name.contains('[') && var_name.contains(']') {
+                            if let Some(bracket_start) = var_name.find('[') {
+                                if let Some(bracket_end) = var_name.rfind(']') {
+                                    let map_name = &var_name[..bracket_start];
+                                    let key = &var_name[bracket_start + 1..bracket_end];
+                                    Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
+                                } else {
+                                    Ok(Word::Variable(var_name))
+                                }
+                            } else {
+                                Ok(Word::Variable(var_name))
+                            }
+                        } else {
+                            Ok(Word::Variable(var_name))
+                        }
+                    }
+                } else if var_name.contains(":-") {
+                    let parts: Vec<&str> = var_name.split(":-").collect();
+                    if parts.len() == 2 {
+                        Ok(Word::ParameterExpansion(ParameterExpansion {
+                            variable: parts[0].to_string(),
+                            operator: ParameterExpansionOperator::DefaultValue(parts[1].to_string()),
+                        }))
+                    } else {
+                        // Check if this is a map access pattern like map[foo]
+                        if var_name.contains('[') && var_name.contains(']') {
+                            if let Some(bracket_start) = var_name.find('[') {
+                                if let Some(bracket_end) = var_name.rfind(']') {
+                                    let map_name = &var_name[..bracket_start];
+                                    let key = &var_name[bracket_start + 1..bracket_end];
+                                    Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
+                                } else {
+                                    Ok(Word::Variable(var_name))
+                                }
+                            } else {
+                                Ok(Word::Variable(var_name))
+                            }
+                        } else {
+                            Ok(Word::Variable(var_name))
+                        }
+                    }
+                } else if var_name.contains(":=") {
+                    let parts: Vec<&str> = var_name.split(":=").collect();
+                    if parts.len() == 2 {
+                        Ok(Word::ParameterExpansion(ParameterExpansion {
+                            variable: parts[0].to_string(),
+                            operator: ParameterExpansionOperator::AssignDefault(parts[1].to_string()),
+                        }))
+                    } else {
+                        // Check if this is a map access pattern like map[foo]
+                        if var_name.contains('[') && var_name.contains(']') {
+                            if let Some(bracket_start) = var_name.find('[') {
+                                if let Some(bracket_end) = var_name.rfind(']') {
+                                    let map_name = &var_name[..bracket_start];
+                                    let key = &var_name[bracket_start + 1..bracket_end];
+                                    Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
+                                } else {
+                                    Ok(Word::Variable(var_name))
+                                }
+                            } else {
+                                Ok(Word::Variable(var_name))
+                            }
+                        } else {
+                            Ok(Word::Variable(var_name))
+                        }
+                    }
+                } else if var_name.contains(":?") {
+                    let parts: Vec<&str> = var_name.split(":?").collect();
+                    if parts.len() == 2 {
+                        Ok(Word::ParameterExpansion(ParameterExpansion {
+                            variable: parts[0].to_string(),
+                            operator: ParameterExpansionOperator::ErrorIfUnset(parts[1].to_string()),
+                        }))
+                    } else {
+                        // Check if this is a map access pattern like map[foo]
+                        if var_name.contains('[') && var_name.contains(']') {
+                            if let Some(bracket_start) = var_name.find('[') {
+                                if let Some(bracket_end) = var_name.rfind(']') {
+                                    let map_name = &var_name[..bracket_start];
+                                    let key = &var_name[bracket_start + 1..bracket_end];
+                                    Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
+                                } else {
+                                    Ok(Word::Variable(var_name))
+                                }
+                            } else {
+                                Ok(Word::Variable(var_name))
+                            }
+                        } else {
+                            Ok(Word::Variable(var_name))
+                        }
+                    }
+                } else if var_name.contains("#") && !var_name.starts_with('#') {
+                    let parts: Vec<&str> = var_name.split("#").collect();
+                    if parts.len() == 2 {
+                        Ok(Word::ParameterExpansion(ParameterExpansion {
+                            variable: parts[0].to_string(),
+                            operator: ParameterExpansionOperator::RemoveShortestPrefix(parts[1].to_string()),
+                        }))
+                    } else {
+                        // Check if this is a map access pattern like map[foo]
+                        if var_name.contains('[') && var_name.contains(']') {
+                            if let Some(bracket_start) = var_name.find('[') {
+                                if let Some(bracket_end) = var_name.rfind(']') {
+                                    let map_name = &var_name[..bracket_start];
+                                    let key = &var_name[bracket_start + 1..bracket_end];
+                                    Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
+                                } else {
+                                    Ok(Word::Variable(var_name))
+                                }
+                            } else {
+                                Ok(Word::Variable(var_name))
+                            }
+                        } else {
+                            Ok(Word::Variable(var_name))
+                        }
+                    }
+                } else if var_name.contains("%") && !var_name.starts_with('%') {
+                    let parts: Vec<&str> = var_name.split("%").collect();
+                    if parts.len() == 2 {
+                        Ok(Word::ParameterExpansion(ParameterExpansion {
+                            variable: parts[0].to_string(),
+                            operator: ParameterExpansionOperator::RemoveShortestSuffix(parts[1].to_string()),
+                        }))
+                    } else {
+                        // Check if this is a map access pattern like map[foo]
+                        if var_name.contains('[') && var_name.contains(']') {
+                            if let Some(bracket_start) = var_name.find('[') {
+                                if let Some(bracket_end) = var_name.rfind(']') {
+                                    let map_name = &var_name[..bracket_start];
+                                    let key = &var_name[bracket_start + 1..bracket_end];
+                                    Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
+                                } else {
+                                    Ok(Word::Variable(var_name))
+                                }
+                            } else {
+                                Ok(Word::Variable(var_name))
+                            }
+                        } else {
+                            Ok(Word::Variable(var_name))
+                        }
+                    }
+                } else {
+                    // Check if this is a map access pattern like map[foo]
+                    if var_name.contains('[') && var_name.contains(']') {
+                        if let Some(bracket_start) = var_name.find('[') {
+                            if let Some(bracket_end) = var_name.rfind(']') {
+                                let map_name = &var_name[..bracket_start];
+                                let key = &var_name[bracket_start + 1..bracket_end];
+                                Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
+                            } else {
+                                Ok(Word::Variable(var_name))
+                            }
                         } else {
                             Ok(Word::Variable(var_name))
                         }
                     } else {
                         Ok(Word::Variable(var_name))
                     }
-                } else {
-                    Ok(Word::Variable(var_name))
                 }
             }
             Some(Token::DollarBraceHash) => {
@@ -1689,7 +1844,7 @@ impl Parser {
                         if brace_content.starts_with('#') && brace_content.contains('[') {
                             // This is ${#arr[@]} - array length
                             if let Some(bracket_start) = brace_content.find('[') {
-                                if let Some(bracket_end) = brace_content.rfind(']') {
+                                if let Some(_bracket_end) = brace_content.rfind(']') {
                                     let array_name = &brace_content[1..bracket_start]; // Remove # prefix
                                     // Create a MapLength StringPart
                                     parts.push(StringPart::MapLength(array_name.to_string()));
@@ -1701,7 +1856,7 @@ impl Parser {
                         } else if brace_content.starts_with('!') && brace_content.contains('[') {
                             // This is ${!map[@]} - get keys of associative array
                             if let Some(bracket_start) = brace_content.find('[') {
-                                if let Some(bracket_end) = brace_content.rfind(']') {
+                                if let Some(_bracket_end) = brace_content.rfind(']') {
                                     let map_name = &brace_content[1..bracket_start]; // Remove ! prefix
                                     // Create a MapKeys StringPart
                                     parts.push(StringPart::MapKeys(map_name.to_string()));
@@ -1714,9 +1869,9 @@ impl Parser {
                             // This is a map/array access like ${map[foo]} or ${arr[1]}
                             // Parse it as a MapAccess
                             if let Some(bracket_start) = brace_content.find('[') {
-                                if let Some(bracket_end) = brace_content.rfind(']') {
+                                if let Some(_bracket_end) = brace_content.rfind(']') {
                                     let map_name = &brace_content[..bracket_start];
-                                    let key = &brace_content[bracket_start + 1..bracket_end];
+                                    let key = &brace_content[bracket_start + 1.._bracket_end];
                                     // Create a MapAccess StringPart
                                     parts.push(StringPart::MapAccess(map_name.to_string(), key.to_string()));
                                     continue; // Skip the regular variable handling

@@ -1163,7 +1163,7 @@ impl PerlGenerator {
                             "-u" => output.push_str("use strict;\n"),
                             "-o" => {
                                 // Handle pipefail and other options
-                                if let Some(next_arg) = cmd.args.iter().skip(1).find(|a| {
+                                if let Some(_next_arg) = cmd.args.iter().skip(1).find(|a| {
                                     if let Word::Literal(s) = a { s == "pipefail" } else { false }
                                 }) {
                                     output.push_str("# set -o pipefail\n");
@@ -1211,9 +1211,14 @@ impl PerlGenerator {
                 }
             }
             "unset" => {
-                // Convert unset to Perl undef
+                // Convert unset to Perl undef and ensure variable is declared
                 for arg in &cmd.args {
                     if let Word::Literal(var) = arg {
+                        // First declare the variable if it's not already declared
+                        if !self.declared_locals.contains(var) {
+                            output.push_str(&format!("my ${} = undef;\n", var));
+                            self.declared_locals.insert(var.to_string());
+                        }
                         output.push_str(&format!("undef ${};\n", var));
                     }
                 }
@@ -1233,7 +1238,7 @@ impl PerlGenerator {
         output
     }
 
-    fn generate_test_expression_clean(&mut self, test_expr: &TestExpression) -> String {
+    fn generate_test_expression(&mut self, test_expr: &TestExpression) -> String {
         // Parse the test expression to extract components
         let expr = &test_expr.expression;
         let modifiers = &test_expr.modifiers;
@@ -1411,333 +1416,7 @@ impl PerlGenerator {
         }
     }
 
-    fn generate_test_expression(&mut self, test_expr: &TestExpression) -> String {
-        eprintln!("DEBUG: generate_test_expression called with expression: '{}'", test_expr.expression);
-        let mut output = String::new();
-        
-        // Parse the test expression to extract components
-        let expr = &test_expr.expression;
-        let modifiers = &test_expr.modifiers;
-        
-        // Debug output
-        output.push_str(&format!("# DEBUG: TestExpression: '{}'\n", expr));
-        
-        // Add comments about enabled options
-        if modifiers.extglob {
-            output.push_str("# extglob enabled\n");
-        }
-        if modifiers.nocasematch {
-            output.push_str("# nocasematch enabled\n");
-        }
-        
-        // Parse the expression to determine the type of test
-        if expr.contains(" =~ ") {
-            // Regex matching: [[ $var =~ pattern ]]
-            let parts: Vec<&str> = expr.split(" =~ ").collect();
-            if parts.len() == 2 {
-                let var = parts[0].trim();
-                let pattern = parts[1].trim();
-                
-                // Ensure variable is declared
-                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
-                    output.push_str(&format!("my {} = '';\n", var));
-                    self.declared_locals.insert(var[1..].to_string());
-                }
-                
-                // Convert to Perl regex matching
-                output.push_str(&format!("{} =~ /{}/", var, pattern));
-            } else {
-                output.push_str(&format!("# Invalid regex test: {}\n", expr));
-                output.push_str("0");
-            }
-        } else if expr.contains(" == ") {
-            // Pattern matching: [[ $var == pattern ]]
-            let parts: Vec<&str> = expr.split(" == ").collect();
-            if parts.len() == 2 {
-                let var = parts[0].trim();
-                let pattern = parts[1].trim();
-                
-                // Ensure variable is declared
-                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
-                    output.push_str(&format!("my {} = '';\n", var));
-                    self.declared_locals.insert(var[1..].to_string());
-                }
-                
-                if modifiers.extglob {
-                    // Handle extglob patterns
-                    let regex_pattern = self.convert_extglob_to_perl_regex(pattern);
-                    if modifiers.nocasematch {
-                        output.push_str(&format!("{} =~ /{}/i", var, regex_pattern));
-                    } else {
-                        output.push_str(&format!("{} =~ /{}/", var, regex_pattern));
-                    }
-                } else {
-                    // Regular pattern matching
-                    if modifiers.nocasematch {
-                        // Case-insensitive matching
-                        output.push_str(&format!("lc({}) =~ /^{}$/i", var, pattern.replace("*", ".*")));
-                    } else {
-                        // Case-sensitive matching
-                        output.push_str(&format!("{} =~ /^{}$/", var, pattern.replace("*", ".*")));
-                    }
-                }
-            } else {
-                output.push_str(&format!("# Invalid pattern test: {}\n", expr));
-                output.push_str("0");
-            }
-        } else if expr.contains(" != ") {
-            // Pattern matching: [[ $var != pattern ]]
-            let parts: Vec<&str> = expr.split(" != ").collect();
-            if parts.len() == 2 {
-                let var = parts[0].trim();
-                let pattern = parts[1].trim();
-                
-                // Ensure variable is declared
-                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
-                    output.push_str(&format!("my {} = '';\n", var));
-                    self.declared_locals.insert(var[1..].to_string());
-                }
-                
-                if modifiers.extglob {
-                    // Handle extglob patterns
-                    let regex_pattern = self.convert_extglob_to_perl_regex(pattern);
-                    if modifiers.nocasematch {
-                        output.push_str(&format!("{} !~ /{}/i", var, regex_pattern));
-                    } else {
-                        output.push_str(&format!("{} !~ /{}/", var, regex_pattern));
-                    }
-                } else {
-                    // Regular pattern matching
-                    if modifiers.nocasematch {
-                        // Case-insensitive matching
-                        output.push_str(&format!("lc({}) !~ /^{}$/i", var, pattern.replace("*", ".*")));
-                    } else {
-                        // Case-sensitive matching
-                        output.push_str(&format!("{} !~ /^{}$/", var, pattern.replace("*", ".*")));
-                    }
-                }
-            } else {
-                output.push_str(&format!("# Invalid pattern test: {}\n", expr));
-                output.push_str("0");
-            }
-        } else if expr.contains(" -eq ") {
-            // Numeric equality: [[ $var -eq value ]]
-            let parts: Vec<&str> = expr.split(" -eq ").collect();
-            if parts.len() == 2 {
-                let var = parts[0].trim();
-                let value = parts[1].trim();
-                
-                // Ensure variable is declared
-                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
-                    output.push_str(&format!("my {} = 0;\n", var));
-                    self.declared_locals.insert(var[1..].to_string());
-                }
-                
-                output.push_str(&format!("{} == {}", var, value));
-            } else {
-                output.push_str(&format!("# Invalid numeric test: {}\n", expr));
-                output.push_str("0");
-            }
-        } else if expr.contains(" -ne ") {
-            // Numeric inequality: [[ $var -ne value ]]
-            let parts: Vec<&str> = expr.split(" -ne ").collect();
-            if parts.len() == 2 {
-                let var = parts[0].trim();
-                let value = parts[1].trim();
-                
-                // Ensure variable is declared
-                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
-                    output.push_str(&format!("my {} = 0;\n", var));
-                    self.declared_locals.insert(var[1..].to_string());
-                }
-                
-                output.push_str(&format!("{} != {}", var, value));
-            } else {
-                output.push_str(&format!("# Invalid numeric test: {}\n", expr));
-                output.push_str("0");
-            }
-        } else if expr.contains(" -lt ") {
-            // Less than: [[ $var -lt value ]]
-            let parts: Vec<&str> = expr.split(" -lt ").collect();
-            if parts.len() == 2 {
-                let var = parts[0].trim();
-                let value = parts[1].trim();
-                
-                // Ensure variable is declared
-                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
-                    output.push_str(&format!("my {} = 0;\n", var));
-                    self.declared_locals.insert(var[1..].to_string());
-                }
-                
-                output.push_str(&format!("{} < {}", var, value));
-            } else {
-                output.push_str(&format!("# Invalid numeric test: {}\n", expr));
-                output.push_str("0");
-            }
-        } else if expr.contains(" -le ") {
-            // Less than or equal: [[ $var -le value ]]
-            let parts: Vec<&str> = expr.split(" -le ").collect();
-            if parts.len() == 2 {
-                let var = parts[0].trim();
-                let value = parts[1].trim();
-                
-                // Ensure variable is declared
-                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
-                    output.push_str(&format!("my {} = 0;\n", var));
-                    self.declared_locals.insert(var[1..].to_string());
-                }
-                
-                output.push_str(&format!("{} <= {}", var, value));
-            } else {
-                output.push_str(&format!("# Invalid numeric test: {}\n", expr));
-                output.push_str("0");
-            }
-        } else if expr.contains(" -gt ") {
-            // Greater than: [[ $var -gt value ]]
-            let parts: Vec<&str> = expr.split(" -gt ").collect();
-            if parts.len() == 2 {
-                let var = parts[0].trim();
-                let value = parts[1].trim();
-                
-                // Ensure variable is declared
-                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
-                    output.push_str(&format!("my {} = 0;\n", var));
-                    self.declared_locals.insert(var[1..].to_string());
-                }
-                
-                output.push_str(&format!("{} > {}", var, value));
-            } else {
-                output.push_str(&format!("# Invalid numeric test: {}\n", expr));
-                output.push_str("0");
-            }
-        } else if expr.contains(" -ge ") {
-            // Greater than or equal: [[ $var -ge value ]]
-            let parts: Vec<&str> = expr.split(" -ge ").collect();
-            if parts.len() == 2 {
-                let var = parts[0].trim();
-                let value = parts[1].trim();
-                
-                // Ensure variable is declared
-                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
-                    output.push_str(&format!("my {} = 0;\n", var));
-                    self.declared_locals.insert(var[1..].to_string());
-                }
-                
-                output.push_str(&format!("{} >= {}", var, value));
-            } else {
-                output.push_str(&format!("# Invalid numeric test: {}\n", expr));
-                output.push_str("0");
-            }
-        } else if expr.contains(" -z ") {
-            // String is empty: [[ -z $var ]]
-            let parts: Vec<&str> = expr.split(" -z ").collect();
-            if parts.len() == 2 {
-                let var = parts[1].trim();
-                
-                // Ensure variable is declared
-                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
-                    output.push_str(&format!("my {} = '';\n", var));
-                    self.declared_locals.insert(var[1..].to_string());
-                }
-                
-                output.push_str(&format!("!defined({}) || {} eq ''", var, var));
-            } else {
-                output.push_str(&format!("# Invalid string test: {}\n", expr));
-                output.push_str("0");
-            }
-        } else if expr.contains(" -n ") {
-            // String is not empty: [[ -n $var ]]
-            let parts: Vec<&str> = expr.split(" -n ").collect();
-            if parts.len() == 2 {
-                let var = parts[1].trim();
-                
-                // Ensure variable is declared
-                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
-                    output.push_str(&format!("my {} = '';\n", var));
-                    self.declared_locals.insert(var[1..].to_string());
-                }
-                
-                output.push_str(&format!("defined({}) && {} ne ''", var, var));
-            } else {
-                output.push_str(&format!("# Invalid string test: {}\n", expr));
-                output.push_str("0");
-            }
-        } else if expr.contains(" -f ") {
-            // File exists and is regular file: [[ -f $var ]]
-            let parts: Vec<&str> = expr.split(" -f ").collect();
-            if parts.len() == 2 {
-                let var = parts[1].trim();
-                
-                // Ensure variable is declared
-                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
-                    output.push_str(&format!("my {} = '';\n", var));
-                    self.declared_locals.insert(var[1..].to_string());
-                }
-                
-                output.push_str(&format!("-f {}", var));
-            } else {
-                output.push_str(&format!("# Invalid file test: {}\n", expr));
-                output.push_str("0");
-            }
-        } else if expr.contains(" -d ") {
-            // Directory exists: [[ -d $var ]]
-            let parts: Vec<&str> = expr.split(" -d ").collect();
-            if parts.len() == 2 {
-                let var = parts[1].trim();
-                
-                // Ensure variable is declared
-                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
-                    output.push_str(&format!("my {} = '';\n", var));
-                    self.declared_locals.insert(var[1..].to_string());
-                }
-                
-                output.push_str(&format!("-d {}", var));
-            } else {
-                output.push_str(&format!("# Invalid file test: {}\n", expr));
-                output.push_str("0");
-            }
-        } else if expr.contains(" -e ") {
-            // File exists: [[ -e $var ]]
-            let parts: Vec<&str> = expr.split(" -e ").collect();
-            if parts.len() == 2 {
-                let var = parts[1].trim();
-                
-                // Ensure variable is declared
-                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
-                    output.push_str(&format!("my {} = '';\n", var));
-                    self.declared_locals.insert(var[1..].to_string());
-                }
-                
-                output.push_str(&format!("-e {}", var));
-            } else {
-                output.push_str(&format!("# Invalid file test: {}\n", expr));
-                output.push_str("0");
-            }
-        } else {
-            // Generic test expression - try to parse it as a simple comparison
-            // This handles cases like [[ $var ]] (truthy test)
-            let expr_trimmed = expr.trim();
-            if expr_trimmed.starts_with('$') {
-                // Single variable test: [[ $var ]]
-                let var = expr_trimmed;
-                
-                // Ensure variable is declared
-                if !self.declared_locals.contains(&var[1..]) {
-                    output.push_str(&format!("my {} = '';\n", var));
-                    self.declared_locals.insert(var[1..].to_string());
-                }
-                
-                output.push_str(&format!("defined({}) && {} ne ''", var, var));
-            } else {
-                // Unknown test expression
-                output.push_str(&format!("# Unsupported test expression: {}\n", expr));
-                output.push_str("0");
-            }
-        }
-        
-        output
-    }
-
+    
     fn generate_test_command(&mut self, cmd: &SimpleCommand, output: &mut String) {
         // Convert test conditions to Perl
         if cmd.args.len() == 3 {
@@ -1949,7 +1628,7 @@ impl PerlGenerator {
             }
             
             // Handle subsequent commands
-            for (i, command) in pipeline.commands.iter().enumerate().skip(1) {
+            for (_i, command) in pipeline.commands.iter().enumerate().skip(1) {
                 if let Command::Simple(cmd) = command {
                     if cmd.name == "sort" {
                         // Handle sort command specially - sort lines, not words
@@ -1973,7 +1652,7 @@ impl PerlGenerator {
                 match first {
                     Command::TestExpression(test_expr) => {
                         // Generate the test expression directly as a Perl boolean expression
-                        output.push_str(&self.generate_test_expression_clean(test_expr));
+                        output.push_str(&self.generate_test_expression(test_expr));
                     }
                     _ => {
                         // For non-test expressions, use system() calls
@@ -1987,11 +1666,11 @@ impl PerlGenerator {
                 match (op, cmd) {
                     (PipeOperator::And, Command::TestExpression(test_expr)) => {
                         output.push_str(" && ");
-                        output.push_str(&self.generate_test_expression_clean(test_expr));
+                        output.push_str(&self.generate_test_expression(test_expr));
                     }
                     (PipeOperator::Or, Command::TestExpression(test_expr)) => {
                         output.push_str(" || ");
-                        output.push_str(&format!("({})", self.generate_test_expression_clean(test_expr)));
+                        output.push_str(&format!("({})", self.generate_test_expression(test_expr)));
                     }
                     (PipeOperator::And, _) => {
                         output.push_str(" && ");
@@ -2080,26 +1759,26 @@ impl PerlGenerator {
                     let operand1 = &cmd.args[0];
                     let operand2 = &cmd.args[2];
                     
-                                    // Initialize first operand if it's a variable
-                if let Word::Variable(var_name) = operand1 {
-                    if !self.declared_locals.contains(var_name) {
-                        // Check if this variable was used in a previous for loop
-                        if var_name == "i" {
-                            output.push_str(&format!("my ${} = 5;\n", var_name));
-                        } else {
-                            output.push_str(&format!("my ${} = 0;\n", var_name));
+                    // Initialize first operand if it's a variable
+                    if let Word::Variable(var_name) = operand1 {
+                        if !self.declared_locals.contains(var_name) {
+                            // Check if this variable was used in a previous for loop
+                            if var_name == "i" {
+                                output.push_str(&format!("my ${} = 5;\n", var_name));
+                            } else {
+                                output.push_str(&format!("my ${} = 0;\n", var_name));
+                            }
+                            self.declared_locals.insert(var_name.to_string());
                         }
-                        self.declared_locals.insert(var_name.to_string());
                     }
-                }
-                
-                // Initialize second operand if it's a variable
-                if let Word::Variable(var_name) = operand2 {
-                    if !self.declared_locals.contains(var_name) {
-                        output.push_str(&format!("my ${} = 0;\n", var_name));
-                        self.declared_locals.insert(var_name.to_string());
+                    
+                    // Initialize second operand if it's a variable
+                    if let Word::Variable(var_name) = operand2 {
+                        if !self.declared_locals.contains(var_name) {
+                            output.push_str(&format!("my ${} = 0;\n", var_name));
+                            self.declared_locals.insert(var_name.to_string());
+                        }
                     }
-                }
                 } else if cmd.args.len() >= 1 {
                     // Handle single argument test conditions
                     let var_name = cmd.args[0].trim_start_matches('$');
@@ -2610,6 +2289,9 @@ impl PerlGenerator {
                     // Convert ${#arr[@]} to scalar(@arr) for printf format strings
                     result.push_str(&format!("scalar(@{})", map_name));
                 }
+                StringPart::ParameterExpansion(pe) => {
+                    result.push_str(&self.generate_parameter_expansion(pe));
+                }
                 StringPart::Variable(var) => {
                     // Convert shell variables to Perl variables
                     // For printf format strings, preserve array length expressions
@@ -2700,6 +2382,11 @@ impl PerlGenerator {
                     return format!("keys(%{})", array_name);
                 }
             }
+            
+            // Special case: if we have only one part and it's parameter expansion, return it without quotes
+            if let StringPart::ParameterExpansion(pe) = &interp.parts[0] {
+                return self.generate_parameter_expansion(pe);
+            }
         }
         
         for part in &interp.parts {
@@ -2748,6 +2435,9 @@ impl PerlGenerator {
                     // Convert ${#arr[@]} to scalar(@arr) in Perl
                     eprintln!("DEBUG: Processing MapLength: map_name='{}'", map_name);
                     result.push_str(&format!("scalar(@{})", map_name));
+                }
+                StringPart::ParameterExpansion(pe) => {
+                    result.push_str(&self.generate_parameter_expansion(pe));
                 }
                 StringPart::Variable(var) => {
                     // Convert shell variables to Perl variables
@@ -2863,9 +2553,91 @@ impl PerlGenerator {
     fn word_to_perl(&self, word: &Word) -> String {
         match word {
             Word::Literal(s) => self.escape_perl_string(s),
+            Word::ParameterExpansion(pe) => self.generate_parameter_expansion(pe),
             Word::Variable(var) => {
-                // Handle special array and hash operations
-                if var.starts_with('#') && var.ends_with("[@]") {
+                // Handle parameter expansion operators
+                if var.contains("^^") {
+                    // ${var^^} -> uc($var) - uppercase all characters
+                    let var_name = var.replace("^^", "");
+                    format!("uc(${})", var_name)
+                } else if var.contains(",,)") {
+                    // ${var,,} -> lc($var) - lowercase all characters
+                    let var_name = var.replace(",,)", "");
+                    format!("lc(${})", var_name)
+                } else if var.contains("^)") {
+                    // ${var^} -> ucfirst($var) - uppercase first character
+                    let var_name = var.replace("^)", "");
+                    format!("ucfirst(${})", var_name)
+                } else if var.contains("##*/") {
+                    // ${var##*/} -> basename($var) - remove longest prefix matching */
+                    let var_name = var.replace("##*/", "");
+                    format!("basename(${})", var_name)
+                } else if var.contains("%/*") {
+                    // ${var%/*} -> dirname($var) - remove shortest suffix matching /*
+                    let var_name = var.replace("%/*", "");
+                    format!("dirname(${})", var_name)
+                } else if var.contains("//") {
+                    // ${var//pattern/replacement} -> $var =~ s/pattern/replacement/g
+                    let parts: Vec<&str> = var.split("//").collect();
+                    if parts.len() == 3 {
+                        let var_name = parts[0];
+                        let pattern = parts[1];
+                        let replacement = parts[2];
+                        format!("${} =~ s/{}/{}/g", var_name, pattern, replacement)
+                    } else {
+                        format!("${}", var)
+                    }
+                } else if var.contains("#") {
+                    // ${var#pattern} -> $var =~ s/^pattern// - remove shortest prefix
+                    let parts: Vec<&str> = var.split("#").collect();
+                    if parts.len() == 2 {
+                        let var_name = parts[0];
+                        let pattern = parts[1];
+                        format!("${} =~ s/^{}//", var_name, pattern)
+                    } else {
+                        format!("${}", var)
+                    }
+                } else if var.contains("%") {
+                    // ${var%pattern} -> $var =~ s/pattern$// - remove shortest suffix
+                    let parts: Vec<&str> = var.split("%").collect();
+                    if parts.len() == 2 {
+                        let var_name = parts[0];
+                        let pattern = parts[1];
+                        format!("${} =~ s/{}$//", var_name, pattern)
+                    } else {
+                        format!("${}", var)
+                    }
+                } else if var.contains(":-") {
+                    // ${var:-default} -> defined($var) ? $var : 'default'
+                    let parts: Vec<&str> = var.split(":-").collect();
+                    if parts.len() == 2 {
+                        let var_name = parts[0];
+                        let default = parts[1];
+                        format!("defined(${}) ? ${} : '{}'", var_name, var_name, default)
+                    } else {
+                        format!("${}", var)
+                    }
+                } else if var.contains(":=") {
+                    // ${var:=default} -> $var //= 'default' (set if undefined)
+                    let parts: Vec<&str> = var.split(":=").collect();
+                    if parts.len() == 2 {
+                        let var_name = parts[0];
+                        let default = parts[1];
+                        format!("${} //= '{}'", var_name, default)
+                    } else {
+                        format!("${}", var)
+                    }
+                } else if var.contains(":?") {
+                    // ${var:?error} -> die if undefined
+                    let parts: Vec<&str> = var.split(":?").collect();
+                    if parts.len() == 2 {
+                        let var_name = parts[0];
+                        let error = parts[1];
+                        format!("defined(${}) ? ${} : '{}'", var_name, var_name, error)
+                    } else {
+                        format!("${}", var)
+                    }
+                } else if var.starts_with('#') && var.ends_with("[@]") {
                     // ${#arr[@]} -> scalar(@arr)
                     let array_name = &var[1..var.len()-3];
                     format!("scalar(@{})", array_name)
@@ -3078,9 +2850,57 @@ impl PerlGenerator {
                 // For test commands, use single quotes to match test expectations
                 format!("'{}'", self.escape_perl_string(s))
             },
+            Word::ParameterExpansion(pe) => self.generate_parameter_expansion(pe),
             Word::Variable(var) => {
-                // Handle special array and hash operations
-                if var.starts_with('#') && var.ends_with("[@]") {
+                // First try to extract parameter expansion operators using the helper method
+                if let Some((base_var, operator)) = self.extract_parameter_expansion(var) {
+                    self.apply_parameter_expansion(&base_var, &operator)
+                } else if var.contains(":-") {
+                    // ${var:-default} -> defined($var) ? $var : 'default'
+                    let parts: Vec<&str> = var.split(":-").collect();
+                    if parts.len() == 2 {
+                        let var_name = parts[0];
+                        let default = parts[1];
+                        // Ensure variable is declared
+                        if var_name.starts_with('$') && !self.declared_locals.contains(&var_name[1..]) {
+                            format!("my {} = undef; defined({}) ? {} : '{}'", var_name, var_name, var_name, default)
+                        } else {
+                            format!("defined({}) ? {} : '{}'", var_name, var_name, default)
+                        }
+                    } else {
+                        format!("${}", var)
+                    }
+                } else if var.contains(":=") {
+                    // ${var:=default} -> $var //= 'default' (set if undefined)
+                    let parts: Vec<&str> = var.split(":=").collect();
+                    if parts.len() == 2 {
+                        let var_name = parts[0];
+                        let default = parts[1];
+                        // Ensure variable is declared
+                        if var_name.starts_with('$') && !self.declared_locals.contains(&var_name[1..]) {
+                            format!("my {} = undef; {} //= '{}'", var_name, var_name, default)
+                        } else {
+                            format!("{} //= '{}'", var_name, default)
+                        }
+                    } else {
+                        format!("${}", var)
+                    }
+                } else if var.contains(":?") {
+                    // ${var:?error} -> die if undefined
+                    let parts: Vec<&str> = var.split(":?").collect();
+                    if parts.len() == 2 {
+                        let var_name = parts[0];
+                        let error = parts[1];
+                        // Ensure variable is declared
+                        if var_name.starts_with('$') && !self.declared_locals.contains(&var_name[1..]) {
+                            format!("my {} = undef; defined({}) ? {} : die('{}')", var_name, var_name, var_name, error)
+                        } else {
+                            format!("defined({}) ? {} : die('{}')", var_name, var_name, error)
+                        }
+                    } else {
+                        format!("${}", var)
+                    }
+                } else if var.starts_with('#') && var.ends_with("[@]") {
                     // ${#arr[@]} -> scalar(@arr)
                     let array_name = &var[1..var.len()-3];
                     format!("scalar(@{})", array_name)
@@ -3461,5 +3281,81 @@ impl PerlGenerator {
         }
         
         result
+    }
+
+    fn extract_parameter_expansion(&self, var: &str) -> Option<(String, String)> {
+        // Try to extract base variable name and operator from malformed parameter expansion
+        // Handle case modification operators
+        if var.contains("^^") {
+            let var_name = var.replace("^^", "");
+            Some((var_name, "^^".to_string()))
+        } else if var.contains(",,)") {
+            let var_name = var.replace(",,)", "");
+            Some((var_name, ",,".to_string()))
+        } else if var.contains("^)") {
+            let var_name = var.replace("^)", "");
+            Some((var_name, "^".to_string()))
+        } else if var.contains("##*/") {
+            let var_name = var.replace("##*/", "");
+            Some((var_name, "##*/".to_string()))
+        } else if var.contains("%/*") {
+            let var_name = var.replace("%/*", "");
+            Some((var_name, "%/*".to_string()))
+        } else if var.contains("//") {
+            let parts: Vec<&str> = var.split("//").collect();
+            if parts.len() == 3 {
+                Some((parts[0].to_string(), "//".to_string()))
+            } else {
+                None
+            }
+        } else if var.contains("#") && !var.starts_with('#') {
+            let parts: Vec<&str> = var.split("#").collect();
+            if parts.len() == 2 {
+                Some((parts[0].to_string(), "#".to_string()))
+            } else {
+                None
+            }
+        } else if var.contains("%") && !var.starts_with('%') {
+            let parts: Vec<&str> = var.split("%").collect();
+            if parts.len() == 2 {
+                Some((parts[0].to_string(), "%".to_string()))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    fn apply_parameter_expansion(&self, base_var: &str, operator: &str) -> String {
+        match operator {
+            "^^" => format!("uc(${})", base_var),
+            ",," => format!("lc(${})", base_var),
+            "^" => format!("ucfirst(${})", base_var),
+            "##*/" => format!("basename(${})", base_var),
+            "%/*" => format!("dirname(${})", base_var),
+            "//" => format!("${} =~ s///g", base_var), // Placeholder for pattern replacement
+            "#" => format!("${} =~ s/^{}//", base_var, ""), // Placeholder for pattern
+            "%" => format!("${} =~ s/{}$//", base_var, ""), // Placeholder for pattern
+            _ => format!("${}", base_var)
+        }
+    }
+
+    fn generate_parameter_expansion(&self, pe: &ParameterExpansion) -> String {
+        match &pe.operator {
+            ParameterExpansionOperator::UppercaseAll => format!("uc(${})", pe.variable),
+            ParameterExpansionOperator::LowercaseAll => format!("lc(${})", pe.variable),
+            ParameterExpansionOperator::UppercaseFirst => format!("ucfirst(${})", pe.variable),
+            ParameterExpansionOperator::RemoveLongestPrefix(pattern) => format!("${} =~ s/^{}//", pe.variable, pattern),
+            ParameterExpansionOperator::RemoveShortestPrefix(pattern) => format!("${} =~ s/^{}//", pe.variable, pattern),
+            ParameterExpansionOperator::RemoveLongestSuffix(pattern) => format!("${} =~ s/{}$//", pe.variable, pattern),
+            ParameterExpansionOperator::RemoveShortestSuffix(pattern) => format!("${} =~ s/{}$//", pe.variable, pattern),
+            ParameterExpansionOperator::SubstituteAll(pattern, replacement) => format!("${} =~ s/{}/{}/g", pe.variable, pattern, replacement),
+            ParameterExpansionOperator::DefaultValue(default) => format!("defined(${}) ? ${} : '{}'", pe.variable, pe.variable, default),
+            ParameterExpansionOperator::AssignDefault(default) => format!("${} //= '{}'", pe.variable, default),
+            ParameterExpansionOperator::ErrorIfUnset(error) => format!("defined(${}) ? ${} : die('{}')", pe.variable, pe.variable, error),
+            ParameterExpansionOperator::Basename => format!("basename(${})", pe.variable),
+            ParameterExpansionOperator::Dirname => format!("dirname(${})", pe.variable),
+        }
     }
 } 

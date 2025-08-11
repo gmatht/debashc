@@ -28,6 +28,7 @@ impl FrenchGenerator {
             Command::Background(cmd) => self.generate_background(cmd),
             Command::Block(block) => self.generate_block(block),
             Command::BuiltinCommand(_) => "".to_string(),
+            Command::TestExpression(test_expr) => self.generate_test_expression(test_expr),
             Command::BlankLine => String::from("\n"),
         }
     }
