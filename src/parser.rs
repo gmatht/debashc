@@ -72,6 +72,13 @@ impl Parser {
             
             let mut command = self.parse_command()?;
 
+            // Check if this command is followed by a pipeline
+            if let Some(Token::Pipe) = self.lexer.peek() {
+                eprintln!("DEBUG: Found pipe after command, parsing pipeline");
+                // Parse the pipeline starting from the current command
+                command = self.parse_pipeline_from_command(command)?;
+            }
+
             // If a background '&' follows immediately, wrap the command
             if let Some(Token::Background) = self.lexer.peek() {
                 self.lexer.next();
@@ -177,6 +184,53 @@ impl Parser {
                     break;
                 }
                 _ => break,
+            }
+        }
+        
+        if commands.len() == 1 {
+            Ok(commands.remove(0))
+        } else {
+            Ok(Command::Pipeline(Pipeline { commands, operators }))
+        }
+    }
+
+    fn parse_pipeline_from_command(&mut self, first_command: Command) -> Result<Command, ParserError> {
+        let mut commands = Vec::new();
+        let mut operators = Vec::new();
+        
+        commands.push(first_command);
+        
+        while let Some(_) = self.lexer.peek() {
+            // Skip any whitespace/comments before checking for an operator
+            self.skip_whitespace_and_comments();
+            let Some(token) = self.lexer.peek() else { break; };
+            match token {
+                Token::Pipe => {
+                    self.lexer.next();
+                    operators.push(PipeOperator::Pipe);
+                    self.skip_whitespace_and_comments();
+                    commands.push(self.parse_simple_command()?);
+                }
+                Token::And => {
+                    self.lexer.next();
+                    operators.push(PipeOperator::And);
+                    self.skip_whitespace_and_comments();
+                    commands.push(self.parse_simple_command()?);
+                }
+                Token::Or => {
+                    self.lexer.next();
+                    operators.push(PipeOperator::Or);
+                    self.skip_whitespace_and_comments();
+                    commands.push(self.parse_simple_command()?);
+                }
+                Token::Semicolon | Token::Newline => {
+                    // Stop parsing pipeline when we hit a command separator
+                    // Don't consume the semicolon/newline - let the main parsing loop handle it
+                    break;
+                }
+                _ => {
+                    break;
+                }
             }
         }
         
@@ -309,7 +363,7 @@ impl Parser {
         // Parse arguments and redirects
         while let Some(token) = self.lexer.peek() {
             match token {
-                Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString | Token::SourceDot | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString => {
+                Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString | Token::SourceDot | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString | Token::Star => {
                     args.push(self.parse_word()?);
                 }
                 Token::Dollar | Token::DollarBrace | Token::DollarParen | Token::DollarHashSimple | Token::DollarAtSimple | Token::DollarStarSimple
@@ -746,20 +800,36 @@ impl Parser {
         // Parse additional commands in body until 'done'
         loop {
             // Skip separators
-            while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn | Token::Semicolon)) {
+            while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn)) {
                 self.lexer.next();
             }
-            match self.lexer.peek() {
-                Some(Token::Done) | None => break,
-                _ => {
-                    // Parse and add command to body
-                    let pre_pos = self.lexer.current_position();
-                    let command = self.parse_command()?;
-                    body_commands.push(command);
-                    if self.lexer.current_position() == pre_pos {
-                        if self.lexer.next().is_none() { break; }
-                    }
+            
+            // Check for 'done' first
+            if let Some(Token::Done) = self.lexer.peek() {
+                break;
+            }
+            
+            // Check for semicolon - this should separate commands in the loop body
+            if let Some(Token::Semicolon) = self.lexer.peek() {
+                self.lexer.next(); // consume semicolon
+                // Skip whitespace after semicolon
+                self.skip_whitespace_and_comments();
+                
+                // Check if the next token is 'done'
+                if let Some(Token::Done) = self.lexer.peek() {
+                    break;
                 }
+                
+                // Continue parsing the next command in the loop body
+                continue;
+            }
+            
+            // Parse additional command in body
+            let pre_pos = self.lexer.current_position();
+            let command = self.parse_command()?;
+            body_commands.push(command);
+            if self.lexer.current_position() == pre_pos {
+                if self.lexer.next().is_none() { break; }
             }
         }
 
@@ -782,12 +852,22 @@ impl Parser {
 
         self.lexer.consume(Token::Done)?;
         
-        let body = Block { commands: body_commands };
-        Ok(Command::For(ForLoop {
+        // Skip whitespace after 'done' before checking for pipe
+        self.skip_whitespace_and_comments();
+        
+        // Check if there's a pipeline after the for loop
+        let mut final_command = Command::For(ForLoop {
             variable,
             items,
-            body,
-        }))
+            body: Block { commands: body_commands },
+        });
+        
+        // If there's a pipe after 'done', parse the pipeline
+        if let Some(Token::Pipe) = self.lexer.peek() {
+            final_command = self.parse_pipeline_from_command(final_command)?;
+        }
+        
+        Ok(final_command)
     }
 
     fn parse_function(&mut self) -> Result<Command, ParserError> {
@@ -1047,11 +1127,6 @@ impl Parser {
                 // Treat standalone '.' as a normal word (e.g., `find . -name ...`)
                 self.lexer.next();
                 Ok(Word::Literal(".".to_string()))
-            }
-            Some(Token::Star) => {
-                // Handle glob patterns like file_*.txt
-                self.lexer.next();
-                Ok(Word::Literal("*".to_string()))
             }
             Some(Token::Dollar) => Ok(self.parse_variable_expansion()?),
             Some(Token::DollarBrace) | Some(Token::DollarParen) | Some(Token::DollarHashSimple) | Some(Token::DollarAtSimple) | Some(Token::DollarStarSimple)

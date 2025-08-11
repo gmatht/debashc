@@ -161,12 +161,30 @@ impl PerlGenerator {
                     let format_str_perl = match format_str {
                         Word::StringInterpolation(interp) => {
                             // Convert string interpolation and wrap in quotes for printf
-                            let content = self.convert_string_interpolation_to_perl(interp);
+                            // For printf format strings, preserve array length expressions
+                            let content = self.convert_string_interpolation_to_perl_for_printf(interp);
                             format!("\"{}\"", content)
                         }
                         _ => self.perl_string_literal(format_str)
                     };
-                    let perl_args = args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>();
+                    let perl_args = args.iter().map(|arg| {
+                        // For printf arguments, we need to ensure proper quoting
+                        match arg {
+                            Word::Variable(var) => format!("${}", var),
+                            Word::StringInterpolation(interp) => {
+                                // For printf arguments, if it's just a single literal part, quote it
+                                if interp.parts.len() == 1 {
+                                    if let StringPart::Literal(s) = &interp.parts[0] {
+                                        return format!("\"{}\"", self.escape_perl_string(s));
+                                    }
+                                }
+                                // For more complex interpolations, wrap the result in quotes
+                                let content = self.convert_string_interpolation_to_perl_for_printf(interp);
+                                format!("\"{}\"", content)
+                            }
+                            _ => self.word_to_perl(arg)
+                        }
+                    }).collect::<Vec<_>>();
                     output.push_str(&format!("printf({}, {});\n", 
                         format_str_perl, 
                         perl_args.join(", ")));
@@ -183,6 +201,24 @@ impl PerlGenerator {
                     output.push_str("print(scalar(@ARGV) . \"\\n\");\n");
                 } else if matches!(arg, Word::Variable(var) if var == "@") {
                     output.push_str("print(join(\" \", @ARGV) . \"\\n\");\n");
+                } else if let Word::Variable(var) = arg {
+                    // Handle special array and hash operations
+                    if var.starts_with('#') && var.contains('[') {
+                        // This is #arr[@] - convert to scalar(@arr) and concatenate with newline
+                        if let Some(bracket_start) = var.find('[') {
+                            let array_name = &var[1..bracket_start]; // Skip the # prefix
+                            output.push_str(&format!("print(scalar(@{}) . \"\\n\");\n", array_name));
+                        } else {
+                            output.push_str(&format!("print(\"${}\\n\");\n", var));
+                        }
+                    } else if var.starts_with('!') && var.ends_with("[@]") {
+                        // This is !map[@] - convert to keys(%map) and concatenate with newline
+                        let array_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
+                        output.push_str(&format!("print(keys(%{}) . \"\\n\");\n", array_name));
+                    } else {
+                        // Handle other variables
+                        output.push_str(&format!("print(\"${}\\n\");\n", var));
+                    }
                 } else if let Word::StringInterpolation(interp) = arg {
                     // Handle string interpolation like "$#"
                     if interp.parts.len() == 1 {
@@ -191,6 +227,19 @@ impl PerlGenerator {
                                 output.push_str("print(scalar(@ARGV) . \"\\n\");\n");
                             } else if var == "@" {
                                 output.push_str("print(join(\" \", @ARGV) . \"\\n\");\n");
+                            } else if var.starts_with('#') && var.contains('[') {
+                                // This is #arr[@] - convert to scalar(@arr) and concatenate with newline
+                                if let Some(bracket_start) = var.find('[') {
+                                    let array_name = &var[1..bracket_start]; // Skip the # prefix
+                                    output.push_str(&format!("print(scalar(@{}) . \"\\n\");\n", array_name));
+                                } else {
+                                    let converted = self.convert_string_interpolation_to_perl(interp);
+                                    output.push_str(&format!("print(\"{}\\n\");\n", converted));
+                                }
+                            } else if var.starts_with('!') && var.ends_with("[@]") {
+                                // This is !map[@] - convert to keys(%map) and concatenate with newline
+                                let array_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
+                                output.push_str(&format!("print(keys(%{}) . \"\\n\");\n", array_name));
                             } else {
                                 // Handle other variables in string interpolation
                                 let converted = self.convert_string_interpolation_to_perl(interp);
@@ -1247,18 +1296,129 @@ impl PerlGenerator {
         if pipeline.commands.len() == 1 {
             output.push_str(&self.generate_command(&pipeline.commands[0]));
         } else if has_pipe {
-            // For now, handle simple pipelines using system calls
+            // Handle pipelines with for loops and other commands
             output.push_str("my $output;\n");
-            for (i, command) in pipeline.commands.iter().enumerate() {
-                if i == 0 {
-                    // First command - capture output
-                    output.push_str(&format!("$output = `{}`;\n", self.command_to_string(command)));
+            
+            // Check if the first command is a for loop
+            if let Command::For(for_loop) = &pipeline.commands[0] {
+                // Generate the for loop directly in Perl and capture its output
+                let variable = &for_loop.variable;
+                let items = &for_loop.items;
+                
+                // Convert items to Perl array syntax
+                let items_str = if items.len() == 1 {
+                    match &items[0] {
+                        Word::StringInterpolation(interp) => {
+                            if interp.parts.len() == 1 {
+                                if let StringPart::MapAccess(map_name, key) = &interp.parts[0] {
+                                    if key == "@" {
+                                        format!("@{}", map_name)
+                                    } else {
+                                        format!("@{}", map_name)
+                                    }
+                                } else if let StringPart::Variable(var) = &interp.parts[0] {
+                                    if var.starts_with("!") && var.ends_with("[@]") {
+                                        // This is !map[@] - convert to keys(%map)
+                                        let map_name = &var[1..var.len()-3];
+                                        format!("keys(%{})", map_name)
+                                    } else if var.ends_with("[@]") {
+                                        let array_name = &var[..var.len()-3];
+                                        format!("@{}", array_name)
+                                    } else {
+                                        format!("@{}", var)
+                                    }
+                                } else {
+                                    format!("@{}", items[0])
+                                }
+                            } else {
+                                format!("@{}", items[0])
+                            }
+                        }
+                        Word::MapAccess(map_name, key) => {
+                            if key == "@" {
+                                format!("@{}", map_name)
+                            } else {
+                                format!("@{}", map_name)
+                            }
+                        }
+                        _ => format!("@{}", items[0])
+                    }
                 } else {
-                    // Subsequent commands - pipe through, but handle quotes carefully
+                    format!("({})", items.iter().map(|s| format!("\"{}\"", self.word_to_perl(s))).collect::<Vec<_>>().join(", "))
+                };
+                
+                // Generate the for loop that builds the output string for the pipeline
+                output.push_str(&format!("for my ${} ({}) {{\n", variable, items_str));
+                // Instead of printing directly, build the output string
+                for cmd in &for_loop.body.commands {
+                    if let Command::Simple(simple_cmd) = cmd {
+                        if simple_cmd.name == "echo" {
+                            // Convert echo to building output string
+                            let mut echo_parts = Vec::new();
+                            for arg in &simple_cmd.args {
+                                match arg {
+                                    Word::StringInterpolation(interp) => {
+                                        // Handle string interpolation by converting to Perl string concatenation
+                                        let parts: Vec<String> = interp.parts.iter().map(|part| {
+                                            match part {
+                                                StringPart::Literal(lit) => format!("\"{}\"", self.escape_perl_string(lit)),
+                                                StringPart::Variable(var) => format!("${}", var),
+                                                StringPart::MapAccess(map_name, key) => {
+                                                    if key.starts_with('$') {
+                                                        // Key is a variable like $k
+                                                        format!("${}{{{}}}", map_name, format!("${}", &key[1..]))
+                                                    } else {
+                                                        // Key is a literal
+                                                        format!("${}{{{}}}", map_name, key)
+                                                    }
+                                                }
+                                                _ => format!("{:?}", part)
+                                            }
+                                        }).collect();
+                                        echo_parts.push(format!("{}", parts.join(" . ")));
+                                    }
+                                    _ => {
+                                        // For non-interpolated words, just convert normally
+                                        echo_parts.push(self.word_to_perl(arg));
+                                    }
+                                }
+                            }
+                            let echo_str = echo_parts.join(" . ");
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("$output .= {} . \"\\n\";\n", echo_str));
+                        } else {
+                            // For other commands, generate normally but capture output
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("$output .= `{}`;\n", self.command_to_string(&Command::Simple(simple_cmd.clone()))));
+                        }
+                    } else {
+                        // For non-simple commands, generate normally but capture output
+                        output.push_str(&self.indent());
+                        output.push_str(&format!("$output .= `{}`;\n", self.command_to_string(cmd)));
+                    }
+                }
+                output.push_str("}\n");
+            } else {
+                // First command - capture output using system call
+                output.push_str(&format!("$output = `{}`;\n", self.command_to_string(&pipeline.commands[0])));
+            }
+            
+            // Handle subsequent commands
+            for (i, command) in pipeline.commands.iter().enumerate().skip(1) {
+                if let Command::Simple(cmd) = command {
+                    if cmd.name == "sort" {
+                        // Handle sort command specially - sort lines, not words
+                        output.push_str("$output = join(\"\\n\", sort(split(/\\n/, $output)));\n");
+                    } else {
+                        // Other commands - pipe through
+                        let cmd_str = self.command_to_string(command);
+                        let escaped_cmd = cmd_str.replace("'", "'\"'\"'");
+                        output.push_str(&format!("$output = `echo \"$output\" | {}`;\n", escaped_cmd));
+                    }
+                } else {
+                    // For non-simple commands, use system call
                     let cmd_str = self.command_to_string(command);
-                    // For backticks, we need to handle the command string very carefully
-                    // Use single quotes around the entire command to avoid shell interpretation
-                    let escaped_cmd = cmd_str.replace("'", "'\"'\"'"); // Escape single quotes properly
+                    let escaped_cmd = cmd_str.replace("'", "'\"'\"'");
                     output.push_str(&format!("$output = `echo \"$output\" | {}`;\n", escaped_cmd));
                 }
             }
@@ -1321,6 +1481,7 @@ impl PerlGenerator {
                 // Convert test expression to Perl test
                 self.generate_test_expression(test_expr)
             }
+
             _ => "command".to_string(),
         }
     }
@@ -1830,10 +1991,128 @@ impl PerlGenerator {
         converted_parts.join(" ")
     }
 
+    fn convert_string_interpolation_to_perl_for_printf(&self, interp: &StringInterpolation) -> String {
+        let mut result = String::new();
+        
+        for part in &interp.parts {
+            match part {
+                StringPart::Literal(s) => {
+                    // Check if this literal contains array references like {map[foo]}
+                    if s.starts_with('{') && s.ends_with('}') && s.contains('[') {
+                        // This might be an array reference like {map[foo]}
+                        let content = &s[1..s.len()-1]; // Remove { and }
+                        if content.contains('[') && content.ends_with(']') {
+                            if let Some(bracket_start) = content.find('[') {
+                                let array_name = &content[..bracket_start];
+                                let key = &content[bracket_start..];
+                                // For associative arrays, use {} instead of []
+                                if array_name == "map" {
+                                    result.push_str(&format!("$map{{{}}}", &key[1..key.len()-1]));
+                                } else {
+                                    result.push_str(&format!("${}{}", array_name, key));
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                    result.push_str(&self.escape_perl_string(s));
+                }
+                StringPart::MapAccess(map_name, key) => {
+                    // Convert map access to Perl array/hash access
+                    // For now, assume "map" is a hash and others are indexed arrays
+                    if map_name == "map" {
+                        // Convert map[key] to $map{key} for associative arrays
+                        result.push_str(&format!("${}{{{}}}", map_name, key));
+                    } else {
+                        // Convert arr[key] to $arr[key] for indexed arrays
+                        result.push_str(&format!("${}[{}]", map_name, key));
+                    }
+                }
+                StringPart::Variable(var) => {
+                    // Convert shell variables to Perl variables
+                    // For printf format strings, preserve array length expressions
+                    if var == "#" {
+                        result.push_str("scalar(@ARGV)");
+                    } else if var == "@" {
+                        result.push_str("join(\" \", @ARGV)");
+                    } else if var == "1" {
+                        result.push_str("$_[0]");
+                    } else if var == "2" {
+                        result.push_str("$_[1]");
+                    } else if var == "3" {
+                        result.push_str("$_[2]");
+                    } else if var == "4" {
+                        result.push_str("$_[3]");
+                    } else if var == "5" {
+                        result.push_str("$_[4]");
+                    } else if var == "6" {
+                        result.push_str("$_[5]");
+                    } else if var == "7" {
+                        result.push_str("$_[6]");
+                    } else if var == "8" {
+                        result.push_str("$_[7]");
+                    } else if var == "9" {
+                        result.push_str("$_[8]");
+                    } else {
+                        // Check for special shell array syntax
+                        if var.starts_with('#') && var.contains('[') {
+                            // This is #arr[@] - preserve as ${#arr[@]} for printf format strings
+                            result.push_str(&format!("${{{}}}", var));
+                        } else if var.starts_with('!') && var.ends_with("[@]") {
+                            // This is !map[@] - preserve as ${!map[@]} for printf format strings
+                            result.push_str(&format!("${{{}}}", var));
+                        } else if var.starts_with('!') && var.contains('[') {
+                            // This is !map[key] - preserve as ${!map[key]} for printf format strings
+                            result.push_str(&format!("${{{}}}", var));
+                        } else if var.starts_with('!') {
+                            // This is !map - preserve as ${!map} for printf format strings
+                            result.push_str(&format!("${{{}}}", var));
+                        } else if var.ends_with("[@]") {
+                            // This is arr[@] - preserve as ${arr[@]} for printf format strings
+                            result.push_str(&format!("${{{}}}", var));
+                        } else if var.contains('[') && var.ends_with(']') {
+                            // This is arr[1] - preserve as ${arr[1]} for printf format strings
+                            result.push_str(&format!("${{{}}}", var));
+                        } else {
+                            // For simple variable names, use ${var} to preserve shell syntax
+                            result.push_str(&format!("${{{}}}", var));
+                        }
+                    }
+                }
+                StringPart::Arithmetic(arith) => {
+                    // Convert shell arithmetic to Perl
+                    let expr = self.convert_arithmetic_to_perl(&arith.expression);
+                    result.push_str(&expr);
+                }
+                StringPart::CommandSubstitution(_) => {
+                    // TODO: implement command substitution
+                    result.push_str("''");
+                }
+            }
+        }
+        
+        result
+    }
+
     fn convert_string_interpolation_to_perl(&self, interp: &StringInterpolation) -> String {
         let mut result = String::new();
         
-
+        // Special case: if we have only one part and it's a special variable that should be evaluated
+        if interp.parts.len() == 1 {
+            if let StringPart::Variable(var) = &interp.parts[0] {
+                if var.starts_with('#') && var.contains('[') {
+                    // This is #arr[@] - convert to scalar(@arr) in Perl without quotes
+                    if let Some(bracket_start) = var.find('[') {
+                        let array_name = &var[1..bracket_start]; // Skip the # prefix
+                        return format!("scalar(@{})", array_name);
+                    }
+                } else if var.starts_with('!') && var.ends_with("[@]") {
+                    // This is !map[@] - convert to keys(%map) in Perl without quotes
+                    let array_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
+                    return format!("keys(%{})", array_name);
+                }
+            }
+        }
         
         for part in &interp.parts {
             match part {
@@ -1878,6 +2157,8 @@ impl PerlGenerator {
                     eprintln!("DEBUG: Variable starts with '!': {}", var.starts_with('!'));
                     eprintln!("DEBUG: Variable ends with '[@]': {}", var.ends_with("[@]"));
                     eprintln!("DEBUG: Variable contains '[': {}", var.contains('['));
+                    eprintln!("DEBUG: Variable length: {}", var.len());
+                    eprintln!("DEBUG: Variable bytes: {:?}", var.as_bytes());
                     if var == "#" {
                         result.push_str("scalar(@ARGV)");
                     } else if var == "@" {
@@ -1904,8 +2185,11 @@ impl PerlGenerator {
                         // Check for special shell array syntax
                         if var.starts_with('#') && var.contains('[') {
                             // This is #arr[@] - convert to scalar(@arr) in Perl
+                            eprintln!("DEBUG: Found #arr[@] pattern, converting to scalar(@arr)");
                             if let Some(bracket_start) = var.find('[') {
                                 let array_name = &var[1..bracket_start]; // Skip the # prefix
+                                eprintln!("DEBUG: Array name extracted from #arr[@]: '{}'", array_name);
+                                // For scalar functions, we need to ensure they're evaluated, not treated as strings
                                 result.push_str(&format!("scalar(@{})", array_name));
                             } else {
                                 result.push_str(&format!("${}", var));

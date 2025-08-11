@@ -658,7 +658,7 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
                 if let Some(token) = lexer.peek() {
                     let current_pos = lexer.current_position();
                     let (line, col) = lexer.offset_to_line_col(current_pos);
-                    lexer_output.push_str(&format!("{:?} at {}:{}\n", token, line, col));
+                    lexer_output.push_str(&format!("{:?} at {}:{}; ", token, line, col));
                     lexer.next(); // Advance to next token
                     token_count += 1;
                 } else {
@@ -667,7 +667,7 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
             }
             
             if token_count >= 1000 {
-                lexer_output.push_str("... (lexer output truncated at 1000 tokens)\n");
+                lexer_output.push_str("... (lexer output truncated at 1000 tokens)");
             }
             
             return Err(format!("Failed to parse {}: {:?}\n\nLexer output:\n{}", filename, e, lexer_output)); 
