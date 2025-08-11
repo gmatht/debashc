@@ -1642,8 +1642,102 @@ impl PerlGenerator {
             for (_i, command) in pipeline.commands.iter().enumerate().skip(1) {
                 if let Command::Simple(cmd) = command {
                     if cmd.name == "sort" {
-                        // Handle sort command specially - sort lines, not words
-                        output.push_str(&format!("$output_{} = join(\"\\n\", sort(split(/\\n/, $output_{})));\n", pipeline_id, pipeline_id));
+                        // Handle sort command with flags
+                        let mut sort_flags = String::new();
+                        for arg in &cmd.args {
+                            if let Word::Literal(lit) = arg {
+                                sort_flags.push_str(lit);
+                            }
+                        }
+                        
+                        if sort_flags.contains('r') {
+                            // Reverse sort
+                            if sort_flags.contains('n') {
+                                // Numeric reverse sort
+                                output.push_str(&format!("$output_{} = join(\"\\n\", reverse(sort {{ $a <=> $b }} split(/\\n/, $output_{})));\n", pipeline_id, pipeline_id));
+                            } else {
+                                // String reverse sort
+                                output.push_str(&format!("$output_{} = join(\"\\n\", reverse(sort(split(/\\n/, $output_{}))));\n", pipeline_id, pipeline_id));
+                            }
+                        } else if sort_flags.contains('n') {
+                            // Numeric sort
+                            output.push_str(&format!("$output_{} = join(\"\\n\", sort {{ $a <=> $b }} split(/\\n/, $output_{}));\n", pipeline_id, pipeline_id));
+                        } else {
+                            // Default string sort
+                            output.push_str(&format!("$output_{} = join(\"\\n\", sort(split(/\\n/, $output_{})));\n", pipeline_id, pipeline_id));
+                        }
+                    } else if cmd.name == "uniq" {
+                        // Handle uniq command with flags
+                        let mut uniq_flags = String::new();
+                        for arg in &cmd.args {
+                            if let Word::Literal(lit) = arg {
+                                uniq_flags.push_str(lit);
+                            }
+                        }
+                        
+                        if uniq_flags.contains('c') {
+                            // Count occurrences
+                            output.push_str(&format!("my %count_{};\n", pipeline_id));
+                            output.push_str(&format!("for my $line (split(/\\n/, $output_{})) {{\n", pipeline_id));
+                            output.push_str(&format!("    $count_{}{{$line}}++;\n", pipeline_id));
+                            output.push_str("}\n");
+                            output.push_str(&format!("my @uniq_result_{};\n", pipeline_id));
+                            output.push_str(&format!("for my $key (keys %count_{}) {{\n", pipeline_id));
+                            output.push_str(&format!("    push @uniq_result_{}, \"$count_{}{{$key} $key}\";\n", pipeline_id, pipeline_id));
+                            output.push_str("}\n");
+                            output.push_str(&format!("$output_{} = join(\"\\n\", @uniq_result_{});\n", pipeline_id, pipeline_id));
+                        } else {
+                            // Default uniq behavior
+                            output.push_str(&format!("my @lines_{} = split(/\\n/, $output_{});\n", pipeline_id, pipeline_id));
+                            output.push_str(&format!("my @uniq_lines_{};\n", pipeline_id));
+                            output.push_str(&format!("my $prev_{};\n", pipeline_id));
+                            output.push_str(&format!("for my $line (@lines_{}) {{\n", pipeline_id));
+                            output.push_str(&format!("    if (!defined($prev_{}) || $line ne $prev_{}) {{\n", pipeline_id, pipeline_id));
+                            output.push_str(&format!("        push @uniq_lines_{}, $line;\n", pipeline_id));
+                            output.push_str(&format!("        $prev_{} = $line;\n", pipeline_id));
+                            output.push_str("    }\n");
+                            output.push_str("}\n");
+                            output.push_str(&format!("$output_{} = join(\"\\n\", @uniq_lines_{});\n", pipeline_id, pipeline_id));
+                        }
+                    } else if cmd.name == "wc" {
+                        // Handle wc command with flags
+                        let mut wc_flags = String::new();
+                        for arg in &cmd.args {
+                            if let Word::Literal(lit) = arg {
+                                wc_flags.push_str(lit);
+                            }
+                        }
+                        
+                        if wc_flags.contains('l') {
+                            // Count lines
+                            output.push_str(&format!("$output_{} = scalar(split(/\\n/, $output_{}));\n", pipeline_id, pipeline_id));
+                        } else if wc_flags.contains('w') {
+                            // Count words
+                            output.push_str(&format!("$output_{} = scalar(split(/\\s+/, $output_{}));\n", pipeline_id, pipeline_id));
+                        } else if wc_flags.contains('c') {
+                            // Count characters
+                            output.push_str(&format!("$output_{} = length($output_{});\n", pipeline_id, pipeline_id));
+                        } else {
+                            // Default: count lines, words, characters
+                            output.push_str(&format!("my $lines_{} = scalar(split(/\\n/, $output_{}));\n", pipeline_id, pipeline_id));
+                            output.push_str(&format!("my $words_{} = scalar(split(/\\s+/, $output_{}));\n", pipeline_id, pipeline_id));
+                            output.push_str(&format!("my $chars_{} = length($output_{});\n", pipeline_id, pipeline_id));
+                            output.push_str(&format!("$output_{} = \"$lines_{} $words_{} $chars_{}\";\n", pipeline_id, pipeline_id, pipeline_id, pipeline_id));
+                        }
+                    } else if cmd.name == "grep" {
+                        // Handle grep command
+                        let pattern = if let Some(arg) = cmd.args.first() {
+                            self.word_to_perl(arg)
+                        } else {
+                            "".to_string()
+                        };
+                        output.push_str(&format!("my @grep_lines_{};\n", pipeline_id));
+                        output.push_str(&format!("for my $line (split(/\\n/, $output_{})) {{\n", pipeline_id));
+                        output.push_str(&format!("    if ($line =~ /{}/) {{\n", pattern));
+                        output.push_str(&format!("        push @grep_lines_{}, $line;\n", pipeline_id));
+                        output.push_str("    }\n");
+                        output.push_str("}\n");
+                        output.push_str(&format!("$output_{} = join(\"\\n\", @grep_lines_{});\n", pipeline_id, pipeline_id));
                     } else {
                         // Other commands - pipe through
                         let cmd_str = self.command_to_string(command);
