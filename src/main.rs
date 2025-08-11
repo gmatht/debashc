@@ -115,8 +115,15 @@ fn main() {
         return;
     }
     
-    // Parse AST formatting options
+    // Check if this is --next-fail and disable DEBUG output early
+    if command == "--next-fail" {
+        set_debug_enabled(false);
+    }
+    
+    // Parse AST formatting options and input/output options
     let mut ast_options = AstFormatOptions::default();
+    let mut input_file: Option<String> = None;
+    let mut output_file: Option<String> = None;
     let mut i = 2;
     while i < args.len() {
         match args[i].as_str() {
@@ -153,6 +160,24 @@ fn main() {
                 ast_options.newlines = false;
                 debug_println!("DEBUG: Set --ast-no-newlines: compact={}, indent={}, newlines={}", 
                         ast_options.compact, ast_options.indent, ast_options.newlines);
+            }
+            "-i" => {
+                if i + 1 < args.len() {
+                    input_file = Some(args[i + 1].clone());
+                    i += 1; // Skip the next argument since it's the filename
+                } else {
+                    println!("Error: -i requires a filename");
+                    return;
+                }
+            }
+            "-o" => {
+                if i + 1 < args.len() {
+                    output_file = Some(args[i + 1].clone());
+                    i += 1; // Skip the next argument since it's the filename
+                } else {
+                    println!("Error: -o requires a filename");
+                    return;
+                }
             }
             _ => {
                 // This might be a filename or other argument
@@ -407,7 +432,173 @@ fn main() {
             interactive_mode();
         }
         _ => {
-            println!("Unknown command: {}", command);
+            // Handle input file option
+            if let Some(input_filename) = &input_file {
+                // Always treat as input file when -i is specified
+                match fs::read_to_string(input_filename) {
+                    Ok(content) => {
+                        println!("Processing input file: {}", input_filename);
+                        // Parse the shell script
+                        let commands = match Parser::new(&content).parse() {
+                            Ok(c) => c,
+                            Err(e) => { 
+                                println!("Parse error: {}", e); 
+                                return; 
+                            }
+                        };
+                        
+                        // Generate Perl code
+                        let mut gen = PerlGenerator::new();
+                        let code = gen.generate(&commands);
+                        
+                        // Handle output file option
+                        if let Some(output_filename) = &output_file {
+                            // Write to output file
+                            match fs::write(output_filename, &code) {
+                                Ok(_) => println!("Generated Perl code written to: {}", output_filename),
+                                Err(e) => println!("Error writing to output file {}: {}", output_filename, e),
+                            }
+                        } else {
+                            // Show generated code and run it
+                            println!("Generated Perl code:");
+                            println!("{}", code);
+                            println!("\n--- Running generated Perl code ---");
+                            let tmp = "__tmp_run.pl";
+                            if fs::write(tmp, &code).is_ok() {
+                                let _ = std::process::Command::new("perl").arg(tmp).status();
+                                let _ = fs::remove_file(tmp);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("Error reading input file {}: {}", input_filename, e);
+                    }
+                }
+            } else if command.ends_with(".sh") {
+                // Run the shell script directly
+                match fs::read_to_string(command) {
+                    Ok(content) => {
+                        println!("Running shell script: {}", command);
+                        // Parse and run the shell script
+                        let commands = match Parser::new(&content).parse() {
+                            Ok(c) => c,
+                            Err(e) => { 
+                                println!("Parse error: {}", e); 
+                                return; 
+                            }
+                        };
+                        
+                        // Generate Perl code
+                        let mut gen = PerlGenerator::new();
+                        let code = gen.generate(&commands);
+                        
+                        // Handle output file option
+                        if let Some(output_filename) = &output_file {
+                            // Write to output file
+                            match fs::write(output_filename, &code) {
+                                Ok(_) => println!("Generated Perl code written to: {}", output_filename),
+                                Err(e) => println!("Error writing to output file {}: {}", output_filename, e),
+                            }
+                        } else {
+                            // Show generated code and run it
+                            println!("Generated Perl code:");
+                            println!("{}", code);
+                            println!("\n--- Running generated Perl code ---");
+                            let tmp = "__tmp_run.pl";
+                            if fs::write(tmp, &code).is_ok() {
+                                let _ = std::process::Command::new("perl").arg(tmp).status();
+                                let _ = fs::remove_file(tmp);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("Error reading file {}: {}", command, e);
+                    }
+                }
+            } else {
+                // Check if it looks like a shell command (contains shell-like syntax)
+                if command.contains("echo") || command.contains("ls") || command.contains("cat") || 
+                   command.contains("grep") || command.contains("find") || command.contains("cd") ||
+                   command.contains("pwd") || command.contains("mkdir") || command.contains("rm") ||
+                   command.contains("cp") || command.contains("mv") || command.contains("chmod") ||
+                   command.contains("chown") || command.contains("tar") || command.contains("gzip") ||
+                   command.contains("curl") || command.contains("wget") || command.contains("ssh") ||
+                   command.contains("scp") || command.contains("rsync") || command.contains("git") ||
+                   command.contains("docker") || command.contains("kubectl") || command.contains("npm") ||
+                   command.contains("pip") || command.contains("cargo") || command.contains("go") ||
+                   command.contains("java") || command.contains("python") || command.contains("node") ||
+                   command.contains("perl") || command.contains("ruby") || command.contains("php") ||
+                   command.contains("awk") || command.contains("sed") || command.contains("sort") ||
+                   command.contains("uniq") || command.contains("wc") || command.contains("head") ||
+                   command.contains("tail") || command.contains("cut") || command.contains("paste") ||
+                   command.contains("join") || command.contains("tr") || command.contains("tee") ||
+                   command.contains("xargs") || command.contains("parallel") || command.contains("time") ||
+                   command.contains("which") || command.contains("whereis") || command.contains("type") ||
+                   command.contains("help") || command.contains("man") || command.contains("info") ||
+                   command.contains("apropos") || command.contains("whatis") || command.contains("alias") ||
+                   command.contains("unalias") || command.contains("export") || command.contains("unset") ||
+                   command.contains("set") || command.contains("env") || command.contains("printenv") ||
+                   command.contains("history") || command.contains("fc") || command.contains("jobs") ||
+                   command.contains("bg") || command.contains("fg") || command.contains("kill") ||
+                   command.contains("wait") || command.contains("trap") || command.contains("exit") ||
+                   command.contains("return") || command.contains("break") || command.contains("continue") ||
+                   command.contains("shift") || command.contains("getopts") || command.contains("read") ||
+                   command.contains("printf") || command.contains("test") || command.contains("[") ||
+                   command.contains("if") || command.contains("then") || command.contains("else") ||
+                   command.contains("elif") || command.contains("fi") || command.contains("case") ||
+                   command.contains("esac") || command.contains("for") || command.contains("while") ||
+                   command.contains("until") || command.contains("do") || command.contains("done") ||
+                   command.contains("in") || command.contains("function") || command.contains("select") ||
+                   command.contains("until") || command.contains("(") || command.contains(")") ||
+                   command.contains("{") || command.contains("}") || command.contains(";") ||
+                   command.contains("|") || command.contains("&") || command.contains("&&") ||
+                   command.contains("||") || command.contains(">") || command.contains("<") ||
+                   command.contains(">>") || command.contains("<<") || command.contains("2>") ||
+                   command.contains("2>>") || command.contains("&>") || command.contains("&>>") ||
+                   command.contains("$") || command.contains("`") || command.contains("'") ||
+                   command.contains("\"") || command.contains("\\") || command.contains("=") ||
+                   command.contains("+") || command.contains("-") || command.contains("*") ||
+                   command.contains("/") || command.contains("%") || command.contains("!") ||
+                   command.contains("?") || command.contains("*") || command.contains("[") ||
+                   command.contains("]") || command.contains("^") || command.contains("~") {
+                    
+                    // Treat as shell command input
+                    println!("Running shell command: {}", command);
+                    // Parse and run the shell command
+                    let commands = match Parser::new(command).parse() {
+                        Ok(c) => c,
+                        Err(e) => { 
+                            println!("Parse error: {}", e); 
+                            return; 
+                        }
+                    };
+                    
+                    // Generate Perl code
+                    let mut gen = PerlGenerator::new();
+                    let code = gen.generate(&commands);
+                    
+                    // Handle output file option
+                    if let Some(output_filename) = &output_file {
+                        // Write to output file
+                        match fs::write(output_filename, &code) {
+                            Ok(_) => println!("Generated Perl code written to: {}", output_filename),
+                            Err(e) => println!("Error writing to output file {}: {}", output_filename, e),
+                        }
+                    } else {
+                        // Show generated code and run it
+                        println!("Generated Perl code:");
+                        println!("{}", code);
+                        println!("\n--- Running generated Perl code ---");
+                        let tmp = "__tmp_run.pl";
+                        if fs::write(tmp, &code).is_ok() {
+                            let _ = std::process::Command::new("perl").arg(tmp).status();
+                            let _ = fs::remove_file(tmp);
+                        }
+                    }
+                } else {
+                    println!("Unknown command: {}", command);
+                }
+            }
         }
     }
 }
@@ -1778,6 +1969,13 @@ fn show_help(program_name: &str) {
     println!("  file --run <lang> <filename>   - Generate and run code from file");
     println!("  Supported languages: perl, python, rust, lua, js, ps");
     println!();
+    println!("INPUT/OUTPUT OPTIONS:");
+    println!();
+    println!("  -i <filename>                  - Always treat as input file (even if doesn't end in .sh)");
+    println!("  -o <filename>                  - Output translated code to file instead of running it");
+    println!("  <filename>.sh                  - Run shell script directly (auto-detected)");
+    println!("  <shell_command>                - Run shell command directly (auto-detected)");
+    println!();
     println!("TESTING OPTIONS:");
     println!();
     println!("  --test-file <lang> <filename>  - Compare outputs of .sh vs translated code");
@@ -1806,6 +2004,12 @@ fn show_help(program_name: &str) {
     println!("  {} --next-fail", program_name);
     println!("  {} --next-fail perl python", program_name);
     println!("  {} --next-fail rust --ast-pretty", program_name);
+    println!();
+    println!("DIRECT EXECUTION EXAMPLES:");
+    println!("  {} examples/simple.sh           - Run shell script directly", program_name);
+    println!("  {} 'echo Hello World!'          - Run shell command directly", program_name);
+    println!("  {} -i myfile.txt -o output.pl   - Convert input file to Perl output file", program_name);
+    println!("  {} -i script.txt                - Convert input file and run generated Perl", program_name);
     println!();
     println!("DESCRIPTION:");
     println!("  sh2perl is a tool that translates shell scripts to various programming");

@@ -1720,6 +1720,53 @@ impl PerlGenerator {
                             let escaped_cmd = cmd_str.replace("'", "'\"'\"'");
                             output.push_str(&format!("$output_{} = `{}`;\n", pipeline_id, escaped_cmd));
                         }
+                    } else if cmd.name == "ls" {
+                        // Handle ls command natively in Perl
+                        let mut ls_args = Vec::new();
+                        for arg in &cmd.args {
+                            match arg {
+                                Word::Literal(s) => ls_args.push(s.clone()),
+                                Word::StringInterpolation(interp) => ls_args.push(self.convert_string_interpolation_to_perl(interp)),
+                                _ => ls_args.push(self.word_to_perl(arg))
+                            }
+                        }
+                        
+                        let dir = if ls_args.is_empty() { "." } else { &ls_args[0] };
+                        output.push_str(&format!("my @ls_files_{};\n", pipeline_id));
+                        output.push_str(&format!("if (opendir(my $dh_{}, '{}')) {{\n", pipeline_id, dir));
+                        output.push_str(&format!("    while (my $file = readdir($dh_{})) {{\n", pipeline_id));
+                        output.push_str(&format!("        next if $file eq '.' || $file eq '..';\n"));
+                        output.push_str(&format!("        push @ls_files_{}, $file;\n", pipeline_id));
+                        output.push_str("    }\n");
+                        output.push_str(&format!("    closedir($dh_{});\n", pipeline_id));
+                        output.push_str("}\n");
+                        output.push_str(&format!("$output_{} = join(\"\\n\", @ls_files_{});\n", pipeline_id, pipeline_id));
+                    } else if cmd.name == "cat" {
+                        // Handle cat command natively in Perl
+                        let mut cat_args = Vec::new();
+                        for arg in &cmd.args {
+                            match arg {
+                                Word::Literal(s) => cat_args.push(s.clone()),
+                                Word::StringInterpolation(interp) => cat_args.push(self.convert_string_interpolation_to_perl(interp)),
+                                _ => cat_args.push(self.word_to_perl(arg))
+                            }
+                        }
+                        
+                        if cat_args.is_empty() {
+                            // No arguments - read from stdin (not implemented)
+                            output.push_str(&format!("$output_{} = '';\n", pipeline_id));
+                        } else {
+                            // Read from file(s)
+                            let file = &cat_args[0];
+                            output.push_str(&format!("my $cat_content_{} = '';\n", pipeline_id));
+                            output.push_str(&format!("if (open(my $fh_{}, '<', '{}')) {{\n", pipeline_id, file));
+                            output.push_str(&format!("    while (my $line = <$fh_{}>) {{\n", pipeline_id));
+                            output.push_str(&format!("        $cat_content_{} .= $line;\n", pipeline_id));
+                            output.push_str("    }\n");
+                            output.push_str(&format!("    close($fh_{});\n", pipeline_id));
+                            output.push_str("}\n");
+                            output.push_str(&format!("$output_{} = $cat_content_{};\n", pipeline_id, pipeline_id));
+                        }
                     } else {
                         // First command - capture output using system call
                         output.push_str(&format!("$output_{} = `{}`;\n", pipeline_id, self.command_to_string(&pipeline.commands[0])));
