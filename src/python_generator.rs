@@ -616,6 +616,8 @@ impl PythonGenerator {
                 }
             }
             Word::MapAccess(_map_name, key) => format!("map.get('{}', '')", key), // TODO: implement map access
+            Word::MapKeys(_map_name) => "list(map.keys())".to_string(), // TODO: implement map keys
+            Word::MapLength(_map_name) => "len(map)".to_string(), // TODO: implement map length
             Word::CommandSubstitution(_) => "''".to_string(), // TODO: implement command substitution
             Word::StringInterpolation(_) => "''".to_string(), // TODO: implement string interpolation
         }

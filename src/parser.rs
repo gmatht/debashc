@@ -1098,6 +1098,8 @@ impl Parser {
                                 StringPart::Literal(s) => result.push_str(s),
                                 StringPart::Variable(var) => result.push_str(&format!("${}", var)),
                                 StringPart::MapAccess(map_name, key) => result.push_str(&format!("${{{}}}[{}]", map_name, key)),
+                                StringPart::MapKeys(map_name) => result.push_str(&format!("${{!{}}}[@]", map_name)),
+                                StringPart::MapLength(map_name) => result.push_str(&format!("${{#{}}}[@]", map_name)),
                                 StringPart::Arithmetic(expr) => result.push_str(&expr.expression),
                                 StringPart::CommandSubstitution(_) => result.push_str("$(...)"),
                             }
@@ -1199,13 +1201,13 @@ impl Parser {
                 // Parse ${#...} expansions (array length)
                 self.lexer.next(); // consume the token
                 let var_name = self.parse_braced_variable_name()?;
-                Ok(Word::Variable(format!("#{}", var_name)))
+                Ok(Word::MapLength(var_name))
             }
             Some(Token::DollarBraceBang) => {
                 // Parse ${!...} expansions (associative array keys)
                 self.lexer.next(); // consume the token
                 let var_name = self.parse_braced_variable_name()?;
-                Ok(Word::Variable(format!("!{}", var_name)))
+                Ok(Word::MapKeys(var_name))
             }
             Some(Token::DollarBraceStar) => {
                 // Parse ${*...} expansions
@@ -1580,9 +1582,27 @@ impl Parser {
                         // Check if this is a special shell array syntax like #arr[@] or !map[@]
                         if brace_content.starts_with('#') && brace_content.contains('[') {
                             // This is ${#arr[@]} - array length
+                            if let Some(bracket_start) = brace_content.find('[') {
+                                if let Some(bracket_end) = brace_content.rfind(']') {
+                                    let array_name = &brace_content[1..bracket_start]; // Remove # prefix
+                                    // Create a MapLength StringPart
+                                    parts.push(StringPart::MapLength(array_name.to_string()));
+                                    continue; // Skip the regular variable handling
+                                }
+                            }
+                            // Fallback to regular variable if parsing fails
                             var_name = brace_content;
                         } else if brace_content.starts_with('!') && brace_content.contains('[') {
                             // This is ${!map[@]} - get keys of associative array
+                            if let Some(bracket_start) = brace_content.find('[') {
+                                if let Some(bracket_end) = brace_content.rfind(']') {
+                                    let map_name = &brace_content[1..bracket_start]; // Remove ! prefix
+                                    // Create a MapKeys StringPart
+                                    parts.push(StringPart::MapKeys(map_name.to_string()));
+                                    continue; // Skip the regular variable handling
+                                }
+                            }
+                            // Fallback to regular variable if parsing fails
                             var_name = brace_content;
                         } else if brace_content.contains('[') && brace_content.contains(']') {
                             // This is a map/array access like ${map[foo]} or ${arr[1]}

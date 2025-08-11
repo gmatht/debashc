@@ -99,6 +99,8 @@ pub enum Word {
     Literal(String),
     Variable(String),
     MapAccess(String, String), // map_name, key
+    MapKeys(String), // !map[@] -> get keys of associative array
+    MapLength(String), // #arr[@] -> get length of array
     Arithmetic(ArithmeticExpression),
     BraceExpansion(BraceExpansion),
     CommandSubstitution(Box<Command>),
@@ -118,6 +120,8 @@ impl Word {
             Word::Literal(s) => s.clone(),
             Word::Variable(var) => format!("${}", var),
             Word::MapAccess(map_name, key) => format!("{}[{}]", map_name, key),
+            Word::MapKeys(map_name) => format!("!{}[@]", map_name),
+            Word::MapLength(map_name) => format!("#{}[@]", map_name),
             Word::Arithmetic(expr) => expr.expression.clone(),
             Word::BraceExpansion(expansion) => {
                 let mut result = String::new();
@@ -157,6 +161,8 @@ impl Word {
                         StringPart::Literal(s) => result.push_str(s),
                         StringPart::Variable(var) => result.push_str(&format!("${}", var)),
                         StringPart::MapAccess(map_name, key) => result.push_str(&format!("${{{}}}[{}]", map_name, key)),
+                        StringPart::MapKeys(map_name) => result.push_str(&format!("${{!{}}}[@]", map_name)),
+                        StringPart::MapLength(map_name) => result.push_str(&format!("${{#{}}}[@]", map_name)),
                         StringPart::Arithmetic(expr) => result.push_str(&expr.expression),
                         StringPart::CommandSubstitution(_) => result.push_str("$(...)"),
                     }
@@ -184,6 +190,8 @@ impl Word {
         match self {
             Word::Variable(var) => Some(var),
             Word::MapAccess(map_name, _) => Some(map_name),
+            Word::MapKeys(map_name) => Some(map_name),
+            Word::MapLength(map_name) => Some(map_name),
             _ => None,
         }
     }
@@ -194,6 +202,8 @@ impl Word {
             Word::Literal(s) => s.contains(ch),
             Word::Variable(var) => var.contains(ch),
             Word::MapAccess(map_name, key) => map_name.contains(ch) || key.contains(ch),
+            Word::MapKeys(map_name) => map_name.contains(ch),
+            Word::MapLength(map_name) => map_name.contains(ch),
             Word::Arithmetic(expr) => expr.expression.contains(ch),
             Word::BraceExpansion(expansion) => {
                 if let Some(ref prefix) = expansion.prefix {
@@ -227,6 +237,8 @@ impl Word {
                         StringPart::Literal(s) => { if s.contains(ch) { return true; } }
                         StringPart::Variable(var) => { if var.contains(ch) { return true; } }
                         StringPart::MapAccess(map_name, key) => { if map_name.contains(ch) || key.contains(ch) { return true; } }
+                        StringPart::MapKeys(map_name) => { if map_name.contains(ch) { return true; } }
+                        StringPart::MapLength(map_name) => { if map_name.contains(ch) { return true; } }
                         StringPart::Arithmetic(expr) => { if expr.expression.contains(ch) { return true; } }
                         StringPart::CommandSubstitution(_) => { return false; }
                     }
@@ -248,6 +260,8 @@ impl Word {
                 }
                 result
             }
+            Word::MapKeys(map_name) => map_name.splitn(n, pat).map(|s| s.to_string()).collect(),
+            Word::MapLength(map_name) => map_name.splitn(n, pat).map(|s| s.to_string()).collect(),
             Word::Arithmetic(expr) => expr.expression.splitn(n, pat).map(|s| s.to_string()).collect(),
             _ => vec![self.to_string()],
         }
@@ -265,6 +279,8 @@ impl Word {
                     None
                 }
             }
+            Word::MapKeys(map_name) => map_name.strip_prefix(prefix).map(|s| s.to_string()),
+            Word::MapLength(map_name) => map_name.strip_prefix(prefix).map(|s| s.to_string()),
             Word::Arithmetic(expr) => expr.expression.strip_prefix(prefix).map(|s| s.to_string()),
             _ => None,
         }
@@ -282,6 +298,8 @@ impl Word {
                     None
                 }
             }
+            Word::MapKeys(map_name) => map_name.strip_prefix(prefix).map(|s| s.to_string()),
+            Word::MapLength(map_name) => map_name.strip_prefix(prefix).map(|s| s.to_string()),
             Word::Arithmetic(expr) => expr.expression.strip_prefix(prefix).map(|s| s.to_string()),
             _ => None,
         }
@@ -297,6 +315,8 @@ impl Word {
                 let new_key = key.replace(from, to);
                 format!("{}[{}]", new_map_name, new_key)
             }
+            Word::MapKeys(map_name) => map_name.replace(from, to),
+            Word::MapLength(map_name) => map_name.replace(from, to),
             Word::Arithmetic(expr) => expr.expression.replace(from, to),
             _ => self.to_string(),
         }
@@ -312,6 +332,8 @@ impl Word {
                 let new_key = key.replace(from, to);
                 format!("{}[{}]", new_map_name, new_key)
             }
+            Word::MapKeys(map_name) => map_name.replace(from, to),
+            Word::MapLength(map_name) => map_name.replace(from, to),
             Word::Arithmetic(expr) => expr.expression.replace(from, to),
             _ => self.to_string(),
         }
@@ -334,6 +356,8 @@ impl PartialEq<str> for Word {
         match self {
             Word::Literal(s) => s == other,
             Word::Variable(var) => var == other,
+            Word::MapKeys(map_name) => map_name == other,
+            Word::MapLength(map_name) => map_name == other,
             Word::Arithmetic(expr) => expr.expression == other,
             _ => false,
         }
@@ -415,6 +439,8 @@ pub enum StringPart {
     Literal(String),
     Variable(String),
     MapAccess(String, String), // map_name, key
+    MapKeys(String), // !map[@] -> get keys of associative array
+    MapLength(String), // #arr[@] -> get length of array
     Arithmetic(ArithmeticExpression),
     CommandSubstitution(Box<Command>),
 } 

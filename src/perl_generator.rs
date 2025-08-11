@@ -7,11 +7,28 @@ pub struct PerlGenerator {
     declared_locals: HashSet<String>,
     declared_functions: HashSet<String>,
     subshell_depth: usize,
+    file_handle_counter: usize,
 }
 
 impl PerlGenerator {
     pub fn new() -> Self {
-        Self { indent_level: 0, declared_locals: HashSet::new(), declared_functions: HashSet::new(), subshell_depth: 0 }
+        Self { 
+            indent_level: 0, 
+            declared_locals: HashSet::new(), 
+            declared_functions: HashSet::new(), 
+            subshell_depth: 0,
+            file_handle_counter: 0,
+        }
+    }
+
+    fn get_unique_file_handle(&mut self) -> String {
+        self.file_handle_counter += 1;
+        format!("$fh_{}", self.file_handle_counter)
+    }
+
+    fn get_unique_dir_handle(&mut self) -> String {
+        self.file_handle_counter += 1;
+        format!("$dh_{}", self.file_handle_counter)
     }
 
     pub fn generate(&mut self, commands: &[Command]) -> String {
@@ -203,17 +220,21 @@ impl PerlGenerator {
                     output.push_str("print(join(\" \", @ARGV) . \"\\n\");\n");
                 } else if let Word::Variable(var) = arg {
                     // Handle special array and hash operations
-                    if var.starts_with('#') && var.contains('[') {
+                    if var.starts_with('#') && var.ends_with("[@]") {
                         // This is #arr[@] - convert to scalar(@arr) and concatenate with newline
-                        if let Some(bracket_start) = var.find('[') {
-                            let array_name = &var[1..bracket_start]; // Skip the # prefix
-                            output.push_str(&format!("print(scalar(@{}) . \"\\n\");\n", array_name));
-                        } else {
-                            output.push_str(&format!("print(\"${}\\n\");\n", var));
-                        }
+                        let array_name = &var[1..var.len()-3]; // Remove # prefix and [@] suffix
+                        output.push_str(&format!("print(scalar(@{}) . \"\\n\");\n", array_name));
+                    } else if var.starts_with('#') && var.ends_with("[*]") {
+                        // This is #arr[*] - convert to scalar(@arr) and concatenate with newline
+                        let array_name = &var[1..var.len()-3]; // Remove # prefix and [*] suffix
+                        output.push_str(&format!("print(scalar(@{}) . \"\\n\");\n", array_name));
                     } else if var.starts_with('!') && var.ends_with("[@]") {
                         // This is !map[@] - convert to keys(%map) and concatenate with newline
                         let array_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
+                        output.push_str(&format!("print(join(\" \", keys(%{})) . \"\\n\");\n", array_name));
+                    } else if var.starts_with('!') && var.ends_with("[*]") {
+                        // This is !map[*] - convert to keys(%map) and concatenate with newline
+                        let array_name = &var[1..var.len()-3]; // Remove ! prefix and [*] suffix
                         output.push_str(&format!("print(join(\" \", keys(%{})) . \"\\n\");\n", array_name));
                     } else {
                         // Handle other variables
@@ -327,9 +348,31 @@ impl PerlGenerator {
                                 output.push_str("print(scalar(@ARGV) . \"\\n\");\n");
                             } else if var == "@" {
                                 output.push_str("print(join(\" \", @ARGV) . \"\\n\");\n");
+                            } else if var.starts_with('#') && var.ends_with("[@]") {
+                                // This is #arr[@] - convert to scalar(@arr) and print
+                                let array_name = &var[1..var.len()-3]; // Remove # prefix and [@] suffix
+                                output.push_str(&format!("print(scalar(@{}) . \"\\n\");\n", array_name));
+                            } else if var.starts_with('#') && var.ends_with("[*]") {
+                                // This is #arr[*] - convert to scalar(@arr) and print
+                                let array_name = &var[1..var.len()-3]; // Remove # prefix and [*] suffix
+                                output.push_str(&format!("print(scalar(@{}) . \"\\n\");\n", array_name));
+                            } else if var.starts_with('!') && var.ends_with("[@]") {
+                                // This is !map[@] - convert to keys(%map) and print
+                                let array_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
+                                output.push_str(&format!("print(join(\" \", keys(%{})) . \"\\n\");\n", array_name));
+                            } else if var.starts_with('!') && var.ends_with("[*]") {
+                                // This is !map[*] - convert to keys(%map) and print
+                                let array_name = &var[1..var.len()-3]; // Remove ! prefix and [*] suffix
+                                output.push_str(&format!("print(join(\" \", keys(%{})) . \"\\n\");\n", array_name));
                             } else {
                                 output.push_str(&format!("print(\"${}\\n\");\n", var));
                             }
+                        } else if let StringPart::MapLength(map_name) = &interp.parts[0] {
+                            // This is ${#arr[@]} - convert to scalar(@arr) and print
+                            output.push_str(&format!("print(scalar(@{}) . \"\\n\");\n", map_name));
+                        } else if let StringPart::MapKeys(map_name) = &interp.parts[0] {
+                            // This is ${!map[@]} - convert to keys(%map) and print
+                            output.push_str(&format!("print(join(\" \", keys(%{})) . \"\\n\");\n", map_name));
                         } else {
                             let content = self.convert_string_interpolation_to_perl(interp);
                             output.push_str(&format!("print(\"{}\\n\");\n", content));
@@ -449,7 +492,8 @@ impl PerlGenerator {
                         if let Word::BraceExpansion(expansion) = &cmd.args[i] {
                             // Reconstruct the pattern: prefix + brace_expansion + suffix
                             let prefix = self.word_to_perl(&cmd.args[i-1]);
-                            let suffix = self.word_to_perl(&cmd.args[i+1]);
+                            // Concatenate all remaining arguments after the brace expansion
+                            let suffix: String = cmd.args.iter().skip(i+1).map(|arg| self.word_to_perl(arg)).collect();
                             
                             if expansion.items.len() == 1 {
                                 match &expansion.items[0] {
@@ -563,8 +607,9 @@ impl PerlGenerator {
                 
                 // Now create all the files
                 for file in all_files {
-                    output.push_str(&format!("open(my $fh, '>', '{}') or die \"Cannot create file: $!\\n\";\n", file));
-                    output.push_str("close($fh);\n");
+                    let fh = self.get_unique_file_handle();
+                    output.push_str(&format!("open(my {}, '>', '{}') or die \"Cannot create file: $!\\n\";\n", fh, file));
+                    output.push_str(&format!("close({});\n", fh));
                 }
             }
         } else if cmd.name == "cd" {
@@ -586,13 +631,14 @@ impl PerlGenerator {
                 for arg in expanded_args {
                     if arg.contains('*') {
                         // Handle glob patterns like file_*.txt
-                        output.push_str(&format!("opendir(my $dh_rm, '.') or die \"Cannot open directory: $!\\n\";\n"));
-                        output.push_str("while (my $file = readdir($dh_rm)) {\n");
+                        let dh = self.get_unique_dir_handle();
+                        output.push_str(&format!("opendir(my {}, '.') or die \"Cannot open directory: $!\\n\";\n", dh));
+                        output.push_str(&format!("while (my $file = readdir({})) {{\n", dh));
                         output.push_str(&format!("    if ($file =~ /^{}$/) {{\n", arg.replace('*', ".*")));
                         output.push_str("        unlink($file) or die \"Cannot remove file: $!\\n\";\n");
                         output.push_str("    }\n");
                         output.push_str("}\n");
-                        output.push_str("closedir($dh_rm);\n");
+                        output.push_str(&format!("closedir({});\n", dh));
                     } else {
                         // Regular file
                         output.push_str(&format!("unlink('{}') or die \"Cannot remove file: $!\\n\";\n", arg));
@@ -603,11 +649,12 @@ impl PerlGenerator {
             // Special handling for ls with brace expansion support
             if cmd.args.is_empty() {
                 // Default to current directory
-                output.push_str("opendir(my $dh_ls, '.') or die \"Cannot open directory: $!\\n\";\n");
-                output.push_str("while (my $file = readdir($dh_ls)) {\n");
+                let dh = self.get_unique_dir_handle();
+                output.push_str(&format!("opendir(my {}, '.') or die \"Cannot open directory: $!\\n\";\n", dh));
+                output.push_str(&format!("while (my $file = readdir({})) {{\n", dh));
                 output.push_str("    print(\"$file\\n\") unless $file =~ /^\\.\\.?$/;\n");
                 output.push_str("}\n");
-                output.push_str("closedir($dh_ls);\n");
+                output.push_str(&format!("closedir({});\n", dh));
             } else {
                 // Handle arguments with potential brace expansion
                 let mut expanded_args = Vec::new();
@@ -623,31 +670,34 @@ impl PerlGenerator {
                 
                 if expanded_args.is_empty() {
                     // No non-flag arguments, default to current directory
-                    output.push_str("opendir(my $dh_ls, '.') or die \"Cannot open directory: $!\\n\";\n");
-                    output.push_str("while (my $file = readdir($dh_ls)) {\n");
+                    let dh = self.get_unique_dir_handle();
+                    output.push_str(&format!("opendir(my {}, '.') or die \"Cannot open directory: $!\\n\";\n", dh));
+                    output.push_str(&format!("while (my $file = readdir({})) {{\n", dh));
                     output.push_str("    print(\"$file\\n\") unless $file =~ /^\\.\\.?$/;\n");
                     output.push_str("}\n");
-                    output.push_str("closedir($dh_ls);\n");
+                    output.push_str(&format!("closedir({});\n", dh));
                 } else {
                     // Handle each expanded argument
                     for arg in expanded_args {
                         if arg.contains('*') {
                             // Handle glob patterns like file_*.txt
                             let pattern = arg.replace('*', ".*");
-                            output.push_str(&format!("opendir(my $dh_ls_pattern, '.') or die \"Cannot open directory: $!\\n\";\n"));
-                            output.push_str("while (my $file = readdir($dh_ls_pattern)) {\n");
+                            let dh = self.get_unique_dir_handle();
+                            output.push_str(&format!("opendir(my {}, '.') or die \"Cannot open directory: $!\\n\";\n", dh));
+                            output.push_str(&format!("while (my $file = readdir({})) {{\n", dh));
                             output.push_str(&format!("    if ($file =~ /^{}$/) {{\n", pattern));
                             output.push_str("        print(\"$file\\n\");\n");
                             output.push_str("    }\n");
                             output.push_str("}\n");
-                            output.push_str("closedir($dh_ls_pattern);\n");
+                            output.push_str(&format!("closedir({});\n", dh));
                         } else {
                             // Regular directory/file
-                            output.push_str(&format!("opendir(my $dh_ls_dir, '{}') or die \"Cannot open directory: $!\\n\";\n", arg));
-                            output.push_str("while (my $file = readdir($dh_ls_dir)) {\n");
+                            let dh = self.get_unique_dir_handle();
+                            output.push_str(&format!("opendir(my {}, '{}') or die \"Cannot open directory: $!\\n\";\n", dh, arg));
+                            output.push_str(&format!("while (my $file = readdir({})) {{\n", dh));
                             output.push_str("    print(\"$file\\n\") unless $file =~ /^\\.\\.?$/;\n");
                             output.push_str("}\n");
-                            output.push_str("closedir($dh_ls_dir);\n");
+                            output.push_str(&format!("closedir({});\n", dh));
                         }
                     }
                 }
@@ -684,13 +734,14 @@ impl PerlGenerator {
                             output.push_str("    }\n");
                             output.push_str("}\n");
                         } else {
-                            output.push_str(&format!("open(my $fh, '<', '{}') or die \"Cannot open file: $!\\n\";\n", file));
-                            output.push_str(&format!("while (my $line = <$fh>) {{\n"));
+                            let fh = self.get_unique_file_handle();
+                            output.push_str(&format!("open(my {}, '<', '{}') or die \"Cannot open file: $!\\n\";\n", fh, file));
+                            output.push_str(&format!("while (my $line = <{}) {{\n", fh));
                             output.push_str(&format!("    if ($line =~ /({})/g) {{\n", pattern));
                             output.push_str("        print \"$1\\n\";\n");
                             output.push_str("    }\n");
                             output.push_str("}\n");
-                            output.push_str("close($fh);\n");
+                            output.push_str(&format!("close({});\n", fh));
                         }
                     } else {
                         if file == "STDIN" {
@@ -698,11 +749,12 @@ impl PerlGenerator {
                             output.push_str(&format!("    print($line) if $line =~ /{}/;\n", pattern));
                             output.push_str("}\n");
                         } else {
-                            output.push_str(&format!("open(my $fh, '<', '{}') or die \"Cannot open file: $!\\n\";\n", file));
-                            output.push_str(&format!("while (my $line = <$fh>) {{\n"));
+                            let fh = self.get_unique_file_handle();
+                            output.push_str(&format!("open(my {}, '<', '{}') or die \"Cannot open file: $!\\n\";\n", fh, file));
+                            output.push_str(&format!("while (my $line = <{}) {{\n", fh));
                             output.push_str(&format!("    print($line) if $line =~ /{}/;\n", pattern));
                             output.push_str("}\n");
-                            output.push_str("close($fh);\n");
+                            output.push_str(&format!("close({});\n", fh));
                         }
                     }
                 }
@@ -721,11 +773,12 @@ impl PerlGenerator {
             }
             if !printed_any {
                 for arg in &cmd.args {
-                    output.push_str(&format!("open(my $fh, '<', '{}') or die \"Cannot open file: $!\\n\";\n", arg));
-                    output.push_str("while (my $line = <$fh>) {\n");
+                    let fh = self.get_unique_file_handle();
+                    output.push_str(&format!("open(my {}, '<', '{}') or die \"Cannot open file: $!\\n\";\n", fh, arg));
+                    output.push_str(&format!("while (my $line = <{}) {{\n", fh));
                     output.push_str("    print($line);\n");
                     output.push_str("}\n");
-                    output.push_str("close($fh);\n");
+                    output.push_str(&format!("close({});\n", fh));
                 }
             }
         } else if cmd.name == "mkdir" {
@@ -988,9 +1041,10 @@ impl PerlGenerator {
                     if let Some(body) = &redir.heredoc_body {
                         // Create a temporary file with the string content
                         output.push_str(&format!("my $temp_content = {};\n", self.perl_string_literal(body)));
-                        output.push_str("open(my $temp_fh, '>', '/tmp/here_string_temp') or die \"Cannot create temp file: $!\\n\";\n");
-                        output.push_str("print $temp_fh $temp_content;\n");
-                        output.push_str("close($temp_fh);\n");
+                        let fh = self.get_unique_file_handle();
+                        output.push_str(&format!("open(my {}, '>', '/tmp/here_string_temp') or die \"Cannot create temp file: $!\\n\";\n", fh));
+                        output.push_str(&format!("print {} $temp_content;\n", fh));
+                        output.push_str(&format!("close({});\n", fh));
                         output.push_str("open(STDIN, '<', '/tmp/here_string_temp') or die \"Cannot open temp file: $!\\n\";\n");
                     }
                 }
@@ -1001,9 +1055,10 @@ impl PerlGenerator {
                         if let Some(body) = &redir.heredoc_body {
                             // Create a temporary file with the heredoc content
                             output.push_str(&format!("my $temp_content = {};\n", self.perl_string_literal(body)));
-                            output.push_str("open(my $temp_fh, '>', '/tmp/heredoc_temp') or die \"Cannot create temp file: $!\\n\";\n");
-                            output.push_str("print $temp_fh $temp_content;\n");
-                            output.push_str("close($temp_fh);\n");
+                            let fh = self.get_unique_file_handle();
+                            output.push_str(&format!("open(my {}, '>', '/tmp/heredoc_temp') or die \"Cannot create temp file: $!\\n\";\n", fh));
+                            output.push_str(&format!("print {} $temp_content;\n", fh));
+                            output.push_str(&format!("close({});\n", fh));
                             output.push_str("open(STDIN, '<', '/tmp/heredoc_temp') or die \"Cannot open temp file: $!\\n\";\n");
                         }
                     }
@@ -1674,6 +1729,9 @@ impl PerlGenerator {
                                     } else {
                                         format!("@{}", map_name)
                                     }
+                                } else if let StringPart::MapKeys(map_name) = &interp.parts[0] {
+                                    // This is ${!map[@]} - convert to keys(%map)
+                                    format!("keys(%{})", map_name)
                                 } else if let StringPart::Variable(var) = &interp.parts[0] {
                                     if var.starts_with("!") && var.ends_with("[@]") {
                                         // This is !map[@] - convert to keys(%map)
@@ -1729,6 +1787,10 @@ impl PerlGenerator {
                                                         // Key is a literal
                                                         format!("${}{{{}}}", map_name, key)
                                                     }
+                                                }
+                                                StringPart::MapKeys(map_name) => {
+                                                    // ${!map[@]} -> keys(%map)
+                                                    format!("keys(%{})", map_name)
                                                 }
                                                 _ => format!("{:?}", part)
                                             }
@@ -2097,6 +2159,9 @@ impl PerlGenerator {
                                 // Regular map access - wrap in quotes
                                 format!("\"${}{}\"", map_name, key)
                             }
+                        } else if let StringPart::MapKeys(map_name) = &interp.parts[0] {
+                            // This is ${!map[@]} - convert to keys(%map) without quotes
+                            format!("keys(%{})", map_name)
                         } else {
                             // Other parts - wrap in quotes
                             format!("\"{}\"", items[0])
@@ -2127,6 +2192,14 @@ impl PerlGenerator {
                         // Regular map access - wrap in quotes
                         format!("\"${}{}\"", map_name, key)
                     }
+                }
+                Word::MapKeys(map_name) => {
+                    // This is !map[@] - convert to keys(%map) without quotes
+                    format!("keys(%{})", map_name)
+                }
+                Word::MapLength(map_name) => {
+                    // This is #arr[@] - convert to scalar(@arr) without quotes
+                    format!("scalar(@{})", map_name)
                 }
                 _ => {
                     // Other word types - use proper word conversion
@@ -2316,134 +2389,27 @@ impl PerlGenerator {
     }
 
     fn perl_string_literal(&self, s: &str) -> String {
-        // Handle ANSI-C escape sequences
+        // Handle strings that already contain escape sequences
         let mut result = String::new();
-        let mut chars = s.chars().peekable();
         
-        while let Some(ch) = chars.next() {
-            if ch == '\\' {
-                if let Some(next_ch) = chars.next() {
-                    match next_ch {
-                        'n' => result.push_str("\\n"),
-                        't' => result.push_str("\\t"),
-                        'r' => result.push_str("\\r"),
-                        'a' => result.push_str("\\a"),
-                        'b' => result.push_str("\\b"),
-                        'f' => result.push_str("\\f"),
-                        'v' => result.push_str("\\v"),
-                        '\\' => result.push_str("\\\\"),
-                        '\'' => result.push_str("\\'"),
-                        '"' => result.push_str("\\\""),
-                        '0'..='7' => {
-                            // Octal escape sequence
-                            let mut octal = String::new();
-                            octal.push(next_ch);
-                            
-                            // Look ahead for up to 2 more octal digits
-                            for _ in 0..2 {
-                                if let Some(&octal_ch) = chars.peek() {
-                                    if octal_ch.is_ascii_digit() && octal_ch < '8' {
-                                        octal.push(chars.next().unwrap());
-                                    } else {
-                                        break;
-                                    }
-                                } else {
-                                    break;
-                                }
-                            }
-                            
-                            // Convert octal to decimal and then to char
-                            if let Ok(octal_val) = u32::from_str_radix(&octal, 8) {
-                                if let Some(c) = char::from_u32(octal_val) {
-                                    result.push(c);
-                                } else {
-                                    result.push_str(&format!("\\{:o}", octal_val));
-                                }
-                            } else {
-                                result.push_str(&format!("\\{}", octal));
-                            }
-                        }
-                        'x' => {
-                            // Hex escape sequence
-                            let mut hex = String::new();
-                            
-                            // Look ahead for up to 2 hex digits
-                            for _ in 0..2 {
-                                if let Some(&hex_ch) = chars.peek() {
-                                    if hex_ch.is_ascii_hexdigit() {
-                                        hex.push(chars.next().unwrap());
-                                    } else {
-                                        break;
-                                    }
-                                } else {
-                                    break;
-                                }
-                            }
-                            
-                            if !hex.is_empty() {
-                                if let Ok(hex_val) = u32::from_str_radix(&hex, 16) {
-                                    if let Some(c) = char::from_u32(hex_val) {
-                                        result.push(c);
-                                    } else {
-                                        result.push_str(&format!("\\x{}", hex));
-                                    }
-                                } else {
-                                    result.push_str(&format!("\\x{}", hex));
-                                }
-                            } else {
-                                result.push_str("\\x");
-                            }
-                        }
-                        'u' => {
-                            // Unicode escape sequence
-                            let mut unicode = String::new();
-                            
-                            // Look ahead for exactly 4 hex digits
-                            for _ in 0..4 {
-                                if let Some(&unicode_ch) = chars.peek() {
-                                    if unicode_ch.is_ascii_hexdigit() {
-                                        unicode.push(chars.next().unwrap());
-                                    } else {
-                                        break;
-                                    }
-                                } else {
-                                    break;
-                                }
-                            }
-                            
-                            if unicode.len() == 4 {
-                                if let Ok(unicode_val) = u32::from_str_radix(&unicode, 16) {
-                                    if let Some(c) = char::from_u32(unicode_val) {
-                                        result.push(c);
-                                    } else {
-                                        result.push_str(&format!("\\u{{{}}}", unicode));
-                                    }
-                                } else {
-                                    result.push_str(&format!("\\u{{{}}}", unicode));
-                                }
-                            } else {
-                                result.push_str(&format!("\\u{{{}}}", unicode));
-                            }
-                        }
-                        _ => {
-                            // Unknown escape sequence, preserve as-is
-                            result.push('\\');
-                            result.push(next_ch);
-                        }
-                    }
-                } else {
-                    // Backslash at end of string
-                    result.push('\\');
-                }
-            } else {
-                result.push(ch);
+        for ch in s.chars() {
+            match ch {
+                '\n' => result.push_str("\\n"),
+                '\t' => result.push_str("\\t"),
+                '\r' => result.push_str("\\r"),
+                '\x07' => result.push_str("\\a"),  // bell
+                '\x08' => result.push_str("\\b"),  // backspace
+                '\x0c' => result.push_str("\\f"),  // formfeed
+                '\x0b' => result.push_str("\\v"),  // vertical tab
+                '\\' => result.push_str("\\\\"),
+                '"' => result.push_str("\\\""),
+                '\'' => result.push_str("\\'"),
+                _ => result.push(ch),
             }
         }
         
-        // Format the result directly without double-escaping
-        // Only escape quotes and backslashes that aren't already escaped
-        let escaped_result = result.replace("\\", "\\\\").replace("\"", "\\\"");
-        format!("\"{}\"", escaped_result)
+        // Format the result as a Perl string literal
+        format!("\"{}\"", result)
     }
 
     fn convert_arithmetic_to_perl(&self, expr: &str) -> String {
@@ -2510,6 +2476,14 @@ impl PerlGenerator {
                         // Convert arr[key] to $arr[key] for indexed arrays
                         result.push_str(&format!("${}[{}]", map_name, key));
                     }
+                }
+                StringPart::MapKeys(map_name) => {
+                    // Convert ${!map[@]} to keys(%map) for printf format strings
+                    result.push_str(&format!("keys(%{})", map_name));
+                }
+                StringPart::MapLength(map_name) => {
+                    // Convert ${#arr[@]} to scalar(@arr) for printf format strings
+                    result.push_str(&format!("scalar(@{})", map_name));
                 }
                 StringPart::Variable(var) => {
                     // Convert shell variables to Perl variables
@@ -2583,15 +2557,21 @@ impl PerlGenerator {
         // Special case: if we have only one part and it's a special variable that should be evaluated
         if interp.parts.len() == 1 {
             if let StringPart::Variable(var) = &interp.parts[0] {
-                if var.starts_with('#') && var.contains('[') {
+                if var.starts_with('#') && var.ends_with("[@]") {
                     // This is #arr[@] - convert to scalar(@arr) in Perl without quotes
-                    if let Some(bracket_start) = var.find('[') {
-                        let array_name = &var[1..bracket_start]; // Skip the # prefix
-                        return format!("scalar(@{})", array_name);
-                    }
+                    let array_name = &var[1..var.len()-3]; // Remove # prefix and [@] suffix
+                    return format!("scalar(@{})", array_name);
+                } else if var.starts_with('#') && var.ends_with("[*]") {
+                    // This is #arr[*] - convert to scalar(@arr) in Perl without quotes
+                    let array_name = &var[1..var.len()-3]; // Remove # prefix and [*] suffix
+                    return format!("scalar(@{})", array_name);
                 } else if var.starts_with('!') && var.ends_with("[@]") {
                     // This is !map[@] - convert to keys(%map) in Perl without quotes
                     let array_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
+                    return format!("keys(%{})", array_name);
+                } else if var.starts_with('!') && var.ends_with("[*]") {
+                    // This is !map[*] - convert to keys(%map) in Perl without quotes
+                    let array_name = &var[1..var.len()-3]; // Remove ! prefix and [*] suffix
                     return format!("keys(%{})", array_name);
                 }
             }
@@ -2634,6 +2614,16 @@ impl PerlGenerator {
                         result.push_str(&format!("${}[{}]", map_name, key));
                     }
                 }
+                StringPart::MapKeys(map_name) => {
+                    // Convert ${!map[@]} to keys(%map) in Perl
+                    eprintln!("DEBUG: Processing MapKeys: map_name='{}'", map_name);
+                    result.push_str(&format!("keys(%{})", map_name));
+                }
+                StringPart::MapLength(map_name) => {
+                    // Convert ${#arr[@]} to scalar(@arr) in Perl
+                    eprintln!("DEBUG: Processing MapLength: map_name='{}'", map_name);
+                    result.push_str(&format!("scalar(@{})", map_name));
+                }
                 StringPart::Variable(var) => {
                     // Convert shell variables to Perl variables
                     eprintln!("DEBUG: Processing variable: '{}'", var);
@@ -2666,17 +2656,15 @@ impl PerlGenerator {
                         result.push_str("$_[8]");
                     } else {
                         // Check for special shell array syntax
-                        if var.starts_with('#') && var.contains('[') {
+                        if var.starts_with('#') && var.ends_with("[@]") {
                             // This is #arr[@] - convert to scalar(@arr) in Perl
-                            eprintln!("DEBUG: Found #arr[@] pattern, converting to scalar(@arr)");
-                            if let Some(bracket_start) = var.find('[') {
-                                let array_name = &var[1..bracket_start]; // Skip the # prefix
-                                eprintln!("DEBUG: Array name extracted from #arr[@]: '{}'", array_name);
-                                // For scalar functions, we need to ensure they're evaluated, not treated as strings
-                                result.push_str(&format!("scalar(@{})", array_name));
-                            } else {
-                                result.push_str(&format!("${}", var));
-                            }
+                            let array_name = &var[1..var.len()-3]; // Remove # prefix and [@] suffix
+                            // For scalar functions, we need to ensure they're evaluated, not treated as strings
+                            result.push_str(&format!("scalar(@{})", array_name));
+                        } else if var.starts_with('#') && var.ends_with("[*]") {
+                            // This is #arr[*] - convert to scalar(@arr) in Perl
+                            let array_name = &var[1..var.len()-3]; // Remove # prefix and [*] suffix
+                            result.push_str(&format!("scalar(@{})", array_name));
                         } else if var.starts_with('!') && var.ends_with("[@]") {
                             // This is !map[@] - convert to keys(%map) in Perl
                             eprintln!("DEBUG: Found !map[@] pattern, converting to keys(%map)");
@@ -2749,7 +2737,7 @@ impl PerlGenerator {
 
     fn word_to_perl(&self, word: &Word) -> String {
         match word {
-            Word::Literal(s) => self.perl_string_literal(s),
+            Word::Literal(s) => self.escape_perl_string(s),
             Word::Variable(var) => {
                 // Handle special array and hash operations
                 if var.starts_with('#') && var.ends_with("[@]") {
@@ -2779,6 +2767,14 @@ impl PerlGenerator {
                 } else {
                     format!("${}[{}]", map_name, key)
                 }
+            },
+            Word::MapKeys(map_name) => {
+                // ${!map[@]} -> keys(%map)
+                format!("keys(%{})", map_name)
+            },
+            Word::MapLength(map_name) => {
+                // ${#arr[@]} -> scalar(@arr)
+                format!("scalar(@{})", map_name)
             },
             Word::Arithmetic(expr) => self.convert_arithmetic_to_perl(&expr.expression),
             Word::BraceExpansion(expansion) => {
@@ -2920,6 +2916,14 @@ impl PerlGenerator {
                 } else {
                     format!("${}[{}]", map_name, key)
                 }
+            },
+            Word::MapKeys(map_name) => {
+                // ${!map[@]} -> keys(%map)
+                format!("keys(%{})", map_name)
+            },
+            Word::MapLength(map_name) => {
+                // ${#arr[@]} -> scalar(@arr)
+                format!("scalar(@{})", map_name)
             },
             Word::Arithmetic(expr) => self.convert_arithmetic_to_perl(&expr.expression),
             Word::BraceExpansion(expansion) => {
