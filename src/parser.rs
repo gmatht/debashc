@@ -1798,12 +1798,21 @@ impl Parser {
         let mut i = 0;
         
         while i < quoted_content.len() {
-            if quoted_content[i..].starts_with('$') { // TODO could this be replaced with .find()?
+            // Use find() to locate the next $ character more efficiently
+            if let Some(dollar_pos) = quoted_content[i..].find('$') {
+                // Add any literal content before the $ to parts
+                if dollar_pos > 0 {
+                    current_literal.push_str(&quoted_content[i..i + dollar_pos]);
+                }
+                
                 // Flush current literal if any
                 if !current_literal.is_empty() {
                     parts.push(StringPart::Literal(current_literal.clone()));
                     current_literal.clear();
                 }
+                
+                // Update position to the $ character
+                i += dollar_pos;
                 
                 // Parse variable or arithmetic
                 if quoted_content[i..].starts_with("$((") {
@@ -2046,8 +2055,9 @@ impl Parser {
                     i += 1;
                 }
             } else {
-                current_literal.push(quoted_content.chars().nth(i).unwrap_or(' '));
-                i += 1;
+                // No more $ characters found, add remaining content as literal
+                current_literal.push_str(&quoted_content[i..]);
+                break;
             }
         }
         
@@ -2065,7 +2075,7 @@ impl Parser {
         let mut var_name = String::new();
         let mut depth = 1; // We start after the opening {
         
-        println!("DEBUG: parse_braced_variable_name: Starting");
+
         
         // Skip the opening brace
         self.lexer.next();
@@ -2073,42 +2083,35 @@ impl Parser {
         while !self.lexer.is_eof() && depth > 0 {
             if let Some((start, end)) = self.lexer.get_span() {
                 let token = self.lexer.peek();
-                println!("DEBUG: parse_braced_variable_name: Token: {:?}, span: ({}, {})", token, start, end);
                 
                 match token {
                     Some(Token::BraceOpen) => {
                         depth += 1;
                         let text = self.lexer.get_text(start, end);
-                        println!("DEBUG: parse_braced_variable_name: BraceOpen, text: '{}', depth: {}", text, depth);
                         var_name.push_str(&text);
                         self.lexer.next();
                     }
                     Some(Token::BraceClose) => {
                         depth -= 1;
                         if depth == 0 {
-                            println!("DEBUG: parse_braced_variable_name: Closing brace, depth: {}", depth);
                             break;
                         } else {
                             let text = self.lexer.get_text(start, end);
-                            println!("DEBUG: parse_braced_variable_name: BraceClose, text: '{}', depth: {}", text, depth);
                             var_name.push_str(&text);
                             self.lexer.next();
                         }
                     }
                     _ => {
                         let text = self.lexer.get_text(start, end);
-                        println!("DEBUG: parse_braced_variable_name: Other token, text: '{}'", text);
                         var_name.push_str(&text);
                         self.lexer.next();
                     }
                 }
             } else {
-                println!("DEBUG: parse_braced_variable_name: No span available");
                 break;
             }
         }
         
-        println!("DEBUG: parse_braced_variable_name: Final var_name: '{}'", var_name);
         Ok(var_name)
     }
     

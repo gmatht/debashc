@@ -8,6 +8,7 @@ pub struct PerlGenerator {
     declared_functions: HashSet<String>,
     subshell_depth: usize,
     file_handle_counter: usize,
+    pipeline_counter: usize,
 }
 
 impl PerlGenerator {
@@ -18,6 +19,7 @@ impl PerlGenerator {
             declared_functions: HashSet::new(), 
             subshell_depth: 0,
             file_handle_counter: 0,
+            pipeline_counter: 0,
         }
     }
 
@@ -35,7 +37,8 @@ impl PerlGenerator {
         let mut output = String::new();
         output.push_str("#!/usr/bin/env perl\n");
         output.push_str("use strict;\n");
-        output.push_str("use warnings;\n\n");
+        output.push_str("use warnings;\n");
+        output.push_str("use File::Basename;\n\n");
 
         for command in commands {
             output.push_str(&self.generate_command(command));
@@ -1256,7 +1259,7 @@ impl PerlGenerator {
                 let pattern = parts[1].trim();
                 
                 // Convert to Perl regex matching
-                format!("{} =~ /{}/", var, pattern)
+                format!("({} =~ /{}/)", var, pattern)
             } else {
                 "0".to_string()
             }
@@ -1271,18 +1274,19 @@ impl PerlGenerator {
                     // Handle extglob patterns
                     let regex_pattern = self.convert_extglob_to_perl_regex(pattern);
                     if modifiers.nocasematch {
-                        format!("{} =~ /{}/i", var, regex_pattern)
+                        format!("({} =~ /{}/i)", var, regex_pattern)
                     } else {
-                        format!("{} =~ /{}/", var, regex_pattern)
+                        format!("({} =~ /{}/)", var, regex_pattern)
                     }
                 } else {
-                    // Regular pattern matching
+                    // Regular glob pattern matching - convert glob to regex
+                    let regex_pattern = self.convert_glob_to_regex(pattern);
                     if modifiers.nocasematch {
                         // Case-insensitive matching
-                        format!("lc({}) =~ /^{}$/i", var, pattern.replace("*", ".*"))
+                        format!("({} =~ /^{}$/i)", var, regex_pattern)
                     } else {
                         // Case-sensitive matching
-                        format!("{} =~ /^{}$/", var, pattern.replace("*", ".*"))
+                        format!("({} =~ /^{}$/)", var, regex_pattern)
                     }
                 }
             } else {
@@ -1299,9 +1303,9 @@ impl PerlGenerator {
                     // Handle extglob patterns
                     let regex_pattern = self.convert_extglob_to_perl_regex(pattern);
                     if modifiers.nocasematch {
-                        format!("{} !~ /{}/i", var, regex_pattern)
+                        format!("({} !~ /{}/i)", var, regex_pattern)
                     } else {
-                        format!("{} !~ /{}/", var, regex_pattern)
+                        format!("({} !~ /{}/)", var, regex_pattern)
                     }
                 } else {
                     // Regular pattern matching
@@ -1518,7 +1522,10 @@ impl PerlGenerator {
             output.push_str(&self.generate_command(&pipeline.commands[0]));
         } else if has_pipe {
             // Handle pipelines with for loops and other commands
-            output.push_str("my $output;\n");
+            // Use unique variable names for each pipeline to avoid redeclaration warnings
+            self.pipeline_counter += 1;
+            let pipeline_id = self.pipeline_counter;
+            output.push_str(&format!("my $output_{};\n", pipeline_id));
             
             // Check if the first command is a for loop
             if let Command::For(for_loop) = &pipeline.commands[0] {
@@ -1613,22 +1620,22 @@ impl PerlGenerator {
                             }
                             let echo_str = echo_parts.join(" . ");
                             output.push_str(&self.indent());
-                            output.push_str(&format!("$output .= {} . \"\\n\";\n", echo_str));
+                            output.push_str(&format!("$output_{} .= {} . \"\\n\";\n", pipeline_id, echo_str));
                         } else {
                             // For other commands, generate normally but capture output
                             output.push_str(&self.indent());
-                            output.push_str(&format!("$output .= `{}`;\n", self.command_to_string(&Command::Simple(simple_cmd.clone()))));
+                            output.push_str(&format!("$output_{} .= `{}`;\n", pipeline_id, self.command_to_string(&Command::Simple(simple_cmd.clone()))));
                         }
                     } else {
                         // For non-simple commands, generate normally but capture output
                         output.push_str(&self.indent());
-                        output.push_str(&format!("$output .= `{}`;\n", self.command_to_string(cmd)));
+                        output.push_str(&format!("$output_{} .= `{}`;\n", pipeline_id, self.command_to_string(cmd)));
                     }
                 }
                 output.push_str("}\n");
             } else {
                 // First command - capture output using system call
-                output.push_str(&format!("$output = `{}`;\n", self.command_to_string(&pipeline.commands[0])));
+                output.push_str(&format!("$output_{} = `{}`;\n", pipeline_id, self.command_to_string(&pipeline.commands[0])));
             }
             
             // Handle subsequent commands
@@ -1636,32 +1643,36 @@ impl PerlGenerator {
                 if let Command::Simple(cmd) = command {
                     if cmd.name == "sort" {
                         // Handle sort command specially - sort lines, not words
-                        output.push_str("$output = join(\"\\n\", sort(split(/\\n/, $output)));\n");
+                        output.push_str(&format!("$output_{} = join(\"\\n\", sort(split(/\\n/, $output_{})));\n", pipeline_id, pipeline_id));
                     } else {
                         // Other commands - pipe through
                         let cmd_str = self.command_to_string(command);
                         let escaped_cmd = cmd_str.replace("'", "'\"'\"'");
-                        output.push_str(&format!("$output = `echo \"$output\" | {}`;\n", escaped_cmd));
+                        output.push_str(&format!("$output_{} = `echo \"$output_{}\" | {}`;\n", pipeline_id, pipeline_id, escaped_cmd));
                     }
                 } else {
                     // For non-simple commands, generate normally but capture output
                     output.push_str(&self.indent());
-                    output.push_str(&format!("$output = `echo \"$output\" | {}`;\n", self.command_to_string(command)));
+                    output.push_str(&format!("$output_{} = `echo \"$output_{}\" | {}`;\n", pipeline_id, pipeline_id, self.command_to_string(command)));
                 }
             }
-            output.push_str("print($output);\n");
+            output.push_str(&format!("print($output_{});\n", pipeline_id));
         } else {
             // Implement && and || via Perl boolean expressions
+            // Assign the result to a variable to avoid "void context" warnings
+            // Use a unique variable name for each pipeline to avoid redeclaration warnings
+            self.pipeline_counter += 1;
+            output.push_str(&format!("my $pipeline_result_{} = ", self.pipeline_counter));
             if let Some(first) = pipeline.commands.first() {
                 match first {
                     Command::TestExpression(test_expr) => {
                         // Generate the test expression directly as a Perl boolean expression
-                        output.push_str(&self.generate_test_expression(test_expr));
+                        // Wrap in parentheses to ensure proper context
+                        output.push_str(&format!("({})", self.generate_test_expression(test_expr)));
                     }
                     _ => {
                         // For non-test expressions, use system() calls
-                        output.push_str("my $last_status = 0;\n");
-                        output.push_str(&format!("$last_status = system('{}');\n", self.command_to_string(first)));
+                        output.push_str(&format!("system('{}') == 0", self.command_to_string(first)));
                     }
                 }
             }
@@ -1670,7 +1681,8 @@ impl PerlGenerator {
                 match (op, cmd) {
                     (PipeOperator::And, Command::TestExpression(test_expr)) => {
                         output.push_str(" && ");
-                        output.push_str(&self.generate_test_expression(test_expr));
+                        // Wrap test expressions in parentheses to ensure proper context
+                        output.push_str(&format!("({})", self.generate_test_expression(test_expr)));
                     }
                     (PipeOperator::Or, Command::TestExpression(test_expr)) => {
                         output.push_str(" || ");
@@ -2194,6 +2206,27 @@ impl PerlGenerator {
                  .replace("\n", "\\n")
                  .replace("\r", "\\r")
                  .replace("\t", "\\t")
+    }
+
+    fn escape_perl_regex(&self, s: &str) -> String {
+        s.chars().map(|c| match c {
+            '\\' => "\\\\".to_string(),
+            '/' => "\\/".to_string(),
+            '^' => "\\^".to_string(),
+            '$' => "\\$".to_string(),
+            '.' => "\\.".to_string(),
+            '*' => "\\*".to_string(),
+            '+' => "\\+".to_string(),
+            '?' => "\\?".to_string(),
+            '(' => "\\(".to_string(),
+            ')' => "\\)".to_string(),
+            '[' => "\\[".to_string(),
+            ']' => "\\]".to_string(),
+            '{' => "\\{".to_string(),
+            '}' => "\\}".to_string(),
+            '|' => "\\|".to_string(),
+            _ => c.to_string()
+        }).collect()
     }
 
     fn perl_string_literal(&self, s: &str) -> String {
@@ -3023,19 +3056,36 @@ impl PerlGenerator {
                 // Convert the negated pattern to a regex
                 let negated_regex = self.convert_extglob_negated_pattern(negated_pattern);
                 
-                // For !(*.min).js, we want to match strings ending in .js but not containing *.min
-                // The pattern should match the entire string, so we need to ensure
-                // the negated pattern doesn't appear anywhere before the suffix
                 if suffix.is_empty() {
                     // No suffix, just negate the pattern
                     format!("^(?!{})$", negated_regex)
                 } else {
-                    // Has suffix, ensure negated pattern doesn't appear before the suffix
+                    // Has suffix, we need to check if the string ends with the suffix
+                    // but the part before the suffix doesn't match the negated pattern
                     let suffix_regex = self.convert_simple_pattern_to_regex(suffix);
-                    // For the negated pattern, we need to check if it appears anywhere in the string
-                    // before the suffix. Since negated_regex already contains .* for wildcards,
-                    // we don't need to add another .* in front
-                    format!("^(?!{}){}$", negated_regex, suffix_regex)
+                    
+                    // For !(*.min).js, we want to match strings that:
+                    // 1. End with .js
+                    // 2. The part before .js doesn't match *.min
+                    
+                    // The correct approach is to check if the string doesn't match the pattern
+                    // that would be formed by combining the negated pattern with the suffix
+                    // For !(*.min).js, we want to avoid matching strings that end with .min.js
+                    
+                    // The regex should be: ^(?!.*\.min\.js$).*\.js$
+                    // This means: start of string, not followed by anything ending in .min.js, then anything, then .js, then end
+                    
+                    // For !(*.min).js, we want to avoid matching strings that end with .min.js
+                    // So we check if the string doesn't match the pattern that would be formed
+                    // by combining the negated pattern with the suffix
+                    
+                    // The negated_regex already starts with .* (from the * conversion),
+                    // so we don't need to add another .* in front
+                    let combined_negated = format!("{}{}", negated_regex, suffix_regex);
+                    
+                    // We need to allow any content before the suffix, so the final regex should be:
+                    // ^(?!.*\.min\.js$).*\.js$ - this allows any content before .js
+                    format!("^(?!{}){}$", combined_negated, ".*".to_string() + &suffix_regex)
                 }
             } else {
                 // Fallback if parentheses don't match
@@ -3360,16 +3410,83 @@ impl PerlGenerator {
             ParameterExpansionOperator::UppercaseAll => format!("uc(${})", pe.variable),
             ParameterExpansionOperator::LowercaseAll => format!("lc(${})", pe.variable),
             ParameterExpansionOperator::UppercaseFirst => format!("ucfirst(${})", pe.variable),
-            ParameterExpansionOperator::RemoveLongestPrefix(pattern) => format!("${} =~ s/^{}//", pe.variable, pattern),
-            ParameterExpansionOperator::RemoveShortestPrefix(pattern) => format!("${} =~ s/^{}//", pe.variable, pattern),
-            ParameterExpansionOperator::RemoveLongestSuffix(pattern) => format!("${} =~ s/{}$//", pe.variable, pattern),
-            ParameterExpansionOperator::RemoveShortestSuffix(pattern) => format!("${} =~ s/{}$//", pe.variable, pattern),
-            ParameterExpansionOperator::SubstituteAll(pattern, replacement) => format!("${} =~ s/{}/{}/g", pe.variable, pattern, replacement),
+            ParameterExpansionOperator::RemoveLongestPrefix(pattern) => {
+                let escaped_pattern = self.escape_perl_regex(pattern);
+                format!("do {{ my $temp = ${}; $temp =~ s/^{}//; $temp }}", pe.variable, escaped_pattern)
+            },
+            ParameterExpansionOperator::RemoveShortestPrefix(pattern) => {
+                let escaped_pattern = self.escape_perl_regex(pattern);
+                format!("do {{ my $temp = ${}; $temp =~ s/^{}//; $temp }}", pe.variable, escaped_pattern)
+            },
+            ParameterExpansionOperator::RemoveLongestSuffix(pattern) => {
+                let escaped_pattern = self.escape_perl_regex(pattern);
+                format!("do {{ my $temp = ${}; $temp =~ s/{}$//; $temp }}", pe.variable, escaped_pattern)
+            },
+            ParameterExpansionOperator::RemoveShortestSuffix(pattern) => {
+                let escaped_pattern = self.escape_perl_regex(pattern);
+                format!("do {{ my $temp = ${}; $temp =~ s/{}$//; $temp }}", pe.variable, escaped_pattern)
+            },
+            ParameterExpansionOperator::SubstituteAll(pattern, replacement) => {
+                let escaped_pattern = self.escape_perl_regex(pattern);
+                let escaped_replacement = self.escape_perl_regex(replacement);
+                format!("do {{ my $temp = ${}; $temp =~ s/{}/{}/g; $temp }}", pe.variable, escaped_pattern, escaped_replacement)
+            },
             ParameterExpansionOperator::DefaultValue(default) => format!("defined(${}) ? ${} : '{}'", pe.variable, pe.variable, default),
             ParameterExpansionOperator::AssignDefault(default) => format!("${} //= '{}'", pe.variable, default),
             ParameterExpansionOperator::ErrorIfUnset(error) => format!("defined(${}) ? ${} : die('{}')", pe.variable, pe.variable, error),
             ParameterExpansionOperator::Basename => format!("basename(${})", pe.variable),
             ParameterExpansionOperator::Dirname => format!("dirname(${})", pe.variable),
         }
+    }
+
+    fn convert_glob_to_regex(&self, pattern: &str) -> String {
+        // Convert shell glob patterns to Perl regex
+        let mut result = String::new();
+        let mut chars = pattern.chars().peekable();
+        
+        while let Some(ch) = chars.next() {
+            match ch {
+                '*' => result.push_str(".*"),
+                '?' => result.push_str("."),
+                '[' => {
+                    result.push('[');
+                    // Handle character classes
+                    while let Some(&next_ch) = chars.peek() {
+                        match next_ch {
+                            ']' => {
+                                result.push(']');
+                                chars.next();
+                                break;
+                            }
+                            '\\' => {
+                                chars.next(); // consume backslash
+                                if let Some(escaped) = chars.next() {
+                                    result.push('\\');
+                                    result.push(escaped);
+                                }
+                            }
+                            _ => {
+                                result.push(chars.next().unwrap());
+                            }
+                        }
+                    }
+                }
+                '\\' => {
+                    // Handle escaped characters
+                    if let Some(escaped) = chars.next() {
+                        result.push('\\');
+                        result.push(escaped);
+                    }
+                }
+                '.' | '^' | '$' | '(' | ')' | '|' | '+' | '{' | '}' => {
+                    // Escape regex metacharacters
+                    result.push('\\');
+                    result.push(ch);
+                }
+                _ => result.push(ch),
+            }
+        }
+        
+        result
     }
 } 

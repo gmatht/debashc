@@ -1583,18 +1583,18 @@ fn test_all_examples_next_fail(generators: &[String]) {
                         println!("STDOUT COMPARISON:");
                         println!("{}", "=".repeat(80));
                         println!("Shell script stdout:");
-                        println!("{}", truncate_output(&result.shell_stdout, 10));
+                        println!("{}", truncate_output(&result.shell_stdout, 20));
                         println!("\nTranslated code stdout:");
-                        println!("{}", truncate_output(&result.translated_stdout, 10));
+                        println!("{}", truncate_output(&result.translated_stdout, 20));
                         
                         // Show stderr diff
                         println!("\n{}", "=".repeat(80));
                         println!("STDERR COMPARISON:");
                         println!("{}", "=".repeat(80));
                         println!("Shell script stderr:");
-                        println!("{}", truncate_output(&result.shell_stderr, 10));
+                        println!("{}", truncate_output(&result.shell_stderr, 20));
                         println!("\nTranslated code stderr:");
-                        println!("{}", truncate_output(&result.translated_stderr, 10));
+                        println!("{}", truncate_output(&result.translated_stderr, 20));
                         
                         // Show summary
                         println!("\n{}", "=".repeat(80));
