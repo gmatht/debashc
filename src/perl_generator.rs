@@ -62,6 +62,7 @@ impl PerlGenerator {
             Command::Subshell(cmd) => self.generate_subshell(cmd),
             Command::Background(cmd) => self.generate_background(cmd),
             Command::Block(block) => self.generate_block(block),
+            Command::BuiltinCommand(cmd) => self.generate_builtin_command(cmd),
             Command::BlankLine => "\n".to_string(),
         }
     }
@@ -245,18 +246,84 @@ impl PerlGenerator {
                     if expansion.items.len() == 1 {
                         match &expansion.items[0] {
                             BraceItem::Range(range) => {
-                                // Convert {1..5} to 1 2 3 4 5
-                                if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
-                                    let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
-                                    let values: Vec<String> = if step > 0 {
-                                        (start..=end).step_by(step as usize).map(|i| i.to_string()).collect()
+                                // Check if this is a character range first
+                                if let (Some(start_char), Some(end_char)) = (range.start.chars().next(), range.end.chars().next()) {
+                                    if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                                        // This is a character range
+                                        let start = start_char as u8;
+                                        let end = end_char as u8;
+                                        if start <= end {
+                                            let step = range.step.as_ref().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
+                                            let values: Vec<String> = (start..=end)
+                                                .step_by(step)
+                                                .map(|c| char::from(c).to_string())
+                                                .collect();
+                                            output.push_str(&format!("print(\"{}\\n\");\n", values.join(" ")));
+                                        } else {
+                                            // Reverse range
+                                            let step = range.step.as_ref().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
+                                            let values: Vec<String> = (end..=start)
+                                                .rev()
+                                                .step_by(step)
+                                                .map(|c| char::from(c).to_string())
+                                                .collect();
+                                            output.push_str(&format!("print(\"{}\\n\");\n", values.join(" ")));
+                                        }
                                     } else {
-                                        (end..=start).rev().step_by((-step) as usize).map(|i| i.to_string()).collect()
-                                    };
-                                    output.push_str(&format!("print(\"{}\\n\");\n", values.join(" ")));
+                                        // Try numeric range
+                                        if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
+                                            let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
+                                            let values: Vec<String> = if step > 0 {
+                                                (start..=end).step_by(step as usize).map(|i| {
+                                                    // Preserve leading zeros by formatting with the same width as the original
+                                                    if range.start.starts_with('0') && range.start.len() > 1 {
+                                                        format!("{:0width$}", i, width = range.start.len())
+                                                    } else {
+                                                        i.to_string()
+                                                    }
+                                                }).collect()
+                                            } else {
+                                                (end..=start).rev().step_by((-step) as usize).map(|i| {
+                                                    if range.start.starts_with('0') && range.start.len() > 1 {
+                                                        format!("{:0width$}", i, width = range.start.len())
+                                                    } else {
+                                                        i.to_string()
+                                                    }
+                                                }).collect()
+                                            };
+                                            output.push_str(&format!("print(\"{}\\n\");\n", values.join(" ")));
+                                        } else {
+                                            // Fallback for non-numeric ranges
+                                            output.push_str(&format!("print(\"{{{}}}..{{{}}}\\n\");\n", range.start, range.end));
+                                        }
+                                    }
                                 } else {
-                                    // Fallback for non-numeric ranges
-                                    output.push_str(&format!("print(\"{{{}}}..{{{}}}\\n\");\n", range.start, range.end));
+                                    // Try numeric range
+                                    if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
+                                        let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
+                                        let values: Vec<String> = if step > 0 {
+                                            (start..=end).step_by(step as usize).map(|i| {
+                                                // Preserve leading zeros by formatting with the same width as the original
+                                                if range.start.starts_with('0') && range.start.len() > 1 {
+                                                    format!("{:0width$}", i, width = range.start.len())
+                                                } else {
+                                                    i.to_string()
+                                                }
+                                            }).collect()
+                                        } else {
+                                            (end..=start).rev().step_by((-step) as usize).map(|i| {
+                                                if range.start.starts_with('0') && range.start.len() > 1 {
+                                                    format!("{:0width$}", i, width = range.start.len())
+                                                } else {
+                                                    i.to_string()
+                                                }
+                                            }).collect()
+                                        };
+                                        output.push_str(&format!("print(\"{}\\n\");\n", values.join(" ")));
+                                    } else {
+                                        // Fallback for non-numeric ranges
+                                        output.push_str(&format!("print(\"{{{}}}..{{{}}}\\n\");\n", range.start, range.end));
+                                    }
                                 }
                             }
                             BraceItem::Literal(s) => {
@@ -387,97 +454,9 @@ impl PerlGenerator {
                     output.push_str(&format!("print(\"{}\\n\");\n", content));
                 }
             } else {
-                // Multiple arguments - join them with spaces
-                let mut parts = Vec::new();
-                for arg in &cmd.args {
-                    if let Word::BraceExpansion(expansion) = arg {
-                        // Expand brace expansion
-                        if expansion.items.len() == 1 {
-                            match &expansion.items[0] {
-                                BraceItem::Range(range) => {
-                                    if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
-                                        let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
-                                        let values: Vec<String> = if step > 0 {
-                                            (start..=end).step_by(step as usize).map(|i| i.to_string()).collect()
-                                        } else {
-                                            (end..=start).rev().step_by((-step) as usize).map(|i| i.to_string()).collect()
-                                        };
-                                        parts.push(values.join(" "));
-                                    } else {
-                                        parts.push(format!("{{{}}}", range.start));
-                                    }
-                                }
-                                BraceItem::Literal(s) => {
-                                    if s.contains("..") {
-                                        let parts_range: Vec<&str> = s.split("..").collect();
-                                        if parts_range.len() == 2 {
-                                            if let (Some(start_char), Some(end_char)) = (parts_range[0].chars().next(), parts_range[1].chars().next()) {
-                                                if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
-                                                    let start = start_char as u8;
-                                                    let end = end_char as u8;
-                                                    if start <= end {
-                                                        let values: Vec<String> = (start..=end)
-                                                            .map(|c| char::from(c).to_string())
-                                                            .collect();
-                                                        parts.push(values.join(" "));
-                                                    } else {
-                                                        parts.push(s.clone());
-                                                    }
-                                                } else {
-                                                    parts.push(s.clone());
-                                                }
-                                            } else {
-                                                parts.push(s.clone());
-                                            }
-                                        } else if parts_range.len() == 3 {
-                                            if let (Ok(start), Ok(end), Ok(step)) = (parts_range[0].parse::<i64>(), parts_range[1].parse::<i64>(), parts_range[2].parse::<i64>()) {
-                                                let values: Vec<String> = (start..=end).step_by(step as usize).map(|i| i.to_string()).collect();
-                                                parts.push(values.join(" "));
-                                            } else {
-                                                parts.push(s.clone());
-                                            }
-                                        } else {
-                                            parts.push(s.clone());
-                                        }
-                                    } else {
-                                        parts.push(s.clone());
-                                    }
-                                }
-                                BraceItem::Sequence(seq) => {
-                                    parts.push(seq.join(" "));
-                                }
-                            }
-                        } else {
-                            // Multiple items - expand each one
-                            let mut expanded_items = Vec::new();
-                            for item in &expansion.items {
-                                match item {
-                                    BraceItem::Literal(s) => expanded_items.push(s.clone()),
-                                    BraceItem::Range(range) => {
-                                        if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
-                                            let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
-                                            let values: Vec<String> = if step > 0 {
-                                                (start..=end).step_by(step as usize).map(|i| i.to_string()).collect()
-                                            } else {
-                                                (end..=start).rev().step_by((-step) as usize).map(|i| i.to_string()).collect()
-                                            };
-                                            expanded_items.extend(values);
-                                        } else {
-                                            expanded_items.push(format!("{{{}}}", range.start));
-                                        }
-                                    }
-                                    BraceItem::Sequence(seq) => {
-                                        expanded_items.extend(seq.iter().cloned());
-                                    }
-                                }
-                            }
-                            parts.push(expanded_items.join(" "));
-                        }
-                    } else {
-                        parts.push(self.word_to_perl(arg));
-                    }
-                }
-                output.push_str(&format!("print(\"{}\\n\");\n", parts.join(" ")));
+                // Multiple arguments - use the new brace expansion combiner
+                let expanded_args = self.combine_adjacent_brace_expansions(&cmd.args);
+                output.push_str(&format!("print(\"{}\\n\");\n", expanded_args.join(" ")));
             }
         } else if cmd.name == "touch" {
             // Special handling for touch with brace expansion support
@@ -501,9 +480,22 @@ impl PerlGenerator {
                                         if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
                                             let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
                                             let values: Vec<String> = if step > 0 {
-                                                (start..=end).step_by(step as usize).map(|i| i.to_string()).collect()
+                                                (start..=end).step_by(step as usize).map(|i| {
+                                                    // Preserve leading zeros by formatting with the same width as the original
+                                                    if range.start.starts_with('0') && range.start.len() > 1 {
+                                                        format!("{:0width$}", i, width = range.start.len())
+                                                    } else {
+                                                        i.to_string()
+                                                    }
+                                                }).collect()
                                             } else {
-                                                (end..=start).rev().step_by((-step) as usize).map(|i| i.to_string()).collect()
+                                                (end..=start).rev().step_by((-step) as usize).map(|i| {
+                                                    if range.start.starts_with('0') && range.start.len() > 1 {
+                                                        format!("{:0width$}", i, width = range.start.len())
+                                                    } else {
+                                                        i.to_string()
+                                                    }
+                                                }).collect()
                                             };
                                             for value in values {
                                                 all_files.push(format!("{}{}{}", prefix, value, suffix));
@@ -524,9 +516,22 @@ impl PerlGenerator {
                                             if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
                                                 let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
                                                 let values: Vec<String> = if step > 0 {
-                                                    (start..=end).step_by(step as usize).map(|i| i.to_string()).collect()
+                                                    (start..=end).step_by(step as usize).map(|i| {
+                                                        // Preserve leading zeros by formatting with the same width as the original
+                                                        if range.start.starts_with('0') && range.start.len() > 1 {
+                                                            format!("{:0width$}", i, width = range.start.len())
+                                                        } else {
+                                                            i.to_string()
+                                                        }
+                                                    }).collect()
                                                 } else {
-                                                    (end..=start).rev().step_by((-step) as usize).map(|i| i.to_string()).collect()
+                                                    (end..=start).rev().step_by((-step) as usize).map(|i| {
+                                                        if range.start.starts_with('0') && range.start.len() > 1 {
+                                                            format!("{:0width$}", i, width = range.start.len())
+                                                        } else {
+                                                            i.to_string()
+                                                        }
+                                                    }).collect()
                                                 };
                                                 for value in values {
                                                     all_files.push(format!("{}{}{}", prefix, value, suffix));
@@ -557,9 +562,22 @@ impl PerlGenerator {
                                         if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
                                             let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
                                             let values: Vec<String> = if step > 0 {
-                                                (start..=end).step_by(step as usize).map(|i| i.to_string()).collect()
+                                                (start..=end).step_by(step as usize).map(|i| {
+                                                    // Preserve leading zeros by formatting with the same width as the original
+                                                    if range.start.starts_with('0') && range.start.len() > 1 {
+                                                        format!("{:0width$}", i, width = range.start.len())
+                                                    } else {
+                                                        i.to_string()
+                                                    }
+                                                }).collect()
                                             } else {
-                                                (end..=start).rev().step_by((-step) as usize).map(|i| i.to_string()).collect()
+                                                (end..=start).rev().step_by((-step) as usize).map(|i| {
+                                                    if range.start.starts_with('0') && range.start.len() > 1 {
+                                                        format!("{:0width$}", i, width = range.start.len())
+                                                    } else {
+                                                        i.to_string()
+                                                    }
+                                                }).collect()
                                             };
                                             for value in values {
                                                 all_files.push(value);
@@ -580,9 +598,22 @@ impl PerlGenerator {
                                             if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
                                                 let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
                                                 let values: Vec<String> = if step > 0 {
-                                                    (start..=end).step_by(step as usize).map(|i| i.to_string()).collect()
+                                                    (start..=end).step_by(step as usize).map(|i| {
+                                                        // Preserve leading zeros by formatting with the same width as the original
+                                                        if range.start.starts_with('0') && range.start.len() > 1 {
+                                                            format!("{:0width$}", i, width = range.start.len())
+                                                        } else {
+                                                            i.to_string()
+                                                        }
+                                                    }).collect()
                                                 } else {
-                                                    (end..=start).rev().step_by((-step) as usize).map(|i| i.to_string()).collect()
+                                                    (end..=start).rev().step_by((-step) as usize).map(|i| {
+                                                        if range.start.starts_with('0') && range.start.len() > 1 {
+                                                            format!("{:0width$}", i, width = range.start.len())
+                                                        } else {
+                                                            i.to_string()
+                                                        }
+                                                    }).collect()
                                                 };
                                                 for value in values {
                                                     all_files.push(value);
@@ -1105,6 +1136,100 @@ impl PerlGenerator {
         }
         
         // shopt commands always succeed (return true)
+        output
+    }
+    
+    fn generate_builtin_command(&mut self, cmd: &BuiltinCommand) -> String {
+        let mut output = String::new();
+        
+        // Handle environment variables if any
+        let has_env = !cmd.env_vars.is_empty();
+        if has_env {
+            output.push_str("{\n");
+            for (var, value) in &cmd.env_vars {
+                let val = self.perl_string_literal(value);
+                output.push_str(&format!("local $ENV{{{}}} = {};;\n", var, val));
+            }
+        }
+        
+        // Generate the builtin command
+        match cmd.name.as_str() {
+            "set" => {
+                // Convert shell set options to Perl equivalents
+                for arg in &cmd.args {
+                    if let Word::Literal(opt) = arg {
+                        match opt.as_str() {
+                            "-e" => output.push_str("$SIG{__DIE__} = sub { exit 1 };\n"),
+                            "-u" => output.push_str("use strict;\n"),
+                            "-o" => {
+                                // Handle pipefail and other options
+                                if let Some(next_arg) = cmd.args.iter().skip(1).find(|a| {
+                                    if let Word::Literal(s) = a { s == "pipefail" } else { false }
+                                }) {
+                                    output.push_str("# set -o pipefail\n");
+                                }
+                            }
+                            _ => output.push_str(&format!("# set {}\n", opt)),
+                        }
+                    }
+                }
+            }
+            "export" => {
+                // Convert export to Perl environment variable assignment
+                for arg in &cmd.args {
+                    if let Word::Literal(var) = arg {
+                        if var.contains('=') {
+                            let parts: Vec<&str> = var.splitn(2, '=').collect();
+                            if parts.len() == 2 {
+                                let var_name = parts[0];
+                                let var_value = self.perl_string_literal(parts[1]);
+                                output.push_str(&format!("$ENV{{{}}} = {};\n", var_name, var_value));
+                            }
+                        } else {
+                            output.push_str(&format!("# export {}\n", var));
+                        }
+                    }
+                }
+            }
+            "local" => {
+                // Convert local to Perl my declaration
+                for arg in &cmd.args {
+                    if let Word::Literal(var) = arg {
+                        if var.contains('=') {
+                            let parts: Vec<&str> = var.splitn(2, '=').collect();
+                            if parts.len() == 2 {
+                                let var_name = parts[0];
+                                let var_value = self.perl_string_literal(parts[1]);
+                                output.push_str(&format!("my ${} = {};\n", var_name, var_value));
+                                self.declared_locals.insert(var_name.to_string());
+                            }
+                        } else {
+                            output.push_str(&format!("my ${};\n", var));
+                            self.declared_locals.insert(var.to_string());
+                        }
+                    }
+                }
+            }
+            "unset" => {
+                // Convert unset to Perl undef
+                for arg in &cmd.args {
+                    if let Word::Literal(var) = arg {
+                        output.push_str(&format!("undef ${};\n", var));
+                    }
+                }
+            }
+            _ => {
+                // For other builtins, generate a comment
+                output.push_str(&format!("# {} {}\n", cmd.name, 
+                    cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join(" ")));
+            }
+        }
+        
+        // Close environment variable block if needed
+        if has_env {
+            output.push_str("}\n");
+        }
+        
         output
     }
 
@@ -2783,17 +2908,36 @@ impl PerlGenerator {
                     match &expansion.items[0] {
                         BraceItem::Range(range) => {
                             // Expand range like {1..5} to "1 2 3 4 5"
-                            if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
-                                let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
-                                let values: Vec<String> = if step > 0 {
-                                    (start..=end).step_by(step as usize).map(|i| i.to_string()).collect()
+                            // Check if this is a character range
+                            if let (Some(start_char), Some(end_char)) = (range.start.chars().next(), range.end.chars().next()) {
+                                if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                                    // This is a character range
+                                    let start = start_char as u8;
+                                    let end = end_char as u8;
+                                    if start <= end {
+                                        let step = range.step.as_ref().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
+                                        let values: Vec<String> = (start..=end)
+                                            .step_by(step)
+                                            .map(|c| char::from(c).to_string())
+                                            .collect();
+                                        values.join(" ")
+                                    } else {
+                                        // Reverse range
+                                        let step = range.step.as_ref().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
+                                        let values: Vec<String> = (end..=start)
+                                            .rev()
+                                            .step_by(step)
+                                            .map(|c| char::from(c).to_string())
+                                            .collect();
+                                        values.join(" ")
+                                    }
                                 } else {
-                                    (end..=start).rev().step_by((-step) as usize).map(|i| i.to_string()).collect()
-                                };
-                                values.join(" ")
+                                    // This is a numeric range
+                                    self.expand_brace_range(range)
+                                }
                             } else {
-                                // If parsing fails, fall back to literal
-                                format!("{{{}}}", range.start)
+                                // This is a numeric range
+                                self.expand_brace_range(range)
                             }
                         }
                         BraceItem::Literal(s) => {
@@ -2820,14 +2964,59 @@ impl PerlGenerator {
                                     } else {
                                         s.clone()
                                     }
+                                } else if parts.len() == 3 && parts[1].contains("..") {
+                                    // Character range with step like "a..z..3"
+                                    let sub_parts: Vec<&str> = parts[1].split("..").collect();
+                                    if sub_parts.len() == 2 {
+                                        if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), sub_parts[1].chars().next()) {
+                                            if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                                                if let Ok(step) = parts[2].parse::<usize>() {
+                                                    let start = start_char as u8;
+                                                    let end = end_char as u8;
+                                                    if start <= end {
+                                                        let values: Vec<String> = (start..=end)
+                                                            .step_by(step)
+                                                            .map(|c| char::from(c).to_string())
+                                                            .collect();
+                                                        values.join(" ")
+                                                    } else {
+                                                        s.clone()
+                                                    }
+                                                } else {
+                                                    s.clone()
+                                                }
+                                            } else {
+                                                s.clone()
+                                            }
+                                        } else {
+                                            s.clone()
+                                        }
+                                    } else {
+                                        s.clone()
+                                    }
                                 } else if parts.len() == 3 {
                                     // Range with step like "00..04..2"
                                     if let (Ok(start), Ok(end), Ok(step)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>(), parts[2].parse::<i64>()) {
-                                        let values: Vec<String> = (start..=end).step_by(step as usize).map(|i| i.to_string()).collect();
+                                        let values: Vec<String> = (start..=end).step_by(step as usize).map(|i| {
+                                            // Preserve leading zeros by formatting with the same width as the original
+                                            if parts[0].starts_with('0') && parts[0].len() > 1 {
+                                                format!("{:0width$}", i, width = parts[0].len())
+                                            } else {
+                                                i.to_string()
+                                            }
+                                        }).collect();
                                         values.join(" ")
                                     } else {
                                         s.clone()
                                     }
+                                } else {
+                                    s.clone()
+                                }
+                            } else if s.contains(',') {
+                                // Handle comma-separated sequences like "a,b,c"
+                                let parts: Vec<&str> = s.split(',').collect();
+                                if parts.len() > 1 {
+                                    parts.join(" ")
                                 } else {
                                     s.clone()
                                 }
@@ -2842,27 +3031,29 @@ impl PerlGenerator {
                     }
                 } else {
                     // Multiple items - expand each one and join
-                    let parts: Vec<String> = expansion.items.iter().map(|item| {
+                    let expanded_items: Vec<Vec<String>> = expansion.items.iter().map(|item| {
                         match item {
-                            BraceItem::Literal(s) => s.clone(),
+                            BraceItem::Literal(s) => vec![s.clone()],
                             BraceItem::Range(range) => {
-                                if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
-                                    let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
-                                    let values: Vec<String> = if step > 0 {
-                                        (start..=end).step_by(step as usize).map(|i| i.to_string()).collect()
-                                    } else {
-                                        (end..=start).rev().step_by((-step) as usize).map(|i| i.to_string()).collect()
-                                    };
-                                    values.join(" ")
-                                } else {
-                                    format!("{{{}}}", range.start)
-                                }
+                                self.expand_brace_range(range).split_whitespace().map(|s| s.to_string()).collect()
                             }
-                            BraceItem::Sequence(seq) => seq.join(" ")
+                            BraceItem::Sequence(seq) => seq.clone()
                         }
                     }).collect();
                     
-                    parts.join(" ")
+                    // Generate cartesian product for multiple brace expansions like {a,b,c}{1,2,3}
+                    if expanded_items.len() == 2 {
+                        let mut result = Vec::new();
+                        for item1 in &expanded_items[0] {
+                            for item2 in &expanded_items[1] {
+                                result.push(format!("{}{}", item1, item2));
+                            }
+                        }
+                        result.join(" ")
+                    } else {
+                        // For more than 2 items, just join them (this could be enhanced for full cartesian product)
+                        expanded_items.iter().map(|items| items.join(" ")).collect::<Vec<_>>().join(" ")
+                    }
                 }
             }
             Word::CommandSubstitution(_) => "`command`".to_string(),
@@ -3048,5 +3239,227 @@ impl PerlGenerator {
             .replace("]", "\\]")
             .replace("(", "\\(")
             .replace(")", "\\)")
+    }
+
+    fn expand_brace_range(&self, range: &crate::ast::BraceRange) -> String {
+        // First check if this is a character range
+        if let (Some(start_char), Some(end_char)) = (range.start.chars().next(), range.end.chars().next()) {
+            if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                // This is a character range
+                let start = start_char as u8;
+                let end = end_char as u8;
+                if start <= end {
+                    let step = range.step.as_ref().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
+                    let values: Vec<String> = (start..=end)
+                        .step_by(step)
+                        .map(|c| char::from(c).to_string())
+                        .collect();
+                    values.join(" ")
+                } else {
+                    // Reverse range
+                    let step = range.step.as_ref().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
+                    let values: Vec<String> = (end..=start)
+                        .rev()
+                        .step_by(step)
+                        .map(|c| char::from(c).to_string())
+                        .collect();
+                    values.join(" ")
+                }
+            } else {
+                // Try numeric range
+                if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
+                    let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
+                    let values: Vec<String> = if step > 0 {
+                        (start..=end).step_by(step as usize).map(|i| {
+                            // Preserve leading zeros by formatting with the same width as the original
+                            if range.start.starts_with('0') && range.start.len() > 1 {
+                                format!("{:0width$}", i, width = range.start.len())
+                            } else {
+                                i.to_string()
+                            }
+                        }).collect()
+                    } else {
+                        (end..=start).rev().step_by((-step) as usize).map(|i| {
+                            if range.start.starts_with('0') && range.start.len() > 1 {
+                                format!("{:0width$}", i, width = range.start.len())
+                            } else {
+                                i.to_string()
+                            }
+                        }).collect()
+                    };
+                    values.join(" ")
+                } else {
+                    // If parsing fails, fall back to literal
+                    format!("{{{}}}", range.start)
+                }
+            }
+        } else {
+            // Try numeric range
+            if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
+                let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
+                let values: Vec<String> = if step > 0 {
+                    (start..=end).step_by(step as usize).map(|i| {
+                        // Preserve leading zeros by formatting with the same width as the original
+                        if range.start.starts_with('0') && range.start.len() > 1 {
+                            format!("{:0width$}", i, width = range.start.len())
+                        } else {
+                            i.to_string()
+                        }
+                    }).collect()
+                } else {
+                    (end..=start).rev().step_by((-step) as usize).map(|i| {
+                        if range.start.starts_with('0') && range.start.len() > 1 {
+                            format!("{:0width$}", i, width = range.start.len())
+                        } else {
+                            i.to_string()
+                        }
+                    }).collect()
+                };
+                values.join(" ")
+            } else {
+                // If parsing fails, fall back to literal
+                format!("{{{}}}", range.start)
+            }
+        }
+    }
+
+    fn combine_adjacent_brace_expansions(&self, args: &[Word]) -> Vec<String> {
+        let mut result = Vec::new();
+        let mut i = 0;
+        
+        while i < args.len() {
+            if let Word::BraceExpansion(expansion) = &args[i] {
+                // Check if the next argument is also a brace expansion
+                if i + 1 < args.len() {
+                    if let Word::BraceExpansion(next_expansion) = &args[i + 1] {
+                        // We have two adjacent brace expansions - combine them
+                        let left_items = self.expand_brace_expansion_to_strings(expansion);
+                        let right_items = self.expand_brace_expansion_to_strings(next_expansion);
+                        
+                        // Generate cartesian product
+                        for left in &left_items {
+                            for right in &right_items {
+                                result.push(format!("{}{}", left, right));
+                            }
+                        }
+                        i += 2; // Skip both expansions
+                        continue;
+                    }
+                }
+                
+                // Single brace expansion
+                let expanded = self.expand_brace_expansion_to_strings(expansion);
+                result.extend(expanded);
+            } else {
+                // Non-brace expansion word
+                result.push(self.word_to_perl(&args[i]));
+            }
+            i += 1;
+        }
+        
+        result
+    }
+
+    fn expand_brace_expansion_to_strings(&self, expansion: &crate::ast::BraceExpansion) -> Vec<String> {
+        let mut result = Vec::new();
+        
+        for item in &expansion.items {
+            match item {
+                BraceItem::Literal(s) => {
+                    // Handle literal strings that might contain ranges like "a..c" or "00..04..2"
+                    if s.contains("..") {
+                        let parts: Vec<&str> = s.split("..").collect();
+                        if parts.len() == 2 {
+                            // Simple range like "a..c"
+                            if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), parts[1].chars().next()) {
+                                if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                                    let start = start_char as u8;
+                                    let end = end_char as u8;
+                                    if start <= end {
+                                        let values: Vec<String> = (start..=end)
+                                            .map(|c| char::from(c).to_string())
+                                            .collect();
+                                        result.extend(values);
+                                    } else {
+                                        result.push(s.clone());
+                                    }
+                                } else {
+                                    result.push(s.clone());
+                                }
+                            } else {
+                                result.push(s.clone());
+                            }
+                        } else if parts.len() == 3 {
+                            // Range with step like "00..04..2"
+                            if let (Ok(start), Ok(end), Ok(step)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>(), parts[2].parse::<i64>()) {
+                                let values: Vec<String> = (start..=end).step_by(step as usize).map(|i| {
+                                    // Preserve leading zeros by formatting with the same width as the original
+                                    if parts[0].starts_with('0') && parts[0].len() > 1 {
+                                        format!("{:0width$}", i, width = parts[0].len())
+                                    } else {
+                                        i.to_string()
+                                    }
+                                }).collect();
+                                result.extend(values);
+                            } else {
+                                result.push(s.clone());
+                            }
+                        } else {
+                            result.push(s.clone());
+                        }
+                    } else if s.contains(',') {
+                        // Handle comma-separated sequences like "a,b,c"
+                        let parts: Vec<&str> = s.split(',').collect();
+                        if parts.len() > 1 {
+                            result.extend(parts.iter().map(|&s| s.to_string()));
+                        } else {
+                            result.push(s.clone());
+                        }
+                    } else {
+                        result.push(s.clone());
+                    }
+                }
+                BraceItem::Range(range) => {
+                    // Check if this is a character range
+                    if let (Some(start_char), Some(end_char)) = (range.start.chars().next(), range.end.chars().next()) {
+                        if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                            // This is a character range
+                            let start = start_char as u8;
+                            let end = end_char as u8;
+                            if start <= end {
+                                let step = range.step.as_ref().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
+                                let values: Vec<String> = (start..=end)
+                                    .step_by(step)
+                                    .map(|c| char::from(c).to_string())
+                                    .collect();
+                                result.extend(values);
+                            } else {
+                                // Reverse range
+                                let step = range.step.as_ref().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
+                                let values: Vec<String> = (end..=start)
+                                    .rev()
+                                    .step_by(step)
+                                    .map(|c| char::from(c).to_string())
+                                    .collect();
+                                result.extend(values);
+                            }
+                        } else {
+                            // This is a numeric range
+                            let expanded = self.expand_brace_range(range);
+                            result.extend(expanded.split_whitespace().map(|s| s.to_string()));
+                        }
+                    } else {
+                        // This is a numeric range
+                        let expanded = self.expand_brace_range(range);
+                        result.extend(expanded.split_whitespace().map(|s| s.to_string()));
+                    }
+                }
+                BraceItem::Sequence(seq) => {
+                    result.extend(seq.iter().cloned());
+                }
+            }
+        }
+        
+        result
     }
 } 

@@ -582,6 +582,22 @@ impl Parser {
             }
         }
         
+        // Postprocess: convert builtin commands to BuiltinCommand AST nodes
+        if let Word::Literal(name_str) = &name {
+            match name_str.as_str() {
+                "set" | "export" | "readonly" | "local" | "declare" | "typeset" |
+                "unset" | "shift" | "eval" | "exec" | "source" | "trap" | "wait" => {
+                    return Ok(Command::BuiltinCommand(BuiltinCommand {
+                        name: name_str.clone(),
+                        args: args,
+                        redirects: redirects,
+                        env_vars: env_vars,
+                    }));
+                }
+                _ => {}
+            }
+        }
+        
         // Postprocess: convert [[ ... ]] test expressions to TestExpression AST nodes
         if name == "[[".to_string() && !args.is_empty() {
             if let Some(Word::Literal(expr)) = args.first() {
@@ -1339,7 +1355,52 @@ impl Parser {
                         if depth == 0 {
                             // End of brace expansion
                             if !current_item.is_empty() {
-                                items.push(BraceItem::Literal(current_item.clone()));
+                                // Check if current_item contains a range pattern like "a..c"
+                                if current_item.contains("..") {
+                                    let parts: Vec<&str> = current_item.split("..").collect();
+                                    if parts.len() == 2 {
+                                        // Check if this is a character range like "a..c"
+                                        if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), parts[1].chars().next()) {
+                                            if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                                                // This is a character range
+                                                items.push(BraceItem::Range(BraceRange {
+                                                    start: parts[0].to_string(),
+                                                    end: parts[1].to_string(),
+                                                    step: None,
+                                                    format: None,
+                                                }));
+                                            } else {
+                                                // This is a numeric range
+                                                items.push(BraceItem::Range(BraceRange {
+                                                    start: parts[0].to_string(),
+                                                    end: parts[1].to_string(),
+                                                    step: None,
+                                                    format: None,
+                                                }));
+                                            }
+                                        } else {
+                                            // This is a numeric range
+                                            items.push(BraceItem::Range(BraceRange {
+                                                start: parts[0].to_string(),
+                                                end: parts[1].to_string(),
+                                                step: None,
+                                                format: None,
+                                            }));
+                                        }
+                                    } else if parts.len() == 3 {
+                                        // This is a range with step like "00..04..2"
+                                        items.push(BraceItem::Range(BraceRange {
+                                            start: parts[0].to_string(),
+                                            end: parts[1].to_string(),
+                                            step: Some(parts[2].to_string()),
+                                            format: None,
+                                        }));
+                                    } else {
+                                        items.push(BraceItem::Literal(current_item.clone()));
+                                    }
+                                } else {
+                                    items.push(BraceItem::Literal(current_item.clone()));
+                                }
                             }
                             self.lexer.next();
                             break;
@@ -1351,7 +1412,52 @@ impl Parser {
                     Some(Token::Comma) if depth == 1 => {
                         // Comma separator at top level
                         if !current_item.is_empty() {
-                            items.push(BraceItem::Literal(current_item.clone()));
+                            // Check if current_item contains a range pattern like "a..c"
+                            if current_item.contains("..") {
+                                let parts: Vec<&str> = current_item.split("..").collect();
+                                if parts.len() == 2 {
+                                    // Check if this is a character range like "a..c"
+                                    if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), parts[1].chars().next()) {
+                                        if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                                            // This is a character range
+                                            items.push(BraceItem::Range(BraceRange {
+                                                start: parts[0].to_string(),
+                                                end: parts[1].to_string(),
+                                                step: None,
+                                                format: None,
+                                            }));
+                                        } else {
+                                            // This is a numeric range
+                                            items.push(BraceItem::Range(BraceRange {
+                                                start: parts[0].to_string(),
+                                                end: parts[1].to_string(),
+                                                step: None,
+                                                format: None,
+                                            }));
+                                        }
+                                    } else {
+                                        // This is a numeric range
+                                        items.push(BraceItem::Range(BraceRange {
+                                            start: parts[0].to_string(),
+                                            end: parts[1].to_string(),
+                                            step: None,
+                                            format: None,
+                                        }));
+                                    }
+                                } else if parts.len() == 3 {
+                                    // This is a range with step like "00..04..2"
+                                    items.push(BraceItem::Range(BraceRange {
+                                        start: parts[0].to_string(),
+                                        end: parts[1].to_string(),
+                                        step: Some(parts[2].to_string()),
+                                        format: None,
+                                    }));
+                                } else {
+                                    items.push(BraceItem::Literal(current_item.clone()));
+                                }
+                            } else {
+                                items.push(BraceItem::Literal(current_item.clone()));
+                            }
                             current_item.clear();
                         }
                         self.lexer.next();

@@ -1,5 +1,5 @@
 use wasm_bindgen::prelude::*;
-use crate::{Lexer, Parser, PerlGenerator, RustGenerator, PythonGenerator, LuaGenerator, CGenerator, JsGenerator, EnglishGenerator, FrenchGenerator, BatchGenerator, PowerShellGenerator};
+use crate::{Lexer, Parser, PerlGenerator};
 use serde::Serialize;
 
 #[wasm_bindgen]
@@ -52,111 +52,48 @@ impl Debashc {
     }
 
     /// Convert shell script to Rust
-    pub fn to_rust(&mut self, input: &str) -> Result<String, JsValue> {
-        let mut parser = Parser::new(input);
-        match parser.parse() {
-            Ok(commands) => {
-                let mut generator = RustGenerator::new();
-                Ok(generator.generate(&commands))
-            }
-            Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
-        }
+    pub fn to_rust(&mut self, _input: &str) -> Result<String, JsValue> {
+        Err(JsValue::from_str("Rust generator not available"))
     }
 
     /// Convert shell script to Python
-    pub fn to_python(&mut self, input: &str) -> Result<String, JsValue> {
-        let mut parser = Parser::new(input);
-        match parser.parse() {
-            Ok(commands) => {
-                let mut generator = PythonGenerator::new();
-                Ok(generator.generate(&commands))
-            }
-            Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
-        }
+    pub fn to_python(&mut self, _input: &str) -> Result<String, JsValue> {
+        Err(JsValue::from_str("Python generator not available"))
     }
 
     /// Convert shell script to Lua
-    pub fn to_lua(&mut self, input: &str) -> Result<String, JsValue> {
-        let mut parser = Parser::new(input);
-        match parser.parse() {
-            Ok(commands) => {
-                let mut generator = LuaGenerator::new();
-                Ok(generator.generate(&commands))
-            }
-            Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
-        }
+    pub fn to_lua(&mut self, _input: &str) -> Result<String, JsValue> {
+        Err(JsValue::from_str("Lua generator not available"))
     }
 
     /// Convert shell script to C
-    pub fn to_c(&mut self, input: &str) -> Result<String, JsValue> {
-        let mut parser = Parser::new(input);
-        match parser.parse() {
-            Ok(commands) => {
-                let mut generator = CGenerator::new();
-                Ok(generator.generate(&commands))
-            }
-            Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
-        }
+    pub fn to_c(&mut self, _input: &str) -> Result<String, JsValue> {
+        Err(JsValue::from_str("C generator not available"))
     }
 
     /// Convert shell script to JavaScript
-    pub fn to_js(&mut self, input: &str) -> Result<String, JsValue> {
-        let mut parser = Parser::new(input);
-        match parser.parse() {
-            Ok(commands) => {
-                let mut generator = JsGenerator::new();
-                Ok(generator.generate(&commands))
-            }
-            Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
-        }
+    pub fn to_js(&mut self, _input: &str) -> Result<String, JsValue> {
+        Err(JsValue::from_str("JS generator not available"))
     }
 
     /// Convert shell script to English pseudocode
-    pub fn to_english(&mut self, input: &str) -> Result<String, JsValue> {
-        let mut parser = Parser::new(input);
-        match parser.parse() {
-            Ok(commands) => {
-                let mut generator = EnglishGenerator::new();
-                Ok(generator.generate(&commands))
-            }
-            Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
-        }
+    pub fn to_english(&mut self, _input: &str) -> Result<String, JsValue> {
+        Err(JsValue::from_str("English generator not available"))
     }
 
     /// Convert shell script to French pseudocode
-    pub fn to_french(&mut self, input: &str) -> Result<String, JsValue> {
-        let mut parser = Parser::new(input);
-        match parser.parse() {
-            Ok(commands) => {
-                let mut generator = FrenchGenerator::new();
-                Ok(generator.generate(&commands))
-            }
-            Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
-        }
+    pub fn to_french(&mut self, _input: &str) -> Result<String, JsValue> {
+        Err(JsValue::from_str("French generator not available"))
     }
 
     /// Convert shell script to Windows Batch
-    pub fn to_bat(&mut self, input: &str) -> Result<String, JsValue> {
-        let mut parser = Parser::new(input);
-        match parser.parse() {
-            Ok(commands) => {
-                let mut generator = BatchGenerator::new();
-                Ok(generator.generate(&commands))
-            }
-            Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
-        }
+    pub fn to_bat(&mut self, _input: &str) -> Result<String, JsValue> {
+        Err(JsValue::from_str("Batch generator not available"))
     }
 
     /// Convert shell script to PowerShell
-    pub fn to_ps(&mut self, input: &str) -> Result<String, JsValue> {
-        let mut parser = Parser::new(input);
-        match parser.parse() {
-            Ok(commands) => {
-                let mut generator = PowerShellGenerator::new();
-                Ok(generator.generate(&commands))
-            }
-            Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
-        }
+    pub fn to_ps(&mut self, _input: &str) -> Result<String, JsValue> {
+        Err(JsValue::from_str("PowerShell generator not available"))
     }
 }
 

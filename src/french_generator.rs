@@ -27,6 +27,7 @@ impl FrenchGenerator {
             Command::Subshell(cmd) => self.generate_subshell(cmd),
             Command::Background(cmd) => self.generate_background(cmd),
             Command::Block(block) => self.generate_block(block),
+            Command::BuiltinCommand(_) => "".to_string(),
             Command::BlankLine => String::from("\n"),
         }
     }
@@ -146,6 +147,7 @@ impl FrenchGenerator {
                 for c in &block.commands { s.push_str(&self.decrire_commande(c)); }
                 s
             }
+            Command::BuiltinCommand(_) => "Exécuter une commande intégrée.\n".to_string(),
             Command::BlankLine => String::from("\n"),
             Command::TestExpression(_) => String::from("Évaluer une expression de test.\n"),
         }

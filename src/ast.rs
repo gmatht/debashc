@@ -3,6 +3,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Simple(SimpleCommand),
+    BuiltinCommand(BuiltinCommand),
     ShoptCommand(ShoptCommand),
     TestExpression(TestExpression),
     Pipeline(Pipeline),
@@ -19,6 +20,14 @@ pub enum Command {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SimpleCommand {
     pub name: Word,
+    pub args: Vec<Word>,
+    pub redirects: Vec<Redirect>,
+    pub env_vars: HashMap<String, Word>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BuiltinCommand {
+    pub name: String,
     pub args: Vec<Word>,
     pub redirects: Vec<Redirect>,
     pub env_vars: HashMap<String, Word>,

@@ -119,6 +119,7 @@ impl RustGenerator {
             Command::Subshell(cmd) => self.generate_subshell(cmd),
             Command::Background(cmd) => self.generate_background(cmd),
             Command::Block(block) => self.generate_block(block),
+            Command::BuiltinCommand(cmd) => self.generate_builtin_command(cmd),
             Command::BlankLine => "\n".to_string(),
         }
     }
@@ -424,6 +425,88 @@ impl RustGenerator {
                 _ => {
                     output.push_str(&format!("// shopt -u {} not implemented\n", cmd.option));
                 }
+            }
+        }
+        
+        output
+    }
+    
+    fn generate_builtin_command(&mut self, cmd: &BuiltinCommand) -> String {
+        let mut output = String::new();
+        
+        // Handle environment variables if any
+        for (var, value) in &cmd.env_vars {
+            output.push_str(&format!("env::set_var(\"{}\", \"{}\");\n", var, value));
+        }
+        
+        // Generate the builtin command
+        match cmd.name.as_str() {
+            "set" => {
+                // Convert shell set options to Rust equivalents
+                for arg in &cmd.args {
+                    if let Word::Literal(opt) = arg {
+                        match opt.as_str() {
+                            "-e" => output.push_str("// set -e: exit on error\n"),
+                            "-u" => output.push_str("// set -u: error on undefined variables\n"),
+                            "-o" => {
+                                // Handle pipefail and other options
+                                if let Some(next_arg) = cmd.args.iter().skip(1).find(|a| {
+                                    if let Word::Literal(s) = a { s == "pipefail" } else { false }
+                                }) {
+                                    output.push_str("// set -o pipefail\n");
+                                }
+                            }
+                            _ => output.push_str(&format!("// set {}\n", opt)),
+                        }
+                    }
+                }
+            }
+            "export" => {
+                // Convert export to Rust environment variable assignment
+                for arg in &cmd.args {
+                    if let Word::Literal(var) = arg {
+                        if var.contains('=') {
+                            let parts: Vec<&str> = var.splitn(2, '=').collect();
+                            if parts.len() == 2 {
+                                let var_name = parts[0];
+                                let var_value = parts[1];
+                                output.push_str(&format!("env::set_var(\"{}\", \"{}\");\n", var_name, var_value));
+                            }
+                        } else {
+                            output.push_str(&format!("// export {}\n", var));
+                        }
+                    }
+                }
+            }
+            "local" => {
+                // Convert local to Rust let declaration
+                for arg in &cmd.args {
+                    if let Word::Literal(var) = arg {
+                        if var.contains('=') {
+                            let parts: Vec<&str> = var.splitn(2, '=').collect();
+                            if parts.len() == 2 {
+                                let var_name = parts[0];
+                                let var_value = parts[1];
+                                output.push_str(&format!("let {} = \"{}\";\n", var_name, var_value));
+                            }
+                        } else {
+                            output.push_str(&format!("let {};\n", var));
+                        }
+                    }
+                }
+            }
+            "unset" => {
+                // Convert unset to Rust environment variable removal
+                for arg in &cmd.args {
+                    if let Word::Literal(var) = arg {
+                        output.push_str(&format!("env::remove_var(\"{}\");\n", var));
+                    }
+                }
+            }
+            _ => {
+                // For other builtins, generate a comment
+                output.push_str(&format!("// {} {}\n", cmd.name, 
+                    cmd.args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>().join(" ")));
             }
         }
         
