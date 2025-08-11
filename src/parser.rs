@@ -1355,7 +1355,7 @@ impl Parser {
                         self.lexer.next();
                     }
                     Some(Token::Range) if depth == 1 => {
-                        // This is a range separator (e.g., 1..5)
+                        // This is a range separator (e.g., 1..5 or 00..04..2)
                         if !current_item.is_empty() {
                             // This is the start of the range
                             let start_val = current_item.clone();
@@ -1368,6 +1368,10 @@ impl Parser {
                             while let Some(token) = self.lexer.peek() {
                                 match token {
                                     Token::Comma | Token::BraceClose => break,
+                                    Token::Range => {
+                                        // Found another range token - this indicates a step value
+                                        break;
+                                    }
                                     _ => {
                                         if let Some((s, e)) = self.lexer.get_span() {
                                             end_val.push_str(&self.lexer.get_text(s, e));
