@@ -435,7 +435,7 @@ fn run_generated(lang: &str, input: &str) {
             let code = gen.generate(&commands);
             let tmp = "__tmp_run.lua";
             if fs::write(tmp, &code).is_ok() {
-                let _ = std::process::Command::new("lua").arg(tmp).status();
+                let _ = std::process::Command::new(get_lua_executable()).arg(tmp).status();
                 let _ = fs::remove_file(tmp);
             }
         }
@@ -495,7 +495,7 @@ fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
             let code = gen.generate(&commands);
             let tmp = "__tmp_test_output.lua";
             if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Lua temp file: {}", e)); }
-            (tmp.to_string(), vec!["lua", tmp])
+            (tmp.to_string(), vec![get_lua_executable(), tmp])
         }
         "js" => {
             let mut gen = JsGenerator::new();
@@ -1267,12 +1267,21 @@ fn parse_file_to_powershell(filename: &str) {
     }
 }
 
+fn get_lua_executable() -> &'static str {
+    // Try lua first, then lua54 if lua doesn't exist
+    if Command::new("lua").arg("-v").output().is_ok() {
+        "lua"
+    } else {
+        "lua54"
+    }
+}
+
 fn check_generator_available(generator: &str) -> bool {
     match generator {
         "perl" => Command::new("perl").arg("--version").output().is_ok(),
         "python" => Command::new("python3").arg("--version").output().is_ok() || Command::new("python").arg("--version").output().is_ok(),
         "rust" => Command::new("rustc").arg("--version").output().is_ok(),
-        "lua" => Command::new("lua").arg("-v").output().is_ok(),
+        "lua" => Command::new(get_lua_executable()).arg("-v").output().is_ok(),
         "js" => Command::new("node").arg("--version").output().is_ok(),
         "ps" => {
             let shell = if cfg!(windows) { "powershell" } else { "pwsh" };

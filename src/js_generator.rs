@@ -19,25 +19,16 @@ impl JsGenerator {
     fn generate_command(&mut self, command: &Command) -> String {
         match command {
             Command::Simple(cmd) => self.generate_simple_command(cmd),
+            Command::ShoptCommand(cmd) => self.generate_shopt_command(cmd),
+            Command::TestExpression(test_expr) => self.generate_test_expression(test_expr),
             Command::Pipeline(pipeline) => self.generate_pipeline(pipeline),
             Command::If(if_stmt) => self.generate_if_statement(if_stmt),
-            Command::While(_) => String::from("// while not implemented\n"),
-            Command::For(_) => String::from("// for not implemented\n"),
-            Command::Function(_) => String::from("// function not implemented\n"),
-            Command::Subshell(cmd) => {
-                // Inline execution of subshell (no isolation)
-                self.generate_command(cmd)
-            },
-            Command::Background(cmd) => {
-                // Fire-and-forget using child_process without waiting
-                let body = match &**cmd { Command::Simple(s) => self.command_to_shell(s), _ => String::from("") };
-                format!("require('child_process').exec(\"{}\");\n", self.escape_js_raw(&body))
-            }
-            Command::Block(block) => {
-                let mut out = String::new();
-                for c in &block.commands { out.push_str(&self.generate_command(c)); }
-                out
-            }
+            Command::While(while_loop) => self.generate_while_loop(while_loop),
+            Command::For(for_loop) => self.generate_for_loop(for_loop),
+            Command::Function(func) => self.generate_function(func),
+            Command::Subshell(cmd) => self.generate_subshell(cmd),
+            Command::Background(cmd) => self.generate_background(cmd),
+            Command::Block(block) => self.generate_block(block),
             Command::BlankLine => String::from("\n"),
         }
     }
@@ -55,6 +46,107 @@ impl JsGenerator {
         }
         let sys = self.command_to_shell(cmd);
         format!("execSync(\"{}\", {{ stdio: 'inherit' }});\n", self.escape_js_raw(&sys))
+    }
+
+    fn generate_shopt_command(&mut self, cmd: &ShoptCommand) -> String {
+        let mut output = String::new();
+        
+        // Handle shopt command for shell options
+        if cmd.enable {
+            match cmd.option.as_str() {
+                "extglob" => {
+                    output.push_str("// extglob option enabled\n");
+                }
+                "nocasematch" => {
+                    output.push_str("// nocasematch option enabled\n");
+                }
+                _ => {
+                    output.push_str(&format!("// shopt -s {} not implemented\n", cmd.option));
+                }
+            }
+        } else {
+            match cmd.option.as_str() {
+                "extglob" => {
+                    output.push_str("// extglob option disabled\n");
+                }
+                "nocasematch" => {
+                    output.push_str("// nocasematch option disabled\n");
+                }
+                _ => {
+                    output.push_str(&format!("// shopt -u {} not implemented\n", cmd.option));
+                }
+            }
+        }
+        
+        output
+    }
+
+    fn generate_test_expression(&mut self, test_expr: &TestExpression) -> String {
+        let mut output = String::new();
+        
+        // Handle test modifiers if they're set
+        if test_expr.modifiers.extglob {
+            output.push_str("// extglob enabled\n");
+        }
+        if test_expr.modifiers.nocasematch {
+            output.push_str("// nocasematch enabled\n");
+        }
+        if test_expr.modifiers.globstar {
+            output.push_str("// globstar enabled\n");
+        }
+        if test_expr.modifiers.nullglob {
+            output.push_str("// nullglob enabled\n");
+        }
+        if test_expr.modifiers.failglob {
+            output.push_str("// failglob enabled\n");
+        }
+        if test_expr.modifiers.dotglob {
+            output.push_str("// dotglob enabled\n");
+        }
+        
+        // Generate the test expression
+        // For now, just generate a comment with the expression
+        output.push_str(&format!("// test expression: {}\n", test_expr.expression));
+        output.push_str("// TODO: implement test expression logic\n");
+        
+        output
+    }
+
+    fn generate_while_loop(&mut self, while_loop: &WhileLoop) -> String {
+        let mut output = String::new();
+        output.push_str("// while not implemented\n");
+        output
+    }
+
+    fn generate_for_loop(&mut self, for_loop: &ForLoop) -> String {
+        let mut output = String::new();
+        output.push_str("// for not implemented\n");
+        output
+    }
+
+    fn generate_function(&mut self, func: &Function) -> String {
+        let mut output = String::new();
+        output.push_str("// function not implemented\n");
+        output
+    }
+
+    fn generate_subshell(&mut self, cmd: &Command) -> String {
+        // Inline execution of subshell (no isolation)
+        self.generate_command(cmd)
+    }
+
+    fn generate_background(&mut self, cmd: &Command) -> String {
+        // Fire-and-forget using child_process without waiting
+        let body = match cmd { Command::Simple(s) => self.command_to_shell(&s), _ => String::from("") };
+        format!("require('child_process').exec(\"{}\");\n", self.escape_js_raw(&body))
+    }
+
+    fn generate_block(&mut self, block: &Block) -> String {
+        let mut out = String::new();
+        for c in &block.commands { 
+            out.push_str(&self.generate_command(c)); 
+        }
+        out
     }
 
     fn generate_pipeline(&self, pipeline: &Pipeline) -> String {

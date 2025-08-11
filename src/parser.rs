@@ -19,12 +19,14 @@ pub enum ParserError {
 
 pub struct Parser {
     lexer: Lexer,
+    shopt_state: TestModifiers,
 }
 
 impl Parser {
     pub fn new(input: &str) -> Self {
         Self {
             lexer: Lexer::new(input),
+            shopt_state: TestModifiers::default(),
         }
     }
 
@@ -243,7 +245,7 @@ impl Parser {
                     Word::Literal(self.get_identifier_text()?)
                 }
                 Token::Set | Token::Export | Token::Readonly | Token::Local | Token::Declare | Token::Typeset |
-                Token::Unset | Token::Shift | Token::Eval | Token::Exec | Token::Source | Token::Trap | Token::Wait => {
+                Token::Unset | Token::Shift | Token::Eval | Token::Exec | Token::Source | Token::Trap | Token::Wait | Token::Shopt => {
                     Word::Literal(self.get_raw_token_text()?) // keep exact text for builtin/keyword-as-command
                 }
                 Token::TestBracket => {
@@ -323,14 +325,42 @@ impl Parser {
                     // Handle arguments starting with minus (like -la, -v, etc.)
                     let token_clone = token.clone();
                     self.lexer.next(); // consume the minus
-                    if let Some(Token::Identifier) = self.lexer.peek() {
-                        let arg = Word::Literal(format!("-{}", self.get_identifier_text()?));
-                        args.push(arg);
-                    } else if let Some(Token::Number) = self.lexer.peek() {
-                        let num = self.get_number_text()?;
-                        args.push(Word::Literal(format!("-{}", num)));
+                    
+                    // Check if we have a specific shell option token next
+                    if let Some(token_after_minus) = self.lexer.peek() {
+                        match token_after_minus {
+                            Token::Exists | Token::Readable | Token::Writable | Token::Executable |
+                            Token::Size | Token::Symlink | Token::SymlinkH | Token::PipeFile |
+                            Token::Socket | Token::Block | Token::Character | Token::SetGid |
+                            Token::Sticky | Token::SetUid | Token::Owned | Token::GroupOwned |
+                            Token::Modified | Token::NonZero | Token::File | Token::Directory => {
+                                // Handle specific shell option tokens
+                                let option_text = self.get_raw_token_text()?;
+                                args.push(Word::Literal(option_text));
+                            }
+                            Token::Identifier => {
+                                // Handle generic identifier after minus
+                                let arg = Word::Literal(format!("-{}", self.get_identifier_text()?));
+                                args.push(arg);
+                            }
+                            Token::Number => {
+                                // Handle number after minus
+                                let num = self.get_number_text()?;
+                                args.push(Word::Literal(format!("-{}", num)));
+                            }
+                            _ => {
+                                // Get the actual line and column for better error reporting
+                                let (line, col) = self
+                                    .lexer
+                                    .get_span()
+                                    .map(|(s, _)| self.lexer.offset_to_line_col(s))
+                                    .unwrap_or((1, 1));
+                                return Err(ParserError::UnexpectedToken { token: token_clone, line, col });
+                            }
+                        }
                     } else {
-                        return Err(ParserError::UnexpectedToken { token: token_clone, line: 1, col: 1 });
+                        // Handle standalone minus
+                        args.push(Word::Literal("-".to_string()));
                     }
                 }
                 // Process substitution as args: <(cmd) or >(cmd)
@@ -470,6 +500,43 @@ impl Parser {
             }
             let trimmed = expr.trim().to_string();
             if !trimmed.is_empty() { args.push(Word::Literal(trimmed)); }
+        }
+        
+        // Postprocess: convert shopt commands to ShoptCommand AST nodes
+        if name == "shopt" && args.len() >= 2 {
+            if let (Some(flag), Some(option)) = (args.get(0), args.get(1)) {
+                if let (Word::Literal(flag_str), Word::Literal(option_str)) = (flag, option) {
+                    match flag_str.as_str() {
+                        "-s" => {
+                            // Update parser state
+                            self.update_shopt_state(option_str, true);
+                            return Ok(Command::ShoptCommand(ShoptCommand {
+                                option: option_str.clone(),
+                                enable: true,
+                            }));
+                        }
+                        "-u" => {
+                            // Update parser state
+                            self.update_shopt_state(option_str, false);
+                            return Ok(Command::ShoptCommand(ShoptCommand {
+                                option: option_str.clone(),
+                                enable: false,
+                            }));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        
+        // Postprocess: convert [[ ... ]] test expressions to TestExpression AST nodes
+        if name == "[[".to_string() && !args.is_empty() {
+            if let Some(Word::Literal(expr)) = args.first() {
+                return Ok(Command::TestExpression(TestExpression {
+                    expression: expr.clone(),
+                    modifiers: self.get_current_shopt_state(),
+                }));
+            }
         }
         
         Ok(Command::Simple(SimpleCommand {
@@ -951,6 +1018,7 @@ impl Parser {
                             match part {
                                 StringPart::Literal(s) => result.push_str(s),
                                 StringPart::Variable(var) => result.push_str(&format!("${}", var)),
+                                StringPart::MapAccess(map_name, key) => result.push_str(&format!("${{{}}}[{}]", map_name, key)),
                                 StringPart::Arithmetic(expr) => result.push_str(&expr.expression),
                                 StringPart::CommandSubstitution(_) => result.push_str("$(...)"),
                             }
@@ -973,13 +1041,18 @@ impl Parser {
             Some(Token::DoubleQuotedString) => Ok(self.parse_string_interpolation()?),
             Some(Token::SingleQuotedString) => Ok(Word::Literal(self.get_string_text()?)),
             Some(Token::BacktickString) => Ok(Word::Literal(self.get_raw_token_text()?)),
-            Some(Token::DollarSingleQuotedString) => Ok(Word::Literal(self.get_raw_token_text()?)),
+            Some(Token::DollarSingleQuotedString) => Ok(self.parse_ansic_quoted_string()?),
             Some(Token::DollarDoubleQuotedString) => Ok(self.parse_string_interpolation()?),
             Some(Token::BraceOpen) => Ok(self.parse_brace_expansion()?),
             Some(Token::SourceDot) => {
                 // Treat standalone '.' as a normal word (e.g., `find . -name ...`)
                 self.lexer.next();
                 Ok(Word::Literal(".".to_string()))
+            }
+            Some(Token::Star) => {
+                // Handle glob patterns like file_*.txt
+                self.lexer.next();
+                Ok(Word::Literal("*".to_string()))
             }
             Some(Token::Dollar) => Ok(self.parse_variable_expansion()?),
             Some(Token::DollarBrace) | Some(Token::DollarParen) | Some(Token::DollarHashSimple) | Some(Token::DollarAtSimple) | Some(Token::DollarStarSimple)
@@ -1026,13 +1099,75 @@ impl Parser {
                 self.lexer.next(); 
                 Ok(Word::Variable("*".to_string()))
             }
-            Some(Token::DollarBrace)
-            | Some(Token::DollarBraceHash) | Some(Token::DollarBraceBang) | Some(Token::DollarBraceStar) | Some(Token::DollarBraceAt)
-            | Some(Token::DollarBraceHashStar) | Some(Token::DollarBraceHashAt) | Some(Token::DollarBraceBangStar) | Some(Token::DollarBraceBangAt) => {
+            Some(Token::DollarBrace) => {
                 // Parse ${...} expansions
                 self.lexer.next(); // consume the token
                 let var_name = self.parse_braced_variable_name()?;
-                Ok(Word::Variable(var_name))
+                
+                // Check if this is a map access pattern like map[foo]
+                if var_name.contains('[') && var_name.contains(']') {
+                    if let Some(bracket_start) = var_name.find('[') {
+                        if let Some(bracket_end) = var_name.rfind(']') {
+                            let map_name = &var_name[..bracket_start];
+                            let key = &var_name[bracket_start + 1..bracket_end];
+                            Ok(Word::MapAccess(map_name.to_string(), key.to_string()))
+                        } else {
+                            Ok(Word::Variable(var_name))
+                        }
+                    } else {
+                        Ok(Word::Variable(var_name))
+                    }
+                } else {
+                    Ok(Word::Variable(var_name))
+                }
+            }
+            Some(Token::DollarBraceHash) => {
+                // Parse ${#...} expansions (array length)
+                self.lexer.next(); // consume the token
+                let var_name = self.parse_braced_variable_name()?;
+                Ok(Word::Variable(format!("#{}", var_name)))
+            }
+            Some(Token::DollarBraceBang) => {
+                // Parse ${!...} expansions (associative array keys)
+                self.lexer.next(); // consume the token
+                let var_name = self.parse_braced_variable_name()?;
+                Ok(Word::Variable(format!("!{}", var_name)))
+            }
+            Some(Token::DollarBraceStar) => {
+                // Parse ${*...} expansions
+                self.lexer.next(); // consume the token
+                let var_name = self.parse_braced_variable_name()?;
+                Ok(Word::Variable(format!("*{}", var_name)))
+            }
+            Some(Token::DollarBraceAt) => {
+                // Parse ${@...} expansions
+                self.lexer.next(); // consume the token
+                let var_name = self.parse_braced_variable_name()?;
+                Ok(Word::Variable(format!("@{}", var_name)))
+            }
+            Some(Token::DollarBraceHashStar) => {
+                // Parse ${#*...} expansions
+                self.lexer.next(); // consume the token
+                let var_name = self.parse_braced_variable_name()?;
+                Ok(Word::Variable(format!("#*{}", var_name)))
+            }
+            Some(Token::DollarBraceHashAt) => {
+                // Parse ${#@...} expansions
+                self.lexer.next(); // consume the token
+                let var_name = self.parse_braced_variable_name()?;
+                Ok(Word::Variable(format!("#@{}", var_name)))
+            }
+            Some(Token::DollarBraceBangStar) => {
+                // Parse ${!*...} expansions
+                self.lexer.next(); // consume the token
+                let var_name = self.parse_braced_variable_name()?;
+                Ok(Word::Variable(format!("!*{}", var_name)))
+            }
+            Some(Token::DollarBraceBangAt) => {
+                // Parse ${!@...} expansions
+                self.lexer.next(); // consume the token
+                let var_name = self.parse_braced_variable_name()?;
+                Ok(Word::Variable(format!("!@{}", var_name)))
             }
             Some(Token::DollarParen) => {
                 // Parse command substitution: capture until matching ')'
@@ -1058,7 +1193,7 @@ impl Parser {
                 Token::SingleQuotedString | Token::Dollar | Token::DollarBrace |
                 Token::DollarParen | Token::BraceOpen | Token::BacktickString | Token::Arithmetic | Token::DollarHashSimple | Token::DollarAtSimple | Token::DollarStarSimple
                 | Token::DollarBraceHash | Token::DollarBraceBang | Token::DollarBraceStar | Token::DollarBraceAt
-                | Token::DollarBraceHashStar | Token::DollarBraceHashAt | Token::DollarBraceBangStar | Token::DollarBraceBangAt => {
+                | Token::DollarBraceHashStar | Token::DollarBraceHashAt | Token::DollarBraceBangStar | Token::DollarBraceBangAt | Token::Star => {
                     words.push(self.parse_word()?);
                 }
                 _ => break,
@@ -1225,7 +1360,7 @@ impl Parser {
         let mut tokens = Vec::new();
         
         // We're at the Arithmetic token which is $((, consume it
-        if let Some((start, end)) = self.lexer.get_span() {
+        if let Some((_start, _end)) = self.lexer.get_span() {
             self.lexer.next();
         }
         
@@ -1364,9 +1499,26 @@ impl Parser {
                             i += 1;
                         }
                         
-                        // Check if this is a special shell array syntax like #arr[@]
+                        // Check if this is a special shell array syntax like #arr[@] or !map[@]
                         if brace_content.starts_with('#') && brace_content.contains('[') {
                             // This is ${#arr[@]} - array length
+                            var_name = brace_content;
+                        } else if brace_content.starts_with('!') && brace_content.contains('[') {
+                            // This is ${!map[@]} - get keys of associative array
+                            var_name = brace_content;
+                        } else if brace_content.contains('[') && brace_content.contains(']') {
+                            // This is a map/array access like ${map[foo]} or ${arr[1]}
+                            // Parse it as a MapAccess
+                            if let Some(bracket_start) = brace_content.find('[') {
+                                if let Some(bracket_end) = brace_content.rfind(']') {
+                                    let map_name = &brace_content[..bracket_start];
+                                    let key = &brace_content[bracket_start + 1..bracket_end];
+                                    // Create a MapAccess StringPart
+                                    parts.push(StringPart::MapAccess(map_name.to_string(), key.to_string()));
+                                    continue; // Skip the regular variable handling
+                                }
+                            }
+                            // Fallback to regular variable if parsing fails
                             var_name = brace_content;
                         } else {
                             // Regular braced variable like ${arr[1]}
@@ -1570,6 +1722,106 @@ impl Parser {
         Ok(text)
     }
 
+    fn parse_ansic_quoted_string(&mut self) -> Result<Word, ParserError> {
+        // Parse ANSI-C quoting strings like $'line1\nline2\tTabbed'
+        let raw_text = self.get_raw_token_text()?;
+        
+        // Remove the $' and ' wrapper
+        if raw_text.len() >= 3 && raw_text.starts_with("$'") && raw_text.ends_with("'") {
+            let content = &raw_text[2..raw_text.len()-1];
+            
+            // Process ANSI-C escape sequences
+            let mut result = String::new();
+            let mut chars = content.chars().peekable();
+            
+            while let Some(ch) = chars.next() {
+                if ch == '\\' {
+                    if let Some(next_ch) = chars.next() {
+                        match next_ch {
+                            'a' => result.push('\x07'), // bell
+                            'b' => result.push('\x08'), // backspace
+                            'f' => result.push('\x0c'), // formfeed
+                            'n' => result.push('\n'),   // newline
+                            'r' => result.push('\r'),   // carriage return
+                            't' => result.push('\t'),   // tab
+                            'v' => result.push('\x0b'), // vertical tab
+                            '\\' => result.push('\\'),  // backslash
+                            '\'' => result.push('\''),  // single quote
+                            '?' => result.push('?'),    // question mark
+                            'x' => {
+                                // Hex escape: \xHH
+                                let mut hex = String::new();
+                                for _ in 0..2 {
+                                    if let Some(hex_ch) = chars.next() {
+                                        if hex_ch.is_ascii_hexdigit() {
+                                            hex.push(hex_ch);
+                                        } else {
+                                            break;
+                                        }
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                if hex.len() == 2 {
+                                    if let Ok(byte_val) = u8::from_str_radix(&hex, 16) {
+                                        result.push(byte_val as char);
+                                    } else {
+                                        result.push_str(&format!("\\x{}", hex));
+                                    }
+                                } else {
+                                    result.push_str(&format!("\\x{}", hex));
+                                }
+                            }
+                            'u' => {
+                                // Unicode escape: \uHHHH
+                                let mut hex = String::new();
+                                for _ in 0..4 {
+                                    if let Some(hex_ch) = chars.next() {
+                                        if hex_ch.is_ascii_hexdigit() {
+                                            hex.push(hex_ch);
+                                        } else {
+                                            break;
+                                        }
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                if hex.len() == 4 {
+                                    if let Ok(unicode_val) = u32::from_str_radix(&hex, 16) {
+                                        if let Some(unicode_char) = char::from_u32(unicode_val) {
+                                            result.push(unicode_char);
+                                        } else {
+                                            result.push_str(&format!("\\u{}", hex));
+                                        }
+                                    } else {
+                                        result.push_str(&format!("\\u{}", hex));
+                                    }
+                                } else {
+                                    result.push_str(&format!("\\u{}", hex));
+                                }
+                            }
+                            _ => {
+                                // Unknown escape sequence, treat as literal
+                                result.push('\\');
+                                result.push(next_ch);
+                            }
+                        }
+                    } else {
+                        // Trailing backslash
+                        result.push('\\');
+                    }
+                } else {
+                    result.push(ch);
+                }
+            }
+            
+            Ok(Word::Literal(result))
+        } else {
+            // Fallback: treat as literal if format is unexpected
+            Ok(Word::Literal(raw_text))
+        }
+    }
+
     fn capture_parenthetical_text(&mut self) -> Result<String, ParserError> {
         // Assumes current token is '(' or we are right before it (when called after consuming '<' or '>')
         if !matches!(self.lexer.peek(), Some(Token::ParenOpen)) {
@@ -1712,6 +1964,22 @@ impl Parser {
         } else {
             Ok(Word::Literal(String::new()))
         }
+    }
+
+    fn update_shopt_state(&mut self, option: &str, enable: bool) {
+        match option {
+            "extglob" => self.shopt_state.extglob = enable,
+            "nocasematch" => self.shopt_state.nocasematch = enable,
+            "globstar" => self.shopt_state.globstar = enable,
+            "nullglob" => self.shopt_state.nullglob = enable,
+            "failglob" => self.shopt_state.failglob = enable,
+            "dotglob" => self.shopt_state.dotglob = enable,
+            _ => {} // Ignore unknown options
+        }
+    }
+
+    fn get_current_shopt_state(&self) -> TestModifiers {
+        self.shopt_state.clone()
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::ast::{Command, SimpleCommand, Pipeline, IfStatement, WhileLoop, ForLoop, Function, Block, WordVecExt};
+use crate::ast::*;
 
 pub struct LuaGenerator {
     indent_level: usize,
@@ -57,6 +57,8 @@ impl LuaGenerator {
     fn generate_command(&mut self, command: &Command) -> String {
         match command {
             Command::Simple(cmd) => self.generate_simple_command(cmd),
+            Command::ShoptCommand(cmd) => self.generate_shopt_command(cmd),
+            Command::TestExpression(test_expr) => self.generate_test_expression(test_expr),
             Command::Pipeline(pipeline) => self.generate_pipeline(pipeline),
             Command::If(if_stmt) => self.generate_if_statement(if_stmt),
             Command::While(while_loop) => self.generate_while_loop(while_loop),
@@ -168,6 +170,70 @@ impl LuaGenerator {
             }
         }
 
+        lua_code
+    }
+
+    fn generate_shopt_command(&mut self, cmd: &ShoptCommand) -> String {
+        let mut lua_code = String::new();
+        
+        // Handle shopt command for shell options
+        if cmd.enable {
+            match cmd.option.as_str() {
+                "extglob" => {
+                    lua_code.push_str("-- extglob option enabled\n");
+                }
+                "nocasematch" => {
+                    lua_code.push_str("-- nocasematch option enabled\n");
+                }
+                _ => {
+                    lua_code.push_str(&format!("-- shopt -s {} not implemented\n", cmd.option));
+                }
+            }
+        } else {
+            match cmd.option.as_str() {
+                "extglob" => {
+                    lua_code.push_str("-- extglob option disabled\n");
+                }
+                "nocasematch" => {
+                    lua_code.push_str("-- nocasematch option disabled\n");
+                }
+                _ => {
+                    lua_code.push_str(&format!("-- shopt -u {} not implemented\n", cmd.option));
+                }
+            }
+        }
+        
+        lua_code
+    }
+
+    fn generate_test_expression(&mut self, test_expr: &TestExpression) -> String {
+        let mut lua_code = String::new();
+        
+        // Handle test modifiers if they're set
+        if test_expr.modifiers.extglob {
+            lua_code.push_str("-- extglob enabled\n");
+        }
+        if test_expr.modifiers.nocasematch {
+            lua_code.push_str("-- nocasematch enabled\n");
+        }
+        if test_expr.modifiers.globstar {
+            lua_code.push_str("-- globstar enabled\n");
+        }
+        if test_expr.modifiers.nullglob {
+            lua_code.push_str("-- nullglob enabled\n");
+        }
+        if test_expr.modifiers.failglob {
+            lua_code.push_str("-- failglob enabled\n");
+        }
+        if test_expr.modifiers.dotglob {
+            lua_code.push_str("-- dotglob enabled\n");
+        }
+        
+        // Generate the test expression
+        // For now, just generate a comment with the expression
+        lua_code.push_str(&format!("-- test expression: {}\n", test_expr.expression));
+        lua_code.push_str("-- TODO: implement test expression logic\n");
+        
         lua_code
     }
 

@@ -170,14 +170,19 @@ fn all_examples() -> Vec<ExampleEntry> {
     vec![
         ExampleEntry { name: "args.sh", content: include_str!("../examples/args.sh") },
         ExampleEntry { name: "control_flow.sh", content: include_str!("../examples/control_flow.sh") },
-        ExampleEntry { name: "gnu_bash_extensions.sh", content: include_str!("../examples/gnu_bash_extensions.sh") },
-        ExampleEntry { name: "grep_params.sh", content: include_str!("../examples/grep_params.sh") },
         ExampleEntry { name: "local.sh", content: include_str!("../examples/local.sh") },
         ExampleEntry { name: "misc.sh", content: include_str!("../examples/misc.sh") },
         ExampleEntry { name: "pipeline.sh", content: include_str!("../examples/pipeline.sh") },
         ExampleEntry { name: "simple.sh", content: include_str!("../examples/simple.sh") },
         ExampleEntry { name: "subprocess.sh", content: include_str!("../examples/subprocess.sh") },
         ExampleEntry { name: "test_quoted.sh", content: include_str!("../examples/test_quoted.sh") },
+        ExampleEntry { name: "parameter_expansion.sh", content: include_str!("../examples/parameter_expansion.sh") },
+        ExampleEntry { name: "brace_expansion.sh", content: include_str!("../examples/brace_expansion.sh") },
+        ExampleEntry { name: "arrays.sh", content: include_str!("../examples/arrays.sh") },
+        ExampleEntry { name: "pattern_matching.sh", content: include_str!("../examples/pattern_matching.sh") },
+        ExampleEntry { name: "process_substitution.sh", content: include_str!("../examples/process_substitution.sh") },
+        ExampleEntry { name: "ansi_quoting.sh", content: include_str!("../examples/ansi_quoting.sh") },
+        ExampleEntry { name: "cat_EOF.sh", content: include_str!("../examples/cat_EOF.sh") },
     ]
 }
 

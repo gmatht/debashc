@@ -8,35 +8,105 @@ impl PowerShellGenerator {
     pub fn generate(&mut self, commands: &[Command]) -> String {
         let mut out = String::new();
         out.push_str("#requires -Version 5.0\n");
-        for c in commands { out.push_str(&self.emit(c)); }
+        for c in commands { out.push_str(&self.generate_command(c)); }
         while out.ends_with('\n') { out.pop(); }
         out
     }
 
-    fn emit(&self, c: &Command) -> String {
+    fn generate_command(&mut self, c: &Command) -> String {
         match c {
-            Command::Simple(cmd) => self.simple(cmd),
-            Command::Pipeline(p) => self.pipeline(p),
-            Command::If(i) => self.if_stmt(i),
-            Command::While(_) => String::from("# while not implemented\n"),
-            Command::For(_) => String::from("# for not implemented\n"),
-            Command::Function(_) => String::from("# function not implemented\n"),
-            Command::Subshell(cmd) => {
-                // Inline execution for subshell
-                self.emit(cmd)
-            },
-            Command::Background(cmd) => {
-                // Run in background job
-                let body = self.emit(cmd);
-                format!("Start-Job -ScriptBlock {{\n{}\n}}\n", body)
-            }
-            Command::Block(block) => {
-                let mut out = String::new();
-                for c in &block.commands { out.push_str(&self.emit(c)); }
-                out
-            }
+            Command::Simple(cmd) => self.generate_simple_command(cmd),
+            Command::ShoptCommand(cmd) => self.generate_shopt_command(cmd),
+            Command::TestExpression(test_expr) => self.generate_test_expression(test_expr),
+            Command::Pipeline(pipeline) => self.generate_pipeline(pipeline),
+            Command::If(if_stmt) => self.generate_if_statement(if_stmt),
+            Command::While(while_loop) => self.generate_while_loop(while_loop),
+            Command::For(for_loop) => self.generate_for_loop(for_loop),
+            Command::Function(func) => self.generate_function(func),
+            Command::Subshell(cmd) => self.generate_subshell(cmd),
+            Command::Background(cmd) => self.generate_background(cmd),
+            Command::Block(block) => self.generate_block(block),
             Command::BlankLine => "\n".to_string(),
         }
+    }
+
+    fn generate_simple_command(&mut self, cmd: &SimpleCommand) -> String {
+        self.simple(cmd)
+    }
+
+    fn generate_shopt_command(&mut self, cmd: &ShoptCommand) -> String {
+        self.shopt(cmd)
+    }
+
+    fn generate_test_expression(&mut self, test_expr: &TestExpression) -> String {
+        let mut output = String::new();
+        
+        // Handle test modifiers if they're set
+        if test_expr.modifiers.extglob {
+            output.push_str("# extglob enabled\n");
+        }
+        if test_expr.modifiers.nocasematch {
+            output.push_str("# nocasematch enabled\n");
+        }
+        if test_expr.modifiers.globstar {
+            output.push_str("# globstar enabled\n");
+        }
+        if test_expr.modifiers.nullglob {
+            output.push_str("# nullglob enabled\n");
+        }
+        if test_expr.modifiers.failglob {
+            output.push_str("# failglob enabled\n");
+        }
+        if test_expr.modifiers.dotglob {
+            output.push_str("# dotglob enabled\n");
+        }
+        
+        // Generate the test expression
+        // For now, just generate a comment with the expression
+        output.push_str(&format!("# test expression: {}\n", test_expr.expression));
+        output.push_str("# TODO: implement test expression logic\n");
+        
+        output
+    }
+
+    fn generate_pipeline(&mut self, pipeline: &Pipeline) -> String {
+        self.pipeline(pipeline)
+    }
+
+    fn generate_if_statement(&mut self, if_stmt: &IfStatement) -> String {
+        // Call if_stmt directly to avoid trait method issues
+        self.if_stmt(if_stmt)
+    }
+
+    fn generate_while_loop(&mut self, while_loop: &WhileLoop) -> String {
+        String::from("# while not implemented\n")
+    }
+
+    fn generate_for_loop(&mut self, for_loop: &ForLoop) -> String {
+        String::from("# for not implemented\n")
+    }
+
+    fn generate_function(&mut self, func: &Function) -> String {
+        String::from("# function not implemented\n")
+    }
+
+    fn generate_subshell(&mut self, cmd: &Command) -> String {
+        // Inline execution for subshell
+        self.generate_command(cmd)
+    }
+
+    fn generate_background(&mut self, cmd: &Command) -> String {
+        // Run in background job
+        let body = self.generate_command(cmd);
+        format!("Start-Job -ScriptBlock {{\n{}\n}}\n", body)
+    }
+
+    fn generate_block(&mut self, block: &Block) -> String {
+        let mut out = String::new();
+        for c in &block.commands { 
+            out.push_str(&self.generate_command(c)); 
+        }
+        out
     }
 
     fn simple(&self, cmd: &SimpleCommand) -> String {
@@ -72,6 +142,39 @@ impl PowerShellGenerator {
         }
     }
 
+    fn shopt(&self, cmd: &ShoptCommand) -> String {
+        let mut output = String::new();
+        
+        // Handle shopt command for shell options
+        if cmd.enable {
+            match cmd.option.as_str() {
+                "extglob" => {
+                    output.push_str("# extglob option enabled\n");
+                }
+                "nocasematch" => {
+                    output.push_str("# nocasematch option enabled\n");
+                }
+                _ => {
+                    output.push_str(&format!("# shopt -s {} not implemented\n", cmd.option));
+                }
+            }
+        } else {
+            match cmd.option.as_str() {
+                "extglob" => {
+                    output.push_str("# extglob option disabled\n");
+                }
+                "nocasematch" => {
+                    output.push_str("# nocasematch option disabled\n");
+                }
+                _ => {
+                    output.push_str(&format!("# shopt -u {} not implemented\n", cmd.option));
+                }
+            }
+        }
+        
+        output
+    }
+
     fn pipeline(&self, p: &Pipeline) -> String {
         let mut parts: Vec<String> = Vec::new();
         for c in &p.commands {
@@ -82,7 +185,7 @@ impl PowerShellGenerator {
         format!("{}\n", parts.join(" | "))
     }
 
-    fn if_stmt(&self, i: &IfStatement) -> String {
+    fn if_stmt(&mut self, i: &IfStatement) -> String {
         let mut out = String::new();
         // For now, implement a simple condition check
         match &*i.condition {
@@ -122,10 +225,10 @@ impl PowerShellGenerator {
                 out.push_str("if ($true) {\n");
             }
         }
-        out.push_str(&self.emit(&i.then_branch));
+        out.push_str(&self.generate_command(&i.then_branch));
         if let Some(e) = &i.else_branch {
             out.push_str("} else {\n");
-            out.push_str(&self.emit(e));
+            out.push_str(&self.generate_command(e));
             out.push_str("}\n");
         } else {
             out.push_str("}\n");

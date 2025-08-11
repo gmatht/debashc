@@ -31,6 +31,8 @@ impl PerlGenerator {
     fn generate_command(&mut self, command: &Command) -> String {
         match command {
             Command::Simple(cmd) => self.generate_simple_command(cmd),
+            Command::ShoptCommand(cmd) => self.generate_shopt_command(cmd),
+            Command::TestExpression(test_expr) => self.generate_test_expression(test_expr),
             Command::Pipeline(pipeline) => self.generate_pipeline(pipeline),
             Command::If(if_stmt) => self.generate_if_statement(if_stmt),
             Command::While(while_loop) => self.generate_while_loop(while_loop),
@@ -84,6 +86,24 @@ impl PerlGenerator {
                     }
                 }
                 
+                // Check if this is an array assignment like map[foo]=bar
+                if var.contains('[') && var.ends_with(']') {
+                    if let Some(bracket_start) = var.find('[') {
+                        let array_name = &var[..bracket_start];
+                        let key = &var[bracket_start + 1..var.len() - 1];
+                        let val = match value {
+                            Word::Literal(literal) => self.perl_string_literal(literal),
+                            _ => self.word_to_perl(value),
+                        };
+                        if self.subshell_depth > 0 || !self.declared_locals.contains(array_name) {
+                            output.push_str(&format!("my %{} = ();\n", array_name));
+                            self.declared_locals.insert(array_name.to_string());
+                        }
+                        output.push_str(&format!("${}{{{}}} = {};\n", array_name, key, val));
+                        continue; // Skip the regular assignment below
+                    }
+                }
+                
                 let val = match value {
                     Word::Arithmetic(arithmetic) => {
                         // Handle shell arithmetic: $((i + 1)) -> $i + 1
@@ -133,9 +153,18 @@ impl PerlGenerator {
                 if args.is_empty() {
                     output.push_str(&format!("printf({});\n", self.perl_string_literal(format_str)));
                 } else {
+                    // For printf, the format string should be properly quoted
+                    let format_str_perl = match format_str {
+                        Word::StringInterpolation(interp) => {
+                            // Convert string interpolation and wrap in quotes for printf
+                            let content = self.convert_string_interpolation_to_perl(interp);
+                            format!("\"{}\"", content)
+                        }
+                        _ => self.perl_string_literal(format_str)
+                    };
                     let perl_args = args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>();
                     output.push_str(&format!("printf({}, {});\n", 
-                        self.perl_string_literal(format_str), 
+                        format_str_perl, 
                         perl_args.join(", ")));
                 }
             }
@@ -256,27 +285,57 @@ impl PerlGenerator {
             output.push_str("closedir($dh);\n");
         } else if cmd.name == "grep" {
             // Special handling for grep
-            if cmd.args.len() >= 2 {
-                let pattern = &cmd.args[0];
-                let file = &cmd.args[1];
+            if cmd.args.len() >= 1 {
+                // Find the pattern (first non-flag argument)
+                let mut pattern = None;
+                let mut file = None;
+                let mut flags = Vec::new();
                 
-                // Check for -o flag (only matching part)
-                let only_matching = cmd.args.iter().any(|arg| arg == "-o");
+                for arg in &cmd.args {
+                    if arg.starts_with('-') {
+                        flags.push(arg.as_str());
+                    } else if pattern.is_none() {
+                        pattern = Some(arg);
+                    } else if file.is_none() {
+                        file = Some(arg);
+                    }
+                }
                 
-                if only_matching {
-                    output.push_str(&format!("open(my $fh, '<', '{}') or die \"Cannot open file: $!\\n\";\n", file));
-                    output.push_str(&format!("while (my $line = <$fh>) {{\n"));
-                    output.push_str(&format!("    if ($line =~ /({})/g) {{\n", pattern));
-                    output.push_str("        print \"$1\\n\";\n");
-                    output.push_str("    }\n");
-                    output.push_str("}\n");
-                    output.push_str("close($fh);\n");
-                } else {
-                    output.push_str(&format!("open(my $fh, '<', '{}') or die \"Cannot open file: $!\\n\";\n", file));
-                    output.push_str(&format!("while (my $line = <$fh>) {{\n"));
-                    output.push_str(&format!("    print($line) if $line =~ /{}/;\n", pattern));
-                    output.push_str("}\n");
-                    output.push_str("close($fh);\n");
+                if let Some(pattern) = pattern {
+                    let file = file.map_or("STDIN", |w| w.as_str());
+                    
+                    // Check for -o flag (only matching part)
+                    let only_matching = flags.iter().any(|&flag| flag == "-o");
+                    
+                    if only_matching {
+                        if file == "STDIN" {
+                            output.push_str("while (my $line = <STDIN>) {\n");
+                            output.push_str(&format!("    if ($line =~ /({})/g) {{\n", pattern));
+                            output.push_str("        print \"$1\\n\";\n");
+                            output.push_str("    }\n");
+                            output.push_str("}\n");
+                        } else {
+                            output.push_str(&format!("open(my $fh, '<', '{}') or die \"Cannot open file: $!\\n\";\n", file));
+                            output.push_str(&format!("while (my $line = <$fh>) {{\n"));
+                            output.push_str(&format!("    if ($line =~ /({})/g) {{\n", pattern));
+                            output.push_str("        print \"$1\\n\";\n");
+                            output.push_str("    }\n");
+                            output.push_str("}\n");
+                            output.push_str("close($fh);\n");
+                        }
+                    } else {
+                        if file == "STDIN" {
+                            output.push_str("while (my $line = <STDIN>) {\n");
+                            output.push_str(&format!("    print($line) if $line =~ /{}/;\n", pattern));
+                            output.push_str("}\n");
+                        } else {
+                            output.push_str(&format!("open(my $fh, '<', '{}') or die \"Cannot open file: $!\\n\";\n", file));
+                            output.push_str(&format!("while (my $line = <$fh>) {{\n"));
+                            output.push_str(&format!("    print($line) if $line =~ /{}/;\n", pattern));
+                            output.push_str("}\n");
+                            output.push_str("close($fh);\n");
+                        }
+                    }
                 }
             }
         } else if cmd.name == "cat" {
@@ -420,11 +479,15 @@ impl PerlGenerator {
             }
         } else if cmd.name == "declare" {
             // Handle declare command for associative arrays
-            if cmd.args.len() >= 2 && cmd.args[0] == "-A" {
-                let array_name = &cmd.args[1];
-                output.push_str(&format!("my %{} = ();\n", array_name));
-                if self.subshell_depth == 0 {
-                    self.declared_locals.insert(array_name.to_string());
+            if cmd.args.len() >= 2 && matches!(&cmd.args[0], Word::Literal(lit) if lit == "-A") {
+                if let Word::Literal(array_name) = &cmd.args[1] {
+                    output.push_str(&format!("my %{} = ();\n", array_name));
+                    if self.subshell_depth == 0 {
+                        self.declared_locals.insert(array_name.to_string());
+                    }
+                } else {
+                    // Skip if not a literal
+                    output.push_str(&format!("# declare {:?} not yet implemented\n", cmd.args));
                 }
             } else {
                 // Other declare options not yet implemented
@@ -450,7 +513,7 @@ impl PerlGenerator {
                         let key = &cmd.name[bracket_start + 1..cmd.name.len() - 1];
                         if let Some(value) = cmd.args.first() {
                             let perl_value = self.word_to_perl(value);
-                            output.push_str(&format!("${}[{}] = {};\n", array_name, key, perl_value));
+                            output.push_str(&format!("${}{{{}}} = {};\n", array_name, key, perl_value));
                         }
                     }
                 } else if self.declared_functions.contains(&cmd.name.to_string()) {
@@ -499,27 +562,15 @@ impl PerlGenerator {
             match redir.operator {
                 RedirectOperator::Input => {
                     // Input redirection: command < file
-                    if let Some(fd) = redir.fd {
-                        output.push_str(&format!("open(STDIN, '<', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
-                    } else {
-                        output.push_str(&format!("open(STDIN, '<', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
-                    }
+                    output.push_str(&format!("open(STDIN, '<', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
                 }
                 RedirectOperator::Output => {
                     // Output redirection: command > file
-                    if let Some(fd) = redir.fd {
-                        output.push_str(&format!("open(STDOUT, '>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
-                    } else {
-                        output.push_str(&format!("open(STDOUT, '>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
-                    }
+                    output.push_str(&format!("open(STDOUT, '>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
                 }
                 RedirectOperator::Append => {
                     // Append redirection: command >> file
-                    if let Some(fd) = redir.fd {
-                        output.push_str(&format!("open(STDOUT, '>>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
-                    } else {
-                        output.push_str(&format!("open(STDOUT, '>>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
-                    }
+                    output.push_str(&format!("open(STDOUT, '>>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
                 }
                 RedirectOperator::HereString => {
                     // Here-string: command <<< "string"
@@ -554,6 +605,342 @@ impl PerlGenerator {
         }
         
         if has_env { output.push_str("}\n"); }
+        output
+    }
+
+    fn generate_shopt_command(&mut self, cmd: &ShoptCommand) -> String {
+        let mut output = String::new();
+        
+        // Handle shopt command for shell options
+        if cmd.enable {
+            match cmd.option.as_str() {
+                "extglob" => {
+                    output.push_str("# extglob option enabled\n");
+                }
+                "nocasematch" => {
+                    output.push_str("# nocasematch option enabled\n");
+                }
+                _ => {
+                    output.push_str(&format!("# shopt -s {} not implemented\n", cmd.option));
+                }
+            }
+        } else {
+            match cmd.option.as_str() {
+                "extglob" => {
+                    output.push_str("# extglob option disabled\n");
+                }
+                "nocasematch" => {
+                    output.push_str("# nocasematch option disabled\n");
+                }
+                _ => {
+                    output.push_str(&format!("# shopt -u {} not implemented\n", cmd.option));
+                }
+            }
+        }
+        
+        // shopt commands always succeed (return true)
+        output.push_str("1;\n");
+        output
+    }
+
+    fn generate_test_expression(&mut self, test_expr: &TestExpression) -> String {
+        let mut output = String::new();
+        
+        // Parse the test expression to extract components
+        let expr = &test_expr.expression;
+        let modifiers = &test_expr.modifiers;
+        
+        // Add comments about enabled options
+        if modifiers.extglob {
+            output.push_str("# extglob enabled\n");
+        }
+        if modifiers.nocasematch {
+            output.push_str("# nocasematch enabled\n");
+        }
+        
+        // Parse the expression to determine the type of test
+        if expr.contains(" =~ ") {
+            // Regex matching: [[ $var =~ pattern ]]
+            let parts: Vec<&str> = expr.split(" =~ ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let pattern = parts[1].trim();
+                
+                // Ensure variable is declared
+                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
+                    output.push_str(&format!("my {} = '';\n", var));
+                    self.declared_locals.insert(var[1..].to_string());
+                }
+                
+                // Convert to Perl regex matching
+                output.push_str(&format!("{} =~ /{}/", var, pattern));
+            } else {
+                output.push_str(&format!("# Invalid regex test: {}\n", expr));
+                output.push_str("0");
+            }
+        } else if expr.contains(" == ") {
+            // Pattern matching: [[ $var == pattern ]]
+            let parts: Vec<&str> = expr.split(" == ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let pattern = parts[1].trim();
+                
+                // Ensure variable is declared
+                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
+                    output.push_str(&format!("my {} = '';\n", var));
+                    self.declared_locals.insert(var[1..].to_string());
+                }
+                
+                if modifiers.nocasematch {
+                    // Case-insensitive matching
+                    output.push_str(&format!("lc({}) =~ /^{}$/i", var, pattern.replace("*", ".*")));
+                } else {
+                    // Case-sensitive matching
+                    output.push_str(&format!("{} =~ /^{}$/", var, pattern.replace("*", ".*")));
+                }
+            } else {
+                output.push_str(&format!("# Invalid pattern test: {}\n", expr));
+                output.push_str("0");
+            }
+        } else if expr.contains(" != ") {
+            // Pattern matching: [[ $var != pattern ]]
+            let parts: Vec<&str> = expr.split(" != ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let pattern = parts[1].trim();
+                
+                // Ensure variable is declared
+                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
+                    output.push_str(&format!("my {} = '';\n", var));
+                    self.declared_locals.insert(var[1..].to_string());
+                }
+                
+                if modifiers.nocasematch {
+                    // Case-insensitive matching
+                    output.push_str(&format!("lc({}) !~ /^{}$/i", var, pattern.replace("*", ".*")));
+                } else {
+                    // Case-sensitive matching
+                    output.push_str(&format!("{} !~ /^{}$/", var, pattern.replace("*", ".*")));
+                }
+            } else {
+                output.push_str(&format!("# Invalid pattern test: {}\n", expr));
+                output.push_str("0");
+            }
+        } else if expr.contains(" -eq ") {
+            // Numeric equality: [[ $var -eq value ]]
+            let parts: Vec<&str> = expr.split(" -eq ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                // Ensure variable is declared
+                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
+                    output.push_str(&format!("my {} = 0;\n", var));
+                    self.declared_locals.insert(var[1..].to_string());
+                }
+                
+                output.push_str(&format!("{} == {}", var, value));
+            } else {
+                output.push_str(&format!("# Invalid numeric test: {}\n", expr));
+                output.push_str("0");
+            }
+        } else if expr.contains(" -ne ") {
+            // Numeric inequality: [[ $var -ne value ]]
+            let parts: Vec<&str> = expr.split(" -ne ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                // Ensure variable is declared
+                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
+                    output.push_str(&format!("my {} = 0;\n", var));
+                    self.declared_locals.insert(var[1..].to_string());
+                }
+                
+                output.push_str(&format!("{} != {}", var, value));
+            } else {
+                output.push_str(&format!("# Invalid numeric test: {}\n", expr));
+                output.push_str("0");
+            }
+        } else if expr.contains(" -lt ") {
+            // Less than: [[ $var -lt value ]]
+            let parts: Vec<&str> = expr.split(" -lt ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                // Ensure variable is declared
+                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
+                    output.push_str(&format!("my {} = 0;\n", var));
+                    self.declared_locals.insert(var[1..].to_string());
+                }
+                
+                output.push_str(&format!("{} < {}", var, value));
+            } else {
+                output.push_str(&format!("# Invalid numeric test: {}\n", expr));
+                output.push_str("0");
+            }
+        } else if expr.contains(" -le ") {
+            // Less than or equal: [[ $var -le value ]]
+            let parts: Vec<&str> = expr.split(" -le ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                // Ensure variable is declared
+                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
+                    output.push_str(&format!("my {} = 0;\n", var));
+                    self.declared_locals.insert(var[1..].to_string());
+                }
+                
+                output.push_str(&format!("{} <= {}", var, value));
+            } else {
+                output.push_str(&format!("# Invalid numeric test: {}\n", expr));
+                output.push_str("0");
+            }
+        } else if expr.contains(" -gt ") {
+            // Greater than: [[ $var -gt value ]]
+            let parts: Vec<&str> = expr.split(" -gt ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                // Ensure variable is declared
+                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
+                    output.push_str(&format!("my {} = 0;\n", var));
+                    self.declared_locals.insert(var[1..].to_string());
+                }
+                
+                output.push_str(&format!("{} > {}", var, value));
+            } else {
+                output.push_str(&format!("# Invalid numeric test: {}\n", expr));
+                output.push_str("0");
+            }
+        } else if expr.contains(" -ge ") {
+            // Greater than or equal: [[ $var -ge value ]]
+            let parts: Vec<&str> = expr.split(" -ge ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                // Ensure variable is declared
+                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
+                    output.push_str(&format!("my {} = 0;\n", var));
+                    self.declared_locals.insert(var[1..].to_string());
+                }
+                
+                output.push_str(&format!("{} >= {}", var, value));
+            } else {
+                output.push_str(&format!("# Invalid numeric test: {}\n", expr));
+                output.push_str("0");
+            }
+        } else if expr.contains(" -z ") {
+            // String is empty: [[ -z $var ]]
+            let parts: Vec<&str> = expr.split(" -z ").collect();
+            if parts.len() == 2 {
+                let var = parts[1].trim();
+                
+                // Ensure variable is declared
+                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
+                    output.push_str(&format!("my {} = '';\n", var));
+                    self.declared_locals.insert(var[1..].to_string());
+                }
+                
+                output.push_str(&format!("!defined({}) || {} eq ''", var, var));
+            } else {
+                output.push_str(&format!("# Invalid string test: {}\n", expr));
+                output.push_str("0");
+            }
+        } else if expr.contains(" -n ") {
+            // String is not empty: [[ -n $var ]]
+            let parts: Vec<&str> = expr.split(" -n ").collect();
+            if parts.len() == 2 {
+                let var = parts[1].trim();
+                
+                // Ensure variable is declared
+                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
+                    output.push_str(&format!("my {} = '';\n", var));
+                    self.declared_locals.insert(var[1..].to_string());
+                }
+                
+                output.push_str(&format!("defined({}) && {} ne ''", var, var));
+            } else {
+                output.push_str(&format!("# Invalid string test: {}\n", expr));
+                output.push_str("0");
+            }
+        } else if expr.contains(" -f ") {
+            // File exists and is regular file: [[ -f $var ]]
+            let parts: Vec<&str> = expr.split(" -f ").collect();
+            if parts.len() == 2 {
+                let var = parts[1].trim();
+                
+                // Ensure variable is declared
+                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
+                    output.push_str(&format!("my {} = '';\n", var));
+                    self.declared_locals.insert(var[1..].to_string());
+                }
+                
+                output.push_str(&format!("-f {}", var));
+            } else {
+                output.push_str(&format!("# Invalid file test: {}\n", expr));
+                output.push_str("0");
+            }
+        } else if expr.contains(" -d ") {
+            // Directory exists: [[ -d $var ]]
+            let parts: Vec<&str> = expr.split(" -d ").collect();
+            if parts.len() == 2 {
+                let var = parts[1].trim();
+                
+                // Ensure variable is declared
+                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
+                    output.push_str(&format!("my {} = '';\n", var));
+                    self.declared_locals.insert(var[1..].to_string());
+                }
+                
+                output.push_str(&format!("-d {}", var));
+            } else {
+                output.push_str(&format!("# Invalid file test: {}\n", expr));
+                output.push_str("0");
+            }
+        } else if expr.contains(" -e ") {
+            // File exists: [[ -e $var ]]
+            let parts: Vec<&str> = expr.split(" -e ").collect();
+            if parts.len() == 2 {
+                let var = parts[1].trim();
+                
+                // Ensure variable is declared
+                if var.starts_with('$') && !self.declared_locals.contains(&var[1..]) {
+                    output.push_str(&format!("my {} = '';\n", var));
+                    self.declared_locals.insert(var[1..].to_string());
+                }
+                
+                output.push_str(&format!("-e {}", var));
+            } else {
+                output.push_str(&format!("# Invalid file test: {}\n", expr));
+                output.push_str("0");
+            }
+        } else {
+            // Generic test expression - try to parse it as a simple comparison
+            // This handles cases like [[ $var ]] (truthy test)
+            let expr_trimmed = expr.trim();
+            if expr_trimmed.starts_with('$') {
+                // Single variable test: [[ $var ]]
+                let var = expr_trimmed;
+                
+                // Ensure variable is declared
+                if !self.declared_locals.contains(&var[1..]) {
+                    output.push_str(&format!("my {} = '';\n", var));
+                    self.declared_locals.insert(var[1..].to_string());
+                }
+                
+                output.push_str(&format!("defined({}) && {} ne ''", var, var));
+            } else {
+                // Unknown test expression
+                output.push_str(&format!("# Unsupported test expression: {}\n", expr));
+                output.push_str("0");
+            }
+        }
+        
         output
     }
 
@@ -866,8 +1253,8 @@ impl PerlGenerator {
                     if expansion.items.len() == 1 {
                         match &expansion.items[0] {
                             BraceItem::Range(range) => {
-                                // Convert {1..5} to (1..5)
-                                format!("({}..{})", range.start, range.end)
+                                // Convert {1..5} to 1..5
+                                format!("{}..{}", range.start, range.end)
                             }
                             BraceItem::Literal(s) => {
                                 // Single literal item
@@ -883,7 +1270,7 @@ impl PerlGenerator {
                         let parts: Vec<String> = expansion.items.iter().map(|item| {
                             match item {
                                 BraceItem::Literal(s) => format!("\"{}\"", s),
-                                BraceItem::Range(range) => format!("({}..{})", range.start, range.end),
+                                BraceItem::Range(range) => format!("{}..{}", range.start, range.end),
                                 BraceItem::Sequence(seq) => format!("({})", seq.iter().map(|s| format!("\"{}\"", s)).collect::<Vec<_>>().join(", ")),
                             }
                         }).collect();
@@ -931,9 +1318,34 @@ impl PerlGenerator {
                                 } else {
                                     format!("${}", var)
                                 }
+                            } else if var.starts_with('!') && var.ends_with("[@]") {
+                                // This is !map[@] - convert to keys(%map) without quotes
+                                let array_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
+                                format!("keys(%{})", array_name)
                             } else {
                                 // Regular variable - wrap in quotes
                                 format!("\"${}\"", var)
+                            }
+                        } else if let StringPart::MapAccess(map_name, key) = &interp.parts[0] {
+                            // Handle MapAccess specially for for loops
+                            if key == "@" {
+                                // This is arr[@] - convert to @arr without quotes
+                                format!("@{}", map_name)
+                            } else if key.starts_with('#') && key.contains('[') {
+                                // This is #arr[@] - convert to scalar(@arr) without quotes
+                                if let Some(bracket_start) = key.find('[') {
+                                    let array_name = &key[1..bracket_start];
+                                    format!("scalar(@{})", array_name)
+                                } else {
+                                    format!("${}{}", map_name, key)
+                                }
+                            } else if key.starts_with('!') && key.ends_with("[@]") {
+                                // This is !map[@] - convert to keys(%map) without quotes
+                                let array_name = &key[1..key.len()-3]; // Remove ! prefix and [@] suffix
+                                format!("keys(%{})", array_name)
+                            } else {
+                                // Regular map access - wrap in quotes
+                                format!("\"${}{}\"", map_name, key)
                             }
                         } else {
                             // Other parts - wrap in quotes
@@ -944,9 +1356,31 @@ impl PerlGenerator {
                         format!("\"{}\"", items[0])
                     }
                 }
+                Word::MapAccess(map_name, key) => {
+                    // Handle map access specially for for loops
+                    if key == "@" {
+                        // This is arr[@] - convert to @arr without quotes
+                        format!("@{}", map_name)
+                    } else if key.starts_with('#') && key.contains('[') {
+                        // This is #arr[@] - convert to scalar(@arr) without quotes
+                        if let Some(bracket_start) = key.find('[') {
+                            let array_name = &key[1..bracket_start];
+                            format!("scalar(@{})", array_name)
+                        } else {
+                            format!("${}{}", map_name, key)
+                        }
+                    } else if key.starts_with('!') && key.ends_with("[@]") {
+                        // This is !map[@] - convert to keys(%map) without quotes
+                        let array_name = &key[1..key.len()-3]; // Remove ! prefix and [@] suffix
+                        format!("keys(%{})", array_name)
+                    } else {
+                        // Regular map access - wrap in quotes
+                        format!("\"${}{}\"", map_name, key)
+                    }
+                }
                 _ => {
-                    // Other word types
-                    format!("\"{}\"", items[0])
+                    // Other word types - use proper word conversion
+                    format!("\"{}\"", self.word_to_perl(&items[0]))
                 }
             }
         } else if items.is_empty() {
@@ -954,7 +1388,7 @@ impl PerlGenerator {
             "()".to_string()
         } else {
             // Multiple items
-            format!("({})", items.iter().map(|s| format!("\"{}\"", s)).collect::<Vec<_>>().join(", "))
+            format!("({})", items.iter().map(|s| format!("\"{}\"", self.word_to_perl(s))).collect::<Vec<_>>().join(", "))
         };
         
         self.indent_level += 1;
@@ -1161,10 +1595,46 @@ impl PerlGenerator {
         for part in &interp.parts {
             match part {
                 StringPart::Literal(s) => {
+                    // Check if this literal contains array references like {map[foo]}
+                    if s.starts_with('{') && s.ends_with('}') && s.contains('[') {
+                        // This might be an array reference like {map[foo]}
+                        let content = &s[1..s.len()-1]; // Remove { and }
+                        if content.contains('[') && content.ends_with(']') {
+                            if let Some(bracket_start) = content.find('[') {
+                                let array_name = &content[..bracket_start];
+                                let key = &content[bracket_start..];
+                                // For associative arrays, use {} instead of []
+                                if array_name == "map" {
+                                    result.push_str(&format!("$map{{{}}}", &key[1..key.len()-1]));
+                                } else {
+                                    result.push_str(&format!("${}{}", array_name, key));
+                                }
+                                continue;
+                            }
+                        }
+                    }
                     result.push_str(&self.escape_perl_string(s));
+                }
+                StringPart::MapAccess(map_name, key) => {
+                    // Convert map access to Perl array/hash access
+                    eprintln!("DEBUG: Processing MapAccess: map_name='{}', key='{}'", map_name, key);
+                    // For now, assume "map" is a hash and others are indexed arrays
+                    if map_name == "map" {
+                        // Convert map[key] to $map{key} for associative arrays
+                        eprintln!("DEBUG: Converting map access to hash access: $map{{{}}}", key);
+                        result.push_str(&format!("${}{{{}}}", map_name, key));
+                    } else {
+                        // Convert arr[key] to $arr[key] for indexed arrays
+                        eprintln!("DEBUG: Converting array access to indexed access: ${}[{}]", map_name, key);
+                        result.push_str(&format!("${}[{}]", map_name, key));
+                    }
                 }
                 StringPart::Variable(var) => {
                     // Convert shell variables to Perl variables
+                    eprintln!("DEBUG: Processing variable: '{}'", var);
+                    eprintln!("DEBUG: Variable starts with '!': {}", var.starts_with('!'));
+                    eprintln!("DEBUG: Variable ends with '[@]': {}", var.ends_with("[@]"));
+                    eprintln!("DEBUG: Variable contains '[': {}", var.contains('['));
                     if var == "#" {
                         result.push_str("scalar(@ARGV)");
                     } else if var == "@" {
@@ -1197,21 +1667,57 @@ impl PerlGenerator {
                             } else {
                                 result.push_str(&format!("${}", var));
                             }
+                        } else if var.starts_with('!') && var.ends_with("[@]") {
+                            // This is !map[@] - convert to keys(%map) in Perl
+                            eprintln!("DEBUG: Found !map[@] pattern, converting to keys(%map)");
+                            let array_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
+                            eprintln!("DEBUG: Array name extracted: '{}'", array_name);
+                            result.push_str(&format!("keys(%{})", array_name));
+                        } else if var.starts_with('!') && var.contains('[') {
+                            // This is !map[key] - convert to keys(%map) in Perl (more general pattern)
+                            eprintln!("DEBUG: Found !map[key] pattern, converting to keys(%map)");
+                            if let Some(bracket_start) = var.find('[') {
+                                let array_name = &var[1..bracket_start]; // Remove ! prefix
+                                eprintln!("DEBUG: Array name extracted from !map[key]: '{}'", array_name);
+                                result.push_str(&format!("keys(%{})", array_name));
+                            } else {
+                                result.push_str(&format!("${}", var));
+                            }
+                        } else if var.starts_with('!') {
+                            // This is !map - convert to keys(%map) in Perl (fallback)
+                            eprintln!("DEBUG: Found !map pattern (fallback), converting to keys(%map)");
+                            let array_name = &var[1..]; // Remove ! prefix
+                            eprintln!("DEBUG: Array name extracted from !map: '{}'", array_name);
+                            result.push_str(&format!("keys(%{})", array_name));
                         } else if var.ends_with("[@]") {
                             // This is arr[@] - convert to @arr in Perl
+                            eprintln!("DEBUG: Found arr[@] pattern, converting to @arr");
                             let array_name = &var[..var.len()-3]; // Remove [@] suffix
+                            eprintln!("DEBUG: Array name extracted from arr[@]: '{}'", array_name);
                             result.push_str(&format!("@{}", array_name));
                         } else if var.contains('[') && var.ends_with(']') {
-                            // This is arr[1] - convert to $arr[1] in Perl
+                            // This is arr[1] - convert to $arr[1] in Perl or $arr{key} for hashes
+                            eprintln!("DEBUG: Found arr[1] pattern, converting to array access");
                             if let Some(bracket_start) = var.find('[') {
                                 let array_name = &var[..bracket_start];
                                 let key = &var[bracket_start..];
-                                result.push_str(&format!("${}{}", array_name, key));
+                                // Check if this is a hash (associative array) - for now, assume map is a hash
+                                if array_name == "map" {
+                                    // Convert map[key] to $map{key} for associative arrays
+                                    let key_content = &key[1..key.len()-1]; // Remove [ and ]
+                                    eprintln!("DEBUG: Converting map[key] to $map{{{}}}", key_content);
+                                    result.push_str(&format!("${}{{{}}}", array_name, key_content));
+                                } else {
+                                    // Regular indexed array - use [] syntax in Perl
+                                    eprintln!("DEBUG: Converting arr[key] to ${}[{}]", array_name, key);
+                                    result.push_str(&format!("${}[{}]", array_name, key));
+                                }
                             } else {
                                 result.push_str(&format!("${}", var));
                             }
                         } else {
                             // For simple variable names, use $var instead of ${var}
+                            eprintln!("DEBUG: Simple variable, using ${}", var);
                             result.push_str(&format!("${}", var));
                         }
                     }
@@ -1234,7 +1740,36 @@ impl PerlGenerator {
     fn word_to_perl(&self, word: &Word) -> String {
         match word {
             Word::Literal(s) => self.perl_string_literal(s),
-            Word::Variable(var) => format!("${}", var),
+            Word::Variable(var) => {
+                // Handle special array and hash operations
+                if var.starts_with('#') && var.ends_with("[@]") {
+                    // ${#arr[@]} -> scalar(@arr)
+                    let array_name = &var[1..var.len()-3];
+                    format!("scalar(@{})", array_name)
+                } else if var.starts_with('!') && var.ends_with("[@]") {
+                    // ${!map[@]} -> keys(%map)
+                    let hash_name = &var[1..var.len()-3];
+                    format!("keys(%{})", hash_name)
+                } else if var.starts_with('#') && var.ends_with("[*]") {
+                    // ${#arr[*]} -> scalar(@arr)
+                    let array_name = &var[1..var.len()-3];
+                    format!("scalar(@{})", array_name)
+                } else if var.starts_with('!') && var.ends_with("[*]") {
+                    // ${!map[*]} -> keys(%map)
+                    let hash_name = &var[1..var.len()-3];
+                    format!("keys(%{})", hash_name)
+                } else {
+                    format!("${}", var)
+                }
+            },
+            Word::MapAccess(map_name, key) => {
+                // For now, assume "map" is a hash and others are indexed arrays
+                if map_name == "map" {
+                    format!("${}{{{}}}", map_name, key)
+                } else {
+                    format!("${}[{}]", map_name, key)
+                }
+            },
             Word::Arithmetic(expr) => self.convert_arithmetic_to_perl(&expr.expression),
             Word::BraceExpansion(expansion) => {
                 // Handle brace expansion in test commands
@@ -1254,7 +1789,7 @@ impl PerlGenerator {
                         match item {
                             BraceItem::Literal(s) => self.perl_string_literal(s),
                             BraceItem::Range(range) => format!("({}..{})", range.start, range.end),
-                            BraceItem::Sequence(seq) => format!("({})", seq.iter().map(|s| self.perl_string_literal(s)).collect::<Vec<_>>().join(", ")),
+                            BraceItem::Sequence(seq) => format!("({})", seq.iter().map(|s| self.perl_string_literal(s)).collect::<Vec<_>>().join(", "))
                         }
                     }).collect();
                     format!("({})", parts.join(", "))
@@ -1282,7 +1817,36 @@ impl PerlGenerator {
                 // For test commands, use single quotes to match test expectations
                 format!("'{}'", self.escape_perl_string(s))
             },
-            Word::Variable(var) => format!("${}", var),
+            Word::Variable(var) => {
+                // Handle special array and hash operations
+                if var.starts_with('#') && var.ends_with("[@]") {
+                    // ${#arr[@]} -> scalar(@arr)
+                    let array_name = &var[1..var.len()-3];
+                    format!("scalar(@{})", array_name)
+                } else if var.starts_with('!') && var.ends_with("[@]") {
+                    // ${!map[@]} -> keys(%map)
+                    let hash_name = &var[1..var.len()-3];
+                    format!("keys(%{})", hash_name)
+                } else if var.starts_with('#') && var.ends_with("[*]") {
+                    // ${#arr[*]} -> scalar(@arr)
+                    let array_name = &var[1..var.len()-3];
+                    format!("scalar(@{})", array_name)
+                } else if var.starts_with('!') && var.ends_with("[*]") {
+                    // ${!map[*]} -> keys(%map)
+                    let hash_name = &var[1..var.len()-3];
+                    format!("keys(%{})", hash_name)
+                } else {
+                    format!("${}", var)
+                }
+            },
+            Word::MapAccess(map_name, key) => {
+                // For now, assume "map" is a hash and others are indexed arrays
+                if map_name == "map" {
+                    format!("${}{{{}}}", map_name, key)
+                } else {
+                    format!("${}[{}]", map_name, key)
+                }
+            },
             Word::Arithmetic(expr) => self.convert_arithmetic_to_perl(&expr.expression),
             Word::BraceExpansion(expansion) => {
                 // Handle brace expansion in test commands
@@ -1302,7 +1866,7 @@ impl PerlGenerator {
                         match item {
                             BraceItem::Literal(s) => format!("'{}'", self.escape_perl_string(s)),
                             BraceItem::Range(range) => format!("({}..{})", range.start, range.end),
-                            BraceItem::Sequence(seq) => format!("({})", seq.iter().map(|s| format!("'{}'", self.escape_perl_string(s))).collect::<Vec<_>>().join(", ")),
+                            BraceItem::Sequence(seq) => format!("({})", seq.iter().map(|s| format!("'{}'", self.escape_perl_string(s))).collect::<Vec<_>>().join(", "))
                         }
                     }).collect();
                     format!("({})", parts.join(", "))

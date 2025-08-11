@@ -71,6 +71,8 @@ pub enum Token {
     Trap,
     #[token("wait")]
     Wait,
+    #[token("shopt")]
+    Shopt,
     #[token("true")]
     True,
     #[token("false")]
@@ -270,7 +272,7 @@ pub enum Token {
     DollarDoubleQuotedString,
 
     // Identifiers and words
-    #[regex(r"[a-zA-Z_][a-zA-Z0-9_.-]*|/[a-zA-Z0-9_.-]*", priority = 1)]
+    #[regex(r"[a-zA-Z_][a-zA-Z0-9_.-]*|/[a-zA-Z0-9_.-]*", priority = 3)]
     Identifier,
 
     #[regex(r"[0-9]+")]
@@ -513,3 +515,4 @@ mod tests {
         assert_eq!(lexer.next(), Some(&Token::BraceClose));
     }
 } 
+

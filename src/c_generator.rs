@@ -41,19 +41,15 @@ impl CGenerator {
     fn generate_command(&mut self, command: &Command) -> String {
         match command {
             Command::Simple(cmd) => self.generate_simple_command(cmd),
+            Command::ShoptCommand(cmd) => self.generate_shopt_command(cmd),
+            Command::TestExpression(test_expr) => self.generate_test_expression(test_expr),
             Command::Pipeline(pipeline) => self.generate_pipeline(pipeline),
             Command::If(if_stmt) => self.generate_if_statement(if_stmt),
-            Command::While(_) => String::from("/* while loop not implemented */\n"),
+            Command::While(while_loop) => self.generate_while_loop(while_loop),
             Command::For(for_loop) => self.generate_for_loop(for_loop),
-            Command::Function(_) => String::from("/* function not implemented */\n"),
-            Command::Subshell(_) => String::from("/* subshell not implemented */\n"),
-            Command::Background(cmd) => {
-                let mut out = String::new();
-                out.push_str("/* background start */\n");
-                out.push_str(&self.generate_command(cmd));
-                out.push_str("/* background end */\n");
-                out
-            }
+            Command::Function(func) => self.generate_function(func),
+            Command::Subshell(cmd) => self.generate_subshell(cmd),
+            Command::Background(cmd) => self.generate_background(cmd),
             Command::Block(block) => self.generate_block(block),
             Command::BlankLine => String::from("\n"),
         }
@@ -117,6 +113,98 @@ impl CGenerator {
             line.push_str(&format!("system(\"{}\");\n", sys));
         }
         line
+    }
+
+    fn generate_shopt_command(&mut self, cmd: &ShoptCommand) -> String {
+        let mut output = String::new();
+        
+        // Handle shopt command for shell options
+        if cmd.enable {
+            match cmd.option.as_str() {
+                "extglob" => {
+                    output.push_str("/* extglob option enabled */\n");
+                }
+                "nocasematch" => {
+                    output.push_str("/* nocasematch option enabled */\n");
+                }
+                _ => {
+                    output.push_str(&format!("/* shopt -s {} not implemented */\n", cmd.option));
+                }
+            }
+        } else {
+            match cmd.option.as_str() {
+                "extglob" => {
+                    output.push_str("/* extglob option disabled */\n");
+                }
+                "nocasematch" => {
+                    output.push_str("/* nocasematch option disabled */\n");
+                }
+                _ => {
+                    output.push_str(&format!("/* shopt -u {} not implemented */\n", cmd.option));
+                }
+            }
+        }
+        
+        output
+    }
+
+    fn generate_test_expression(&mut self, test_expr: &TestExpression) -> String {
+        let mut output = String::new();
+        
+        // Handle test modifiers if they're set
+        if test_expr.modifiers.extglob {
+            output.push_str("/* extglob enabled */\n");
+        }
+        if test_expr.modifiers.nocasematch {
+            output.push_str("/* nocasematch enabled */\n");
+        }
+        if test_expr.modifiers.globstar {
+            output.push_str("/* globstar enabled */\n");
+        }
+        if test_expr.modifiers.nullglob {
+            output.push_str("/* nullglob enabled */\n");
+        }
+        if test_expr.modifiers.failglob {
+            output.push_str("/* failglob enabled */\n");
+        }
+        if test_expr.modifiers.dotglob {
+            output.push_str("/* dotglob enabled */\n");
+        }
+        
+        // Generate the test expression
+        // For now, just generate a comment with the expression
+        output.push_str(&format!("/* test expression: {} */\n", test_expr.expression));
+        output.push_str("/* TODO: implement test expression logic */\n");
+        
+        output
+    }
+
+    fn generate_while_loop(&mut self, while_loop: &WhileLoop) -> String {
+        let mut output = String::new();
+        output.push_str("/* while loop not implemented */\n");
+        output
+    }
+
+    fn generate_function(&mut self, func: &Function) -> String {
+        let mut output = String::new();
+        output.push_str("/* function not implemented */\n");
+        output
+    }
+
+    fn generate_subshell(&mut self, cmd: &Command) -> String {
+        let mut output = String::new();
+        output.push_str("/* subshell start */\n");
+        output.push_str(&self.generate_command(cmd));
+        output.push_str("/* subshell end */\n");
+        output
+    }
+
+    fn generate_background(&mut self, cmd: &Command) -> String {
+        let mut output = String::new();
+        output.push_str("/* background start */\n");
+        output.push_str(&self.generate_command(cmd));
+        output.push_str("/* background end */\n");
+        output
     }
 
     fn generate_pipeline(&self, pipeline: &Pipeline) -> String {

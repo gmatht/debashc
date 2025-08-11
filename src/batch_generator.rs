@@ -15,30 +15,105 @@ impl BatchGenerator {
         output
     }
 
-    fn generate_command(&self, command: &Command) -> String {
+    fn generate_command(&mut self, command: &Command) -> String {
         match command {
-            Command::Simple(cmd) => self.generate_simple(cmd),
-            Command::Pipeline(p) => self.generate_pipeline(p),
-            Command::If(i) => self.generate_if(i),
-            Command::While(_) => String::from("REM while not implemented\n"),
-            Command::For(_) => String::from("REM for not implemented\n"),
-            Command::Function(_) => String::from("REM function not implemented\n"),
-            Command::Subshell(_) => String::from("REM subshell not implemented\n"),
-            Command::Background(cmd) => {
-                // Start in background using start /B
-                if let Command::Simple(s) = &**cmd {
-                    if s.args.is_empty() { format!("start /B {}\n", s.name) } else { format!("start /B {} {}\n", s.name, s.args.join(" ")) }
-                } else {
-                    String::from("REM background compound command not implemented\n")
-                }
-            }
-            Command::Block(block) => {
-                let mut out = String::new();
-                for c in &block.commands { out.push_str(&self.generate_command(c)); }
-                out
-            }
+            Command::Simple(cmd) => self.generate_simple_command(cmd),
+            Command::ShoptCommand(cmd) => self.generate_shopt_command(cmd),
+            Command::TestExpression(test_expr) => self.generate_test_expression(test_expr),
+            Command::Pipeline(pipeline) => self.generate_pipeline_wrapper(pipeline),
+            Command::If(if_stmt) => self.generate_if_statement(if_stmt),
+            Command::While(while_loop) => self.generate_while_loop(while_loop),
+            Command::For(for_loop) => self.generate_for_loop(for_loop),
+            Command::Function(func) => self.generate_function(func),
+            Command::Subshell(cmd) => self.generate_subshell(cmd),
+            Command::Background(cmd) => self.generate_background(cmd),
+            Command::Block(block) => self.generate_block(block),
             Command::BlankLine => String::from("\n"),
         }
+    }
+
+    fn generate_simple_command(&mut self, cmd: &SimpleCommand) -> String {
+        self.generate_simple(cmd)
+    }
+
+    fn generate_shopt_command(&mut self, cmd: &ShoptCommand) -> String {
+        self.generate_shopt(cmd)
+    }
+
+    fn generate_test_expression(&mut self, test_expr: &TestExpression) -> String {
+        let mut output = String::new();
+        
+        // Handle test modifiers if they're set
+        if test_expr.modifiers.extglob {
+            output.push_str("REM extglob enabled\n");
+        }
+        if test_expr.modifiers.nocasematch {
+            output.push_str("REM nocasematch enabled\n");
+        }
+        if test_expr.modifiers.globstar {
+            output.push_str("REM globstar enabled\n");
+        }
+        if test_expr.modifiers.nullglob {
+            output.push_str("REM nullglob enabled\n");
+        }
+        if test_expr.modifiers.failglob {
+            output.push_str("REM failglob enabled\n");
+        }
+        if test_expr.modifiers.dotglob {
+            output.push_str("REM dotglob enabled\n");
+        }
+        
+        // Generate the test expression
+        // For now, just generate a comment with the expression
+        output.push_str(&format!("REM test expression: {}\n", test_expr.expression));
+        output.push_str("REM TODO: implement test expression logic\n");
+        
+        output
+    }
+
+    fn generate_pipeline_wrapper(&mut self, pipeline: &Pipeline) -> String {
+        self.generate_pipeline_impl(pipeline)
+    }
+
+    fn generate_if_statement(&mut self, if_stmt: &IfStatement) -> String {
+        self.generate_if(if_stmt)
+    }
+
+    fn generate_while_loop(&mut self, while_loop: &WhileLoop) -> String {
+        String::from("REM while not implemented\n")
+    }
+
+    fn generate_for_loop(&mut self, for_loop: &ForLoop) -> String {
+        String::from("REM for not implemented\n")
+    }
+
+    fn generate_function(&mut self, func: &Function) -> String {
+        String::from("REM function not implemented\n")
+    }
+
+    fn generate_subshell(&mut self, cmd: &Command) -> String {
+        String::from("REM subshell not implemented\n")
+    }
+
+    fn generate_background(&mut self, cmd: &Command) -> String {
+        // Start in background using start /B
+        if let Command::Simple(s) = cmd {
+            if s.args.is_empty() { 
+                format!("start /B {}\n", s.name) 
+            } else { 
+                format!("start /B {} {}\n", s.name, s.args.join(" ")) 
+            }
+        } else {
+            String::from("REM background compound command not implemented\n")
+        }
+    }
+
+    fn generate_block(&mut self, block: &Block) -> String {
+        let mut out = String::new();
+        for c in &block.commands { 
+            out.push_str(&self.generate_command(c)); 
+        }
+        out
     }
 
     fn generate_simple(&self, cmd: &SimpleCommand) -> String {
@@ -52,7 +127,40 @@ impl BatchGenerator {
         }
     }
 
-    fn generate_pipeline(&self, pipeline: &Pipeline) -> String {
+    fn generate_shopt(&self, cmd: &ShoptCommand) -> String {
+        let mut output = String::new();
+        
+        // Handle shopt command for shell options
+        if cmd.enable {
+            match cmd.option.as_str() {
+                "extglob" => {
+                    output.push_str("REM extglob option enabled\n");
+                }
+                "nocasematch" => {
+                    output.push_str("REM nocasematch option enabled\n");
+                }
+                _ => {
+                    output.push_str(&format!("REM shopt -s {} not implemented\n", cmd.option));
+                }
+            }
+        } else {
+            match cmd.option.as_str() {
+                "extglob" => {
+                    output.push_str("REM extglob option disabled\n");
+                }
+                "nocasematch" => {
+                    output.push_str("REM nocasematch option disabled\n");
+                }
+                _ => {
+                    output.push_str(&format!("REM shopt -u {} not implemented\n", cmd.option));
+                }
+            }
+        }
+        
+        output
+    }
+
+    fn generate_pipeline_impl(&self, pipeline: &Pipeline) -> String {
         let mut out = String::new();
         out.push_str("REM pipeline approximation\n");
         for c in &pipeline.commands {
@@ -63,7 +171,7 @@ impl BatchGenerator {
         out
     }
 
-    fn generate_if(&self, if_stmt: &IfStatement) -> String {
+    fn generate_if(&mut self, if_stmt: &IfStatement) -> String {
         let mut out = String::new();
         out.push_str("REM if condition\n");
         out.push_str(&self.generate_command(&if_stmt.then_branch));

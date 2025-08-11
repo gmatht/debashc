@@ -3,6 +3,8 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Simple(SimpleCommand),
+    ShoptCommand(ShoptCommand),
+    TestExpression(TestExpression),
     Pipeline(Pipeline),
     If(IfStatement),
     While(WhileLoop),
@@ -20,6 +22,12 @@ pub struct SimpleCommand {
     pub args: Vec<Word>,
     pub redirects: Vec<Redirect>,
     pub env_vars: HashMap<String, Word>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShoptCommand {
+    pub option: String,
+    pub enable: bool, // true for -s (set), false for -u (unset)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,6 +98,7 @@ pub enum RedirectOperator {
 pub enum Word {
     Literal(String),
     Variable(String),
+    MapAccess(String, String), // map_name, key
     Arithmetic(ArithmeticExpression),
     BraceExpansion(BraceExpansion),
     CommandSubstitution(Box<Command>),
@@ -108,6 +117,7 @@ impl Word {
         match self {
             Word::Literal(s) => s.clone(),
             Word::Variable(var) => format!("${}", var),
+            Word::MapAccess(map_name, key) => format!("{}[{}]", map_name, key),
             Word::Arithmetic(expr) => expr.expression.clone(),
             Word::BraceExpansion(expansion) => {
                 let mut result = String::new();
@@ -146,6 +156,7 @@ impl Word {
                     match part {
                         StringPart::Literal(s) => result.push_str(s),
                         StringPart::Variable(var) => result.push_str(&format!("${}", var)),
+                        StringPart::MapAccess(map_name, key) => result.push_str(&format!("${{{}}}[{}]", map_name, key)),
                         StringPart::Arithmetic(expr) => result.push_str(&expr.expression),
                         StringPart::CommandSubstitution(_) => result.push_str("$(...)"),
                     }
@@ -172,6 +183,7 @@ impl Word {
     pub fn as_variable(&self) -> Option<&str> {
         match self {
             Word::Variable(var) => Some(var),
+            Word::MapAccess(map_name, _) => Some(map_name),
             _ => None,
         }
     }
@@ -181,6 +193,7 @@ impl Word {
         match self {
             Word::Literal(s) => s.contains(ch),
             Word::Variable(var) => var.contains(ch),
+            Word::MapAccess(map_name, key) => map_name.contains(ch) || key.contains(ch),
             Word::Arithmetic(expr) => expr.expression.contains(ch),
             Word::BraceExpansion(expansion) => {
                 if let Some(ref prefix) = expansion.prefix {
@@ -213,6 +226,7 @@ impl Word {
                     match part {
                         StringPart::Literal(s) => { if s.contains(ch) { return true; } }
                         StringPart::Variable(var) => { if var.contains(ch) { return true; } }
+                        StringPart::MapAccess(map_name, key) => { if map_name.contains(ch) || key.contains(ch) { return true; } }
                         StringPart::Arithmetic(expr) => { if expr.expression.contains(ch) { return true; } }
                         StringPart::CommandSubstitution(_) => { return false; }
                     }
@@ -227,6 +241,13 @@ impl Word {
         match self {
             Word::Literal(s) => s.splitn(n, pat).map(|s| s.to_string()).collect(),
             Word::Variable(var) => var.splitn(n, pat).map(|s| s.to_string()).collect(),
+            Word::MapAccess(map_name, key) => {
+                let mut result = map_name.splitn(n, pat).map(|s| s.to_string()).collect::<Vec<_>>();
+                if result.len() < n {
+                    result.extend(key.splitn(n - result.len(), pat).map(|s| s.to_string()));
+                }
+                result
+            }
             Word::Arithmetic(expr) => expr.expression.splitn(n, pat).map(|s| s.to_string()).collect(),
             _ => vec![self.to_string()],
         }
@@ -237,6 +258,13 @@ impl Word {
         match self {
             Word::Literal(s) => s.strip_prefix(prefix).map(|s| s.to_string()),
             Word::Variable(var) => var.strip_prefix(prefix).map(|s| s.to_string()),
+            Word::MapAccess(map_name, key) => {
+                if let Some(stripped) = map_name.strip_prefix(prefix) {
+                    Some(format!("{}[{}]", stripped, key))
+                } else {
+                    None
+                }
+            }
             Word::Arithmetic(expr) => expr.expression.strip_prefix(prefix).map(|s| s.to_string()),
             _ => None,
         }
@@ -247,6 +275,13 @@ impl Word {
         match self {
             Word::Literal(s) => s.strip_prefix(prefix).map(|s| s.to_string()),
             Word::Variable(var) => var.strip_prefix(prefix).map(|s| s.to_string()),
+            Word::MapAccess(map_name, key) => {
+                if let Some(stripped) = map_name.strip_prefix(prefix) {
+                    Some(format!("{}[{}]", stripped, key))
+                } else {
+                    None
+                }
+            }
             Word::Arithmetic(expr) => expr.expression.strip_prefix(prefix).map(|s| s.to_string()),
             _ => None,
         }
@@ -257,6 +292,11 @@ impl Word {
         match self {
             Word::Literal(s) => s.replace(from, to),
             Word::Variable(var) => var.replace(from, to),
+            Word::MapAccess(map_name, key) => {
+                let new_map_name = map_name.replace(from, to);
+                let new_key = key.replace(from, to);
+                format!("{}[{}]", new_map_name, new_key)
+            }
             Word::Arithmetic(expr) => expr.expression.replace(from, to),
             _ => self.to_string(),
         }
@@ -267,6 +307,11 @@ impl Word {
         match self {
             Word::Literal(s) => s.replace(from, to),
             Word::Variable(var) => var.replace(from, to),
+            Word::MapAccess(map_name, key) => {
+                let new_map_name = map_name.replace(from, to);
+                let new_key = key.replace(from, to);
+                format!("{}[{}]", new_map_name, new_key)
+            }
             Word::Arithmetic(expr) => expr.expression.replace(from, to),
             _ => self.to_string(),
         }
@@ -369,6 +414,36 @@ pub struct StringInterpolation {
 pub enum StringPart {
     Literal(String),
     Variable(String),
+    MapAccess(String, String), // map_name, key
     Arithmetic(ArithmeticExpression),
     CommandSubstitution(Box<Command>),
+} 
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TestExpression {
+    pub expression: String,
+    pub modifiers: TestModifiers,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TestModifiers {
+    pub extglob: bool,
+    pub nocasematch: bool,
+    pub globstar: bool,
+    pub nullglob: bool,
+    pub failglob: bool,
+    pub dotglob: bool,
+}
+
+impl Default for TestModifiers {
+    fn default() -> Self {
+        Self {
+            extglob: false,
+            nocasematch: false,
+            globstar: false,
+            nullglob: false,
+            failglob: false,
+            dotglob: false,
+        }
+    }
 } 

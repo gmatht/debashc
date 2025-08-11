@@ -109,6 +109,8 @@ impl RustGenerator {
     fn generate_command(&mut self, command: &Command) -> String {
         match command {
             Command::Simple(cmd) => self.generate_simple_command(cmd),
+            Command::ShoptCommand(cmd) => self.generate_shopt_command(cmd),
+            Command::TestExpression(test_expr) => self.generate_test_expression(test_expr),
             Command::Pipeline(pipeline) => self.generate_pipeline(pipeline),
             Command::If(if_stmt) => self.generate_if_statement(if_stmt),
             Command::While(while_loop) => self.generate_while_loop(while_loop),
@@ -392,6 +394,98 @@ impl RustGenerator {
             }
         }
 
+        output
+    }
+
+    fn generate_shopt_command(&mut self, cmd: &ShoptCommand) -> String {
+        let mut output = String::new();
+        
+        // Handle shopt command for shell options
+        if cmd.enable {
+            match cmd.option.as_str() {
+                "extglob" => {
+                    output.push_str("// extglob option enabled\n");
+                }
+                "nocasematch" => {
+                    output.push_str("// nocasematch option enabled\n");
+                }
+                _ => {
+                    output.push_str(&format!("// shopt -s {} not implemented\n", cmd.option));
+                }
+            }
+        } else {
+            match cmd.option.as_str() {
+                "extglob" => {
+                    output.push_str("// extglob option disabled\n");
+                }
+                "nocasematch" => {
+                    output.push_str("// nocasematch option disabled\n");
+                }
+                _ => {
+                    output.push_str(&format!("// shopt -u {} not implemented\n", cmd.option));
+                }
+            }
+        }
+        
+        output
+    }
+
+    fn generate_test_expression(&mut self, test_expr: &TestExpression) -> String {
+        let mut output = String::new();
+        
+        // Parse the test expression to extract components
+        let expr = &test_expr.expression;
+        let modifiers = &test_expr.modifiers;
+        
+        // Add comments about enabled options
+        if modifiers.extglob {
+            output.push_str("// extglob enabled\n");
+        }
+        if modifiers.nocasematch {
+            output.push_str("// nocasematch enabled\n");
+        }
+        
+        // Parse the expression to determine the type of test
+        if expr.contains(" =~ ") {
+            // Regex matching: [[ $var =~ pattern ]]
+            let parts: Vec<&str> = expr.split(" =~ ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let pattern = parts[1].trim();
+                
+                // Convert to Rust regex matching
+                output.push_str(&format!("// Regex test: {} =~ {}\n", var, pattern));
+                output.push_str("true // TODO: implement regex matching\n");
+            } else {
+                output.push_str(&format!("// Invalid regex test: {}\n", expr));
+                output.push_str("false");
+            }
+        } else if expr.contains(" == ") {
+            // Pattern matching: [[ $var == pattern ]]
+            let parts: Vec<&str> = expr.split(" == ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let pattern = parts[1].trim();
+                
+                if modifiers.nocasematch {
+                    // Case-insensitive matching
+                    output.push_str(&format!("// Case-insensitive pattern test: {} == {}\n", var, pattern));
+                    output.push_str("true // TODO: implement case-insensitive pattern matching\n");
+                } else {
+                    // Case-sensitive matching
+                    output.push_str(&format!("// Pattern test: {} == {}\n", var, pattern));
+                    output.push_str("true // TODO: implement pattern matching\n");
+                }
+            } else {
+                output.push_str(&format!("// Invalid pattern test: {}\n", expr));
+                output.push_str("false");
+            }
+        } else {
+            // Generic test expression
+            output.push_str(&format!("// Test expression: {}\n", expr));
+            output.push_str("true");
+        }
+        
         output
     }
 

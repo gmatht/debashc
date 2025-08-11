@@ -27,6 +27,8 @@ impl PythonGenerator {
     fn generate_command(&mut self, command: &Command) -> String {
         match command {
             Command::Simple(cmd) => self.generate_simple_command(cmd),
+            Command::ShoptCommand(cmd) => self.generate_shopt_command(cmd),
+            Command::TestExpression(test_expr) => self.generate_test_expression(test_expr),
             Command::Pipeline(pipeline) => self.generate_pipeline(pipeline),
             Command::If(if_stmt) => self.generate_if_statement(if_stmt),
             Command::While(while_loop) => self.generate_while_loop(while_loop),
@@ -228,6 +230,46 @@ impl PythonGenerator {
             }
         }
 
+        output
+    }
+
+    fn generate_shopt_command(&mut self, cmd: &ShoptCommand) -> String {
+        // In Python, we can use a dictionary to track shell options
+        // For now, just generate a comment indicating the option change
+        let action = if cmd.enable { "enable" } else { "disable" };
+        format!("# shopt -{} {}\n", if cmd.enable { "s" } else { "u" }, cmd.option)
+    }
+
+    fn generate_test_expression(&mut self, test_expr: &TestExpression) -> String {
+        // Convert shell test expressions to Python equivalent
+        // For now, generate a basic implementation that handles common patterns
+        let mut output = String::new();
+        
+        // Handle test modifiers if they're set
+        if test_expr.modifiers.extglob {
+            output.push_str("# extglob enabled\n");
+        }
+        if test_expr.modifiers.nocasematch {
+            output.push_str("# nocasematch enabled\n");
+        }
+        if test_expr.modifiers.globstar {
+            output.push_str("# globstar enabled\n");
+        }
+        if test_expr.modifiers.nullglob {
+            output.push_str("# nullglob enabled\n");
+        }
+        if test_expr.modifiers.failglob {
+            output.push_str("# failglob enabled\n");
+        }
+        if test_expr.modifiers.dotglob {
+            output.push_str("# dotglob enabled\n");
+        }
+        
+        // Generate the test expression
+        // For now, just generate a comment with the expression
+        output.push_str(&format!("# test expression: {}\n", test_expr.expression));
+        output.push_str("pass  # TODO: implement test expression logic\n");
+        
         output
     }
 
@@ -573,6 +615,7 @@ impl PythonGenerator {
                     format!("'{{{}}}'", brace.items.iter().map(|item| self.brace_item_to_string(item)).collect::<Vec<_>>().join(", "))
                 }
             }
+            Word::MapAccess(_map_name, key) => format!("map.get('{}', '')", key), // TODO: implement map access
             Word::CommandSubstitution(_) => "''".to_string(), // TODO: implement command substitution
             Word::StringInterpolation(_) => "''".to_string(), // TODO: implement string interpolation
         }
