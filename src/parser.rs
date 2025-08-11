@@ -299,11 +299,10 @@ impl Parser {
         // Special handling for Bash double-bracket test: capture everything until closing ']]'
         if is_double_bracket {
             let expr = self.capture_double_bracket_expression()?;
-            return Ok(Command::Simple(SimpleCommand {
-                name,
-                args: if expr.is_empty() { Vec::new() } else { vec![Word::Literal(expr)] },
-                redirects,
-                env_vars,
+            eprintln!("DEBUG: Creating TestExpression with expression: '{}'", expr);
+            return Ok(Command::TestExpression(TestExpression {
+                expression: expr,
+                modifiers: self.get_current_shopt_state(),
             }));
         }
 

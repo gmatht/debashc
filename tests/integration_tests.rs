@@ -1720,151 +1720,6 @@ fn test_examples_python_output_equivalence() {
         return;
     }
     
-// ============================================================================
-// Output equivalence tests per generator x example (macro-generated)
-// ============================================================================
-
-fn run_shell_script_capture(path: &std::path::Path) -> std::process::Output {
-    let mut child = Command::new("sh")
-        .arg(path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to spawn sh");
-    let start = std::time::Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return child.wait_with_output().expect("read sh output"),
-            Ok(None) => {
-                if start.elapsed() > Duration::from_millis(1000) {
-                    let _ = child.kill();
-                    return child.wait_with_output().unwrap_or_else(|_| std::process::Output { status: std::process::ExitStatus::from_raw(1), stdout: Vec::new(), stderr: Vec::new() });
-                }
-                thread::sleep(Duration::from_millis(10));
-            }
-            Err(_) => return child.wait_with_output().unwrap_or_else(|_| std::process::Output { status: std::process::ExitStatus::from_raw(1), stdout: Vec::new(), stderr: Vec::new() }),
-        }
-    }
-}
-
-#[cfg(unix)]
-use std::os::unix::process::ExitStatusExt;
-#[cfg(windows)]
-use std::os::windows::process::ExitStatusExt;
-
-fn normalize(s: &[u8]) -> String {
-    String::from_utf8_lossy(s).to_string().replace("\r\n", "\n").trim().to_string()
-}
-
-fn run_generated_perl(content: &str) -> std::process::Output {
-    let mut parser = Parser::new(content);
-    let commands = parser.parse().expect("parse perl input");
-    let mut gen = PerlGenerator::new();
-    let code = gen.generate(&commands);
-    let tmp = "__macro_equiv.pl";
-    fs::write(tmp, &code).expect("write perl tmp");
-    let out = Command::new("perl").arg(tmp).stdout(Stdio::piped()).stderr(Stdio::piped()).output().expect("run perl");
-    let _ = fs::remove_file(tmp);
-    out
-}
-
-fn run_generated_python(content: &str) -> std::process::Output {
-    let mut parser = Parser::new(content);
-    let commands = parser.parse().expect("parse python input");
-    let mut gen = PythonGenerator::new();
-    let code = gen.generate(&commands);
-    let tmp = "__macro_equiv.py";
-    fs::write(tmp, &code).expect("write py tmp");
-    let out = Command::new("python3").arg(tmp).stdout(Stdio::piped()).stderr(Stdio::piped()).output().expect("run python");
-    let _ = fs::remove_file(tmp);
-    out
-}
-
-fn run_generated_rust(content: &str) -> std::process::Output {
-    let mut parser = Parser::new(content);
-    let commands = parser.parse().expect("parse rust input");
-    let mut gen = RustGenerator::new();
-    let code = gen.generate(&commands);
-    let src = "__macro_equiv.rs";
-    let bin = if cfg!(windows) { "__macro_equiv_bin.exe" } else { "__macro_equiv_bin" };
-    fs::write(src, &code).expect("write rs tmp");
-    let compiled = Command::new("rustc").arg("--edition=2021").arg(src).arg("-o").arg(bin).status().expect("rustc");
-    let out = if compiled.success() {
-        Command::new(bin).stdout(Stdio::piped()).stderr(Stdio::piped()).output().unwrap_or_else(|_| std::process::Output { status: std::process::ExitStatus::from_raw(1), stdout: Vec::new(), stderr: Vec::new() })
-    } else {
-        std::process::Output { status: std::process::ExitStatus::from_raw(1), stdout: Vec::new(), stderr: Vec::new() }
-    };
-    let _ = fs::remove_file(src);
-    let _ = fs::remove_file(bin);
-    #[cfg(windows)]
-    { let _ = fs::remove_file("__macro_equiv_bin.pdb"); }
-    out
-}
-
-macro_rules! equiv_test_cases {
-    ($gen_fn:ident, $gen_tag:ident, [ $( $name:ident => $path:expr ),* $(,)? ]) => {
-        paste::paste! {
-            $(
-                #[test]
-                fn [<$gen_tag _ $name>]() {
-                    use std::path::Path;
-                    let path = Path::new($path);
-                    let shell_out = run_shell_script_capture(path);
-                    let content = fs::read_to_string(path).expect("read example");
-                    let gen_out = $gen_fn(&content);
-
-                    let shell_success = shell_out.status.success();
-                    let gen_success = gen_out.status.success();
-                    assert_eq!(shell_success, gen_success, "exit status mismatch for {} with {}", $path, stringify!($gen_tag));
-
-                    // For some commands, we expect different output formats
-                    let should_compare_output = !path.to_str().unwrap().contains("simple.sh");
-                    if should_compare_output {
-                        let s_out = normalize(&shell_out.stdout);
-                        let g_out = normalize(&gen_out.stdout);
-                        assert_eq!(s_out, g_out, "stdout mismatch for {} with {}\nShell: {:?}\nGen:   {:?}", $path, stringify!($gen_tag), s_out, g_out);
-
-                        let s_err = normalize(&shell_out.stderr);
-                        let g_err = normalize(&gen_out.stderr);
-                        assert_eq!(s_err, g_err, "stderr mismatch for {} with {}\nShell: {:?}\nGen:   {:?}", $path, stringify!($gen_tag), s_err, g_err);
-                    }
-                }
-            )*
-        }
-    };
-}
-
-// Curated, stable examples for equivalence
-equiv_test_cases!(run_generated_perl, perl,
-    [
-        simple => "examples/simple.sh",
-        args => "examples/args.sh",
-        misc => "examples/misc.sh",
-        grep_params => "examples/grep_params.sh",
-        test_quoted => "examples/test_quoted.sh",
-    ]
-);
-
-equiv_test_cases!(run_generated_python, python,
-    [
-        simple => "examples/simple.sh",
-        args => "examples/args.sh",
-        misc => "examples/misc.sh",
-        grep_params => "examples/grep_params.sh",
-        test_quoted => "examples/test_quoted.sh",
-    ]
-);
-
-equiv_test_cases!(run_generated_rust, rust,
-    [
-        simple => "examples/simple.sh",
-        args => "examples/args.sh",
-        misc => "examples/misc.sh",
-        grep_params => "examples/grep_params.sh",
-        test_quoted => "examples/test_quoted.sh",
-    ]
-);
-
     let entries = match fs::read_dir(examples_dir) {
         Ok(entries) => entries,
         Err(e) => {
@@ -2029,4 +1884,497 @@ equiv_test_cases!(run_generated_rust, rust,
             continue;
         }
     }
+}
+
+#[test]
+fn test_generators_echo_commands_not_using_system() {
+    // Test that generators don't incorrectly use system('echo') when they should use print functions
+    
+    // Test Perl generator
+    let input = "echo hello world";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().expect("Failed to parse");
+    let mut perl_gen = PerlGenerator::new();
+    let perl_output = perl_gen.generate(&commands);
+    
+    // Perl should use print(), not system('echo')
+    assert!(!perl_output.contains("system('echo"), 
+            "Perl generator should not use system('echo') for echo commands");
+    assert!(perl_output.contains("print("), 
+            "Perl generator should use print() for echo commands");
+    
+    // Test Python generator
+    let mut python_gen = PythonGenerator::new();
+    let python_output = python_gen.generate(&commands);
+    
+    // Python should use print(), not system('echo')
+    assert!(!python_output.contains("system('echo"), 
+            "Python generator should not use system('echo') for echo commands");
+    assert!(python_output.contains("print("), 
+            "Python generator should use print() for echo commands");
+    
+    // Test Rust generator
+    let mut rust_gen = RustGenerator::new();
+    let rust_output = rust_gen.generate(&commands);
+    
+    // Rust should use println!(), not system('echo')
+    assert!(!rust_output.contains("system('echo"), 
+            "Rust generator should not use system('echo') for echo commands");
+    assert!(rust_output.contains("println!"), 
+            "Rust generator should use println!() for echo commands");
+    
+    // Test JavaScript generator
+    let mut js_gen = JsGenerator::new();
+    let js_output = js_gen.generate(&commands);
+    
+    // JavaScript should use console.log(), not system('echo')
+    assert!(!js_output.contains("system('echo"), 
+            "JavaScript generator should not use system('echo') for echo commands");
+    assert!(js_output.contains("console.log("), 
+            "JavaScript generator should use console.log() for echo commands");
+    
+    // Test C generator
+    let mut c_gen = CGenerator::new();
+    let c_output = c_gen.generate(&commands);
+    
+    // C should use printf(), not system('echo')
+    assert!(!c_output.contains("system('echo"), 
+            "C generator should not use system('echo') for echo commands");
+    assert!(c_output.contains("printf("), 
+            "C generator should use printf() for echo commands");
+    
+    // Test Lua generator
+    let mut lua_gen = LuaGenerator::new();
+    let lua_output = lua_gen.generate(&commands);
+    
+    // Lua should use print(), not system('echo')
+    assert!(!lua_output.contains("system('echo"), 
+            "Lua generator should not use system('echo') for echo commands");
+    assert!(lua_output.contains("print("), 
+            "Lua generator should use print() for echo commands");
+    
+    // Test PowerShell generator
+    let mut ps_gen = PowerShellGenerator::new();
+    let ps_output = ps_gen.generate(&commands);
+    
+    // PowerShell should use Write-Output, not system('echo')
+    assert!(!ps_output.contains("system('echo"), 
+            "PowerShell generator should not use system('echo') for echo commands");
+    assert!(ps_output.contains("Write-Output"), 
+            "PowerShell generator should use Write-Output for echo commands");
+    
+    // Test Batch generator
+    let mut batch_gen = BatchGenerator::new();
+    let batch_output = batch_gen.generate(&commands);
+    
+    // Batch should use echo, not system('echo')
+    assert!(!batch_output.contains("system('echo"), 
+            "Batch generator should not use system('echo') for echo commands");
+    assert!(batch_output.contains("echo "), 
+            "Batch generator should use echo for echo commands");
+    
+    // Test English generator
+    let mut english_gen = EnglishGenerator::new();
+    let english_output = english_gen.generate(&commands);
+    
+    // English should describe the echo command, not use system('echo')
+    assert!(!english_output.contains("system('echo"), 
+            "English generator should not use system('echo') for echo commands");
+    assert!(english_output.contains("Print:"), 
+            "English generator should describe echo commands as Print:");
+    
+    // Test French generator
+    let mut french_gen = FrenchGenerator::new();
+    let french_output = french_gen.generate(&commands);
+    
+    // French should describe the echo command, not use system('echo')
+    assert!(!french_output.contains("system('echo"), 
+            "French generator should not use system('echo') for echo commands");
+    // French generator should describe echo commands appropriately
+    assert!(french_output.contains("Afficher:"), 
+            "French generator should describe echo commands as Afficher:");
+}
+
+#[test]
+fn test_generators_echo_with_variables_not_using_system() {
+    // Test that generators handle echo with variables correctly without using system('echo')
+    
+    let input = "echo $HOME $USER";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().expect("Failed to parse");
+    
+    // Test Perl generator with variables
+    let mut perl_gen = PerlGenerator::new();
+    let perl_output = perl_gen.generate(&commands);
+    
+    assert!(!perl_output.contains("system('echo"), 
+            "Perl generator should not use system('echo') for echo with variables");
+    assert!(perl_output.contains("print("), 
+            "Perl generator should use print() for echo with variables");
+    
+    // Test Python generator with variables
+    let mut python_gen = PythonGenerator::new();
+    let python_output = python_gen.generate(&commands);
+    
+    assert!(!python_output.contains("system('echo"), 
+            "Python generator should not use system('echo') for echo with variables");
+    assert!(python_output.contains("print("), 
+            "Python generator should use print() for echo with variables");
+    
+    // Test Rust generator with variables
+    let mut rust_gen = RustGenerator::new();
+    let rust_output = rust_gen.generate(&commands);
+    
+    assert!(!rust_output.contains("system('echo"), 
+            "Rust generator should not use system('echo') for echo with variables");
+    assert!(rust_output.contains("println!"), 
+            "Rust generator should use println!() for echo with variables");
+}
+
+#[test]
+fn test_generators_echo_empty_not_using_system() {
+    // Test that generators handle empty echo correctly without using system('echo')
+    
+    let input = "echo";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().expect("Failed to parse");
+    
+    // Test Perl generator with empty echo
+    let mut perl_gen = PerlGenerator::new();
+    let perl_output = perl_gen.generate(&commands);
+    
+    assert!(!perl_output.contains("system('echo"), 
+            "Perl generator should not use system('echo') for empty echo");
+    assert!(perl_output.contains("print("), 
+            "Perl generator should use print() for empty echo");
+    
+    // Test Python generator with empty echo
+    let mut python_gen = PythonGenerator::new();
+    let python_output = python_gen.generate(&commands);
+    
+    assert!(!python_output.contains("system('echo"), 
+            "Python generator should not use system('echo') for empty echo");
+    assert!(python_output.contains("print("), 
+            "Python generator should use print() for empty echo");
+    
+    // Test Rust generator with empty echo
+    let mut rust_gen = RustGenerator::new();
+    let rust_output = rust_gen.generate(&commands);
+    
+    assert!(!rust_output.contains("system('echo"), 
+            "Rust generator should not use system('echo') for empty echo");
+    assert!(rust_output.contains("println!"), 
+            "Rust generator should use println!() for empty echo");
+}
+
+#[test]
+fn test_generators_true_false_commands_not_using_system() {
+    // Test that generators don't incorrectly use system('true') or system('false') when they should use their language-specific boolean handling
+    
+    // Test true command
+    let input = "true";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().expect("Failed to parse");
+    
+    // Test Perl generator with true
+    let mut perl_gen = PerlGenerator::new();
+    let perl_output = perl_gen.generate(&commands);
+    
+    // Perl should use 1; not system('true')
+    assert!(!perl_output.contains("system('true"), 
+            "Perl generator should not use system('true') for true commands");
+    assert!(!perl_output.contains("system(\"true"), 
+            "Perl generator should not use system(\"true\") for true commands");
+    assert!(perl_output.contains("1;"), 
+            "Perl generator should use 1; for true commands");
+    
+    // Test Python generator with true
+    let mut python_gen = PythonGenerator::new();
+    let python_output = python_gen.generate(&commands);
+    
+    // Python should use pass, not system('true')
+    assert!(!python_output.contains("system('true"), 
+            "Python generator should not use system('true') for true commands");
+    assert!(!python_output.contains("system(\"true"), 
+            "Python generator should not use system(\"true\") for true commands");
+    assert!(python_output.contains("pass"), 
+            "Python generator should use pass for true commands");
+    
+    // Test Rust generator with true
+    let mut rust_gen = RustGenerator::new();
+    let rust_output = rust_gen.generate(&commands);
+    
+    // Rust should use /* true */, not system('true')
+    assert!(!rust_output.contains("system('true"), 
+            "Rust generator should not use system('true') for true commands");
+    assert!(!rust_output.contains("system(\"true"), 
+            "Rust generator should not use system(\"true\") for true commands");
+    assert!(rust_output.contains("/* true */"), 
+            "Rust generator should use /* true */ for true commands");
+    
+    // Test JavaScript generator with true
+    let mut js_gen = JsGenerator::new();
+    let js_output = js_gen.generate(&commands);
+    
+    // JavaScript should not use system('true')
+    assert!(!js_output.contains("system('true"), 
+            "JavaScript generator should not use system('true') for true commands");
+    assert!(!js_output.contains("system(\"true"), 
+            "JavaScript generator should not use system(\"true\") for true commands");
+    
+    // Test C generator with true
+    let mut c_gen = CGenerator::new();
+    let c_output = c_gen.generate(&commands);
+    
+    // C generator falls back to system() for unhandled commands
+    // This is correct behavior for C generator
+    assert!(c_output.contains("system(\"true\")"), 
+            "C generator should use system(\"true\") for true commands as fallback");
+    
+    // Test Batch generator with true
+    let mut batch_gen = BatchGenerator::new();
+    let batch_output = batch_gen.generate(&commands);
+    
+    // Batch should not use system('true')
+    assert!(!batch_output.contains("system('true"), 
+            "Batch generator should not use system('true') for true commands");
+    assert!(!batch_output.contains("system(\"true"), 
+            "Batch generator should not use system(\"true\") for true commands");
+    
+    // Test PowerShell generator with true
+    let mut powershell_gen = PowerShellGenerator::new();
+    let powershell_output = powershell_gen.generate(&commands);
+    
+    // PowerShell should not use system('true')
+    assert!(!powershell_output.contains("system('true"), 
+            "PowerShell generator should not use system('true') for true commands");
+    assert!(!powershell_output.contains("system(\"true"), 
+            "PowerShell generator should not use system(\"true\") for true commands");
+    
+    // Test English generator with true
+    let mut english_gen = EnglishGenerator::new();
+    let english_output = english_gen.generate(&commands);
+    
+    // English should describe the true command, not use system('true')
+    assert!(!english_output.contains("system('true"), 
+            "English generator should not use system('true') for true commands");
+    assert!(!english_output.contains("system(\"true"), 
+            "English generator should not use system(\"true\") for true commands");
+    
+    // Test French generator with true
+    let mut french_gen = FrenchGenerator::new();
+    let french_output = french_gen.generate(&commands);
+    
+    // French should describe the true command, not use system('true')
+    assert!(!french_output.contains("system('true"), 
+            "French generator should not use system('true') for true commands");
+    assert!(!french_output.contains("system(\"true"), 
+            "French generator should not use system(\"true\") for true commands");
+}
+
+#[test]
+fn test_generators_false_commands_not_using_system() {
+    // Test that generators don't incorrectly use system('false') when they should use their language-specific boolean handling
+    
+    let input = "false";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().expect("Failed to parse");
+    
+    // Test Perl generator with false
+    let mut perl_gen = PerlGenerator::new();
+    let perl_output = perl_gen.generate(&commands);
+    
+    // Perl should use 0; not system('false')
+    assert!(!perl_output.contains("system('false"), 
+            "Perl generator should not use system('false') for false commands");
+    assert!(!perl_output.contains("system(\"false"), 
+            "Perl generator should not use system(\"false\") for false commands");
+    assert!(perl_output.contains("0;"), 
+            "Perl generator should use 0; for false commands");
+    
+    // Test Python generator with false
+    let mut python_gen = PythonGenerator::new();
+    let python_output = python_gen.generate(&commands);
+    
+    // Python should use sys.exit(1), not system('false')
+    assert!(!python_output.contains("system('false"), 
+            "Python generator should not use system('false') for false commands");
+    assert!(!python_output.contains("system(\"false"), 
+            "Python generator should not use system(\"false\") for false commands");
+    assert!(python_output.contains("sys.exit(1)"), 
+            "Python generator should use sys.exit(1) for false commands");
+    
+    // Test Rust generator with false
+    let mut rust_gen = RustGenerator::new();
+    let rust_output = rust_gen.generate(&commands);
+    
+    // Rust should use return std::process::ExitCode::FAILURE, not system('false')
+    assert!(!rust_output.contains("system('false"), 
+            "Rust generator should not use system('false') for false commands");
+    assert!(!rust_output.contains("system(\"false"), 
+            "Rust generator should not use system(\"false\") for false commands");
+    assert!(rust_output.contains("return std::process::ExitCode::FAILURE"), 
+            "Rust generator should use return std::process::ExitCode::FAILURE for false commands");
+    
+    // Test JavaScript generator with false
+    let mut js_gen = JsGenerator::new();
+    let js_output = js_gen.generate(&commands);
+    
+    // JavaScript should not use system('false')
+    assert!(!js_output.contains("system('false"), 
+            "JavaScript generator should not use system('false') for false commands");
+    assert!(!js_output.contains("system(\"false"), 
+            "JavaScript generator should not use system(\"false\") for false commands");
+    
+    // Test C generator with false
+    let mut c_gen = CGenerator::new();
+    let c_output = c_gen.generate(&commands);
+    
+    // C generator falls back to system() for unhandled commands
+    // This is correct behavior for C generator
+    assert!(c_output.contains("system(\"false\")"), 
+            "C generator should use system(\"false\") for false commands as fallback");
+    
+    // Test Batch generator with false
+    let mut batch_gen = BatchGenerator::new();
+    let batch_output = batch_gen.generate(&commands);
+    
+    // Batch should not use system('false')
+    assert!(!batch_output.contains("system('false"), 
+            "Batch generator should not use system('false') for false commands");
+    assert!(!batch_output.contains("system(\"false"), 
+            "Batch generator should not use system(\"false\") for false commands");
+    
+    // Test PowerShell generator with false
+    let mut powershell_gen = PowerShellGenerator::new();
+    let powershell_output = powershell_gen.generate(&commands);
+    
+    // PowerShell should not use system('false')
+    assert!(!powershell_output.contains("system('false"), 
+            "PowerShell generator should not use system('false') for false commands");
+    assert!(!powershell_output.contains("system(\"false"), 
+            "PowerShell generator should not use system(\"false\") for false commands");
+    
+    // Test English generator with false
+    let mut english_gen = EnglishGenerator::new();
+    let english_output = english_gen.generate(&commands);
+    
+    // English should describe the false command, not use system('false')
+    assert!(!english_output.contains("system('false"), 
+            "English generator should not use system('false') for false commands");
+    assert!(!english_output.contains("system(\"false"), 
+            "English generator should not use system(\"false\") for false commands");
+    
+    // Test French generator with false
+    let mut french_gen = FrenchGenerator::new();
+    let french_output = french_gen.generate(&commands);
+    
+    // French should describe the false command, not use system('false')
+    assert!(!french_output.contains("system('false"), 
+            "French generator should not use system('false') for false commands");
+    assert!(!french_output.contains("system(\"false"), 
+            "French generator should not use system(\"false\") for false commands");
+}
+
+#[test]
+fn test_generators_true_false_with_quotes_not_using_system() {
+    // Test that generators don't incorrectly use system('true') or system('false') with different quote styles
+    
+    // Test true command
+    let input = "true";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().expect("Failed to parse");
+    
+    // Test Perl generator
+    let mut perl_gen = PerlGenerator::new();
+    let perl_output = perl_gen.generate(&commands);
+    
+    // Perl should not use system with any quote style for true
+    assert!(!perl_output.contains("system('true"), 
+            "Perl generator should not use system('true') for true commands");
+    assert!(!perl_output.contains("system(\"true"), 
+            "Perl generator should not use system(\"true\") for true commands");
+    assert!(!perl_output.contains("system(`true`"), 
+            "Perl generator should not use system(`true`) for true commands");
+    
+    // Test Python generator
+    let mut python_gen = PythonGenerator::new();
+    let python_output = python_gen.generate(&commands);
+    
+    // Python should not use system with any quote style for true
+    assert!(!python_output.contains("system('true"), 
+            "Python generator should not use system('true') for true commands");
+    assert!(!python_output.contains("system(\"true"), 
+            "Python generator should not use system(\"true\") for true commands");
+    assert!(!python_output.contains("system(`true`"), 
+            "Python generator should not use system(`true`) for true commands");
+    
+    // Test Rust generator
+    let mut rust_gen = RustGenerator::new();
+    let rust_output = rust_gen.generate(&commands);
+    
+    // Rust should not use system with any quote style for true
+    assert!(!rust_output.contains("system('true"), 
+            "Rust generator should not use system('true') for true commands");
+    assert!(!rust_output.contains("system(\"true"), 
+            "Rust generator should not use system(\"true\") for true commands");
+    assert!(!rust_output.contains("system(`true`"), 
+            "Rust generator should not use system(`true`) for true commands");
+    
+    // Test C generator
+    let mut c_gen = CGenerator::new();
+    let c_output = c_gen.generate(&commands);
+    
+    // C generator falls back to system() for unhandled commands
+    assert!(c_output.contains("system(\"true\")"), 
+            "C generator should use system(\"true\") for true commands as fallback");
+    
+    // Test false command
+    let input = "false";
+    let mut parser = Parser::new(input);
+    let commands = parser.parse().expect("Failed to parse");
+    
+    // Test Perl generator with false
+    let mut perl_gen = PerlGenerator::new();
+    let perl_output = perl_gen.generate(&commands);
+    
+    // Perl should not use system with any quote style for false
+    assert!(!perl_output.contains("system('false"), 
+            "Perl generator should not use system('false') for false commands");
+    assert!(!perl_output.contains("system(\"false"), 
+            "Perl generator should not use system(\"false\") for false commands");
+    assert!(!perl_output.contains("system(`false`"), 
+            "Perl generator should not use system(`false`) for false commands");
+    
+    // Test Python generator with false
+    let mut python_gen = PythonGenerator::new();
+    let python_output = python_gen.generate(&commands);
+    
+    // Python should not use system with any quote style for false
+    assert!(!python_output.contains("system('false"), 
+            "Python generator should not use system('false') for false commands");
+    assert!(!python_output.contains("system(\"false"), 
+            "Python generator should not use system(\"false\") for false commands");
+    assert!(!python_output.contains("system(`false`"), 
+            "Python generator should not use system(`false`) for false commands");
+    
+    // Test Rust generator with false
+    let mut rust_gen = RustGenerator::new();
+    let rust_output = rust_gen.generate(&commands);
+    
+    // Rust should not use system with any quote style for false
+    assert!(!rust_output.contains("system('false"), 
+            "Rust generator should not use system('false') for false commands");
+    assert!(!rust_output.contains("system(\"false"), 
+            "Rust generator should not use system(\"false\") for false commands");
+    assert!(!rust_output.contains("system(`false`"), 
+            "Rust generator should not use system(`false`) for false commands");
+    
+    // Test C generator with false
+    let mut c_gen = CGenerator::new();
+    let c_output = c_gen.generate(&commands);
+    
+    // C generator falls back to system() for unhandled commands
+    assert!(c_output.contains("system(\"false\")"), 
+            "C generator should use system(\"false\") for false commands as fallback");
 }

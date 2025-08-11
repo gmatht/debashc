@@ -29,10 +29,14 @@ impl PerlGenerator {
     }
 
     fn generate_command(&mut self, command: &Command) -> String {
+        eprintln!("DEBUG: generate_command called with: {:?}", command);
         match command {
             Command::Simple(cmd) => self.generate_simple_command(cmd),
             Command::ShoptCommand(cmd) => self.generate_shopt_command(cmd),
-            Command::TestExpression(test_expr) => self.generate_test_expression(test_expr),
+            Command::TestExpression(test_expr) => {
+                eprintln!("DEBUG: Routing to generate_test_expression");
+                self.generate_test_expression(test_expr)
+            },
             Command::Pipeline(pipeline) => self.generate_pipeline(pipeline),
             Command::If(if_stmt) => self.generate_if_statement(if_stmt),
             Command::While(while_loop) => self.generate_while_loop(while_loop),
@@ -639,16 +643,197 @@ impl PerlGenerator {
         }
         
         // shopt commands always succeed (return true)
-        output.push_str("1;\n");
         output
     }
 
+    fn generate_test_expression_clean(&mut self, test_expr: &TestExpression) -> String {
+        // Parse the test expression to extract components
+        let expr = &test_expr.expression;
+        let modifiers = &test_expr.modifiers;
+        
+        // Parse the expression to determine the type of test
+        if expr.contains(" =~ ") {
+            // Regex matching: [[ $var =~ pattern ]]
+            let parts: Vec<&str> = expr.split(" =~ ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let pattern = parts[1].trim();
+                
+                // Convert to Perl regex matching
+                format!("{} =~ /{}/", var, pattern)
+            } else {
+                "0".to_string()
+            }
+        } else if expr.contains(" == ") {
+            // Pattern matching: [[ $var == pattern ]]
+            let parts: Vec<&str> = expr.split(" == ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let pattern = parts[1].trim();
+                
+                if modifiers.extglob {
+                    // Handle extglob patterns
+                    let regex_pattern = self.convert_extglob_to_perl_regex(pattern);
+                    if modifiers.nocasematch {
+                        format!("{} =~ /{}/i", var, regex_pattern)
+                    } else {
+                        format!("{} =~ /{}/", var, regex_pattern)
+                    }
+                } else {
+                    // Regular pattern matching
+                    if modifiers.nocasematch {
+                        // Case-insensitive matching
+                        format!("lc({}) =~ /^{}$/i", var, pattern.replace("*", ".*"))
+                    } else {
+                        // Case-sensitive matching
+                        format!("{} =~ /^{}$/", var, pattern.replace("*", ".*"))
+                    }
+                }
+            } else {
+                "0".to_string()
+            }
+        } else if expr.contains(" != ") {
+            // Pattern matching: [[ $var != pattern ]]
+            let parts: Vec<&str> = expr.split(" != ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let pattern = parts[1].trim();
+                
+                if modifiers.extglob {
+                    // Handle extglob patterns
+                    let regex_pattern = self.convert_extglob_to_perl_regex(pattern);
+                    if modifiers.nocasematch {
+                        format!("{} !~ /{}/i", var, regex_pattern)
+                    } else {
+                        format!("{} !~ /{}/", var, regex_pattern)
+                    }
+                } else {
+                    // Regular pattern matching
+                    if modifiers.nocasematch {
+                        // Case-insensitive matching
+                        format!("lc({}) !~ /^{}$/i", var, pattern.replace("*", ".*"))
+                    } else {
+                        // Case-sensitive matching
+                        format!("{} !~ /^{}$/", var, pattern.replace("*", ".*"))
+                    }
+                }
+            } else {
+                "0".to_string()
+            }
+        } else if expr.contains(" -eq ") {
+            // Numeric equality: [[ $var -eq value ]]
+            let parts: Vec<&str> = expr.split(" -eq ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                format!("{} == {}", var, value)
+            } else {
+                "0".to_string()
+            }
+        } else if expr.contains(" -ne ") {
+            // Numeric inequality: [[ $var -ne value ]]
+            let parts: Vec<&str> = expr.split(" -ne ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                format!("{} != {}", var, value)
+            } else {
+                "0".to_string()
+            }
+        } else if expr.contains(" -lt ") {
+            // Less than: [[ $var -lt value ]]
+            let parts: Vec<&str> = expr.split(" -lt ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                format!("{} < {}", var, value)
+            } else {
+                "0".to_string()
+            }
+        } else if expr.contains(" -le ") {
+            // Less than or equal: [[ $var -le value ]]
+            let parts: Vec<&str> = expr.split(" -le ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                format!("{} <= {}", var, value)
+            } else {
+                "0".to_string()
+            }
+        } else if expr.contains(" -gt ") {
+            // Greater than: [[ $var -gt value ]]
+            let parts: Vec<&str> = expr.split(" -gt ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                format!("{} > {}", var, value)
+            } else {
+                "0".to_string()
+            }
+        } else if expr.contains(" -ge ") {
+            // Greater than or equal: [[ $var -ge value ]]
+            let parts: Vec<&str> = expr.split(" -ge ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                format!("{} >= {}", var, value)
+            } else {
+                "0".to_string()
+            }
+        } else if expr.contains(" -z ") {
+            // String is empty: [[ -z $var ]]
+            let var_str = expr.replace("-z", "").trim().to_string();
+            format!("{} eq ''", var_str)
+        } else if expr.contains(" -n ") {
+            // String is not empty: [[ -n $var ]]
+            let var_str = expr.replace("-n", "").trim().to_string();
+            format!("{} ne ''", var_str)
+        } else if expr.contains(" -f ") {
+            // File exists and is regular: [[ -f $var ]]
+            let var_str = expr.replace("-f", "").trim().to_string();
+            format!("-f {}", var_str)
+        } else if expr.contains(" -d ") {
+            // Directory exists: [[ -d $var ]]
+            let var_str = expr.replace("-d", "").trim().to_string();
+            format!("-d {}", var_str)
+        } else if expr.contains(" -e ") {
+            // File exists: [[ -e $var ]]
+            let var_str = expr.replace("-e", "").trim().to_string();
+            format!("-e {}", var_str)
+        } else if expr.contains(" -r ") {
+            // File is readable: [[ -r $var ]]
+            let var_str = expr.replace("-r", "").trim().to_string();
+            format!("-r {}", var_str)
+        } else if expr.contains(" -w ") {
+            // File is writable: [[ -w $var ]]
+            let var_str = expr.replace("-w", "").trim().to_string();
+            format!("-w {}", var_str)
+        } else if expr.contains(" -x ") {
+            // File is executable: [[ -x $var ]]
+            let var_str = expr.replace("-x", "").trim().to_string();
+            format!("-x {}", var_str)
+        } else {
+            // Unknown test expression
+            format!("0 # Unknown test: {}", expr)
+        }
+    }
+
     fn generate_test_expression(&mut self, test_expr: &TestExpression) -> String {
+        eprintln!("DEBUG: generate_test_expression called with expression: '{}'", test_expr.expression);
         let mut output = String::new();
         
         // Parse the test expression to extract components
         let expr = &test_expr.expression;
         let modifiers = &test_expr.modifiers;
+        
+        // Debug output
+        output.push_str(&format!("# DEBUG: TestExpression: '{}'\n", expr));
         
         // Add comments about enabled options
         if modifiers.extglob {
@@ -691,12 +876,23 @@ impl PerlGenerator {
                     self.declared_locals.insert(var[1..].to_string());
                 }
                 
-                if modifiers.nocasematch {
-                    // Case-insensitive matching
-                    output.push_str(&format!("lc({}) =~ /^{}$/i", var, pattern.replace("*", ".*")));
+                if modifiers.extglob {
+                    // Handle extglob patterns
+                    let regex_pattern = self.convert_extglob_to_perl_regex(pattern);
+                    if modifiers.nocasematch {
+                        output.push_str(&format!("{} =~ /{}/i", var, regex_pattern));
+                    } else {
+                        output.push_str(&format!("{} =~ /{}/", var, regex_pattern));
+                    }
                 } else {
-                    // Case-sensitive matching
-                    output.push_str(&format!("{} =~ /^{}$/", var, pattern.replace("*", ".*")));
+                    // Regular pattern matching
+                    if modifiers.nocasematch {
+                        // Case-insensitive matching
+                        output.push_str(&format!("lc({}) =~ /^{}$/i", var, pattern.replace("*", ".*")));
+                    } else {
+                        // Case-sensitive matching
+                        output.push_str(&format!("{} =~ /^{}$/", var, pattern.replace("*", ".*")));
+                    }
                 }
             } else {
                 output.push_str(&format!("# Invalid pattern test: {}\n", expr));
@@ -715,12 +911,23 @@ impl PerlGenerator {
                     self.declared_locals.insert(var[1..].to_string());
                 }
                 
-                if modifiers.nocasematch {
-                    // Case-insensitive matching
-                    output.push_str(&format!("lc({}) !~ /^{}$/i", var, pattern.replace("*", ".*")));
+                if modifiers.extglob {
+                    // Handle extglob patterns
+                    let regex_pattern = self.convert_extglob_to_perl_regex(pattern);
+                    if modifiers.nocasematch {
+                        output.push_str(&format!("{} !~ /{}/i", var, regex_pattern));
+                    } else {
+                        output.push_str(&format!("{} !~ /{}/", var, regex_pattern));
+                    }
                 } else {
-                    // Case-sensitive matching
-                    output.push_str(&format!("{} !~ /^{}$/", var, pattern.replace("*", ".*")));
+                    // Regular pattern matching
+                    if modifiers.nocasematch {
+                        // Case-insensitive matching
+                        output.push_str(&format!("lc({}) !~ /^{}$/i", var, pattern.replace("*", ".*")));
+                    } else {
+                        // Case-sensitive matching
+                        output.push_str(&format!("{} !~ /^{}$/", var, pattern.replace("*", ".*")));
+                    }
                 }
             } else {
                 output.push_str(&format!("# Invalid pattern test: {}\n", expr));
@@ -1057,29 +1264,50 @@ impl PerlGenerator {
             }
             output.push_str("print($output);\n");
         } else {
-            // Implement && and || via system() exit codes
-            output.push_str("my $last_status = 0;\n");
+            // Implement && and || via Perl boolean expressions
             if let Some(first) = pipeline.commands.first() {
-                output.push_str(&format!("$last_status = system('{}');\n", self.command_to_string(first)));
+                match first {
+                    Command::TestExpression(test_expr) => {
+                        // Generate the test expression directly as a Perl boolean expression
+                        output.push_str(&self.generate_test_expression_clean(test_expr));
+                    }
+                    _ => {
+                        // For non-test expressions, use system() calls
+                        output.push_str("my $last_status = 0;\n");
+                        output.push_str(&format!("$last_status = system('{}');\n", self.command_to_string(first)));
+                    }
+                }
             }
             for (idx, op) in pipeline.operators.iter().enumerate() {
                 let cmd = &pipeline.commands[idx + 1];
-                match op {
-                    PipeOperator::And => {
-                        output.push_str(&format!("if ($last_status == 0) {{ $last_status = system('{}'); }}\n", self.command_to_string(cmd)));
+                match (op, cmd) {
+                    (PipeOperator::And, Command::TestExpression(test_expr)) => {
+                        output.push_str(" && ");
+                        output.push_str(&self.generate_test_expression_clean(test_expr));
                     }
-                    PipeOperator::Or => {
-                        output.push_str(&format!("if ($last_status != 0) {{ $last_status = system('{}'); }}\n", self.command_to_string(cmd)));
+                    (PipeOperator::Or, Command::TestExpression(test_expr)) => {
+                        output.push_str(" || ");
+                        output.push_str(&format!("({})", self.generate_test_expression_clean(test_expr)));
                     }
-                    PipeOperator::Pipe => {}
+                    (PipeOperator::And, _) => {
+                        output.push_str(" && ");
+                        output.push_str(&format!("system('{}') == 0", self.command_to_string(cmd)));
+                    }
+                    (PipeOperator::Or, _) => {
+                        output.push_str(" || ");
+                        output.push_str(&format!("system('{}') == 0", self.command_to_string(cmd)));
+                    }
+                    (PipeOperator::Pipe, _) => {}
                 }
             }
+            // Add semicolon and newline after the pipeline
+            output.push_str(";\n");
         }
         
         output
     }
 
-    fn command_to_string(&self, command: &Command) -> String {
+    fn command_to_string(&mut self, command: &Command) -> String {
         match command {
             Command::Simple(cmd) => {
                 if cmd.args.is_empty() {
@@ -1088,6 +1316,10 @@ impl PerlGenerator {
                     let args = cmd.args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>().join(" ");
                     format!("{} {}", cmd.name, args)
                 }
+            }
+            Command::TestExpression(test_expr) => {
+                // Convert test expression to Perl test
+                self.generate_test_expression(test_expr)
             }
             _ => "command".to_string(),
         }
@@ -1297,10 +1529,10 @@ impl PerlGenerator {
                     // Handle string interpolation specially for for loops
                     if interp.parts.len() == 1 {
                         if let StringPart::Variable(var) = &interp.parts[0] {
-                            if var.ends_with("[@]") {
-                                // This is arr[@] - convert to @arr without quotes
-                                let array_name = &var[..var.len()-3];
-                                format!("@{}", array_name)
+                            if var.starts_with('!') && var.ends_with("[@]") {
+                                // This is !map[@] - convert to keys(%map) without quotes
+                                let array_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
+                                format!("keys(%{})", array_name)
                             } else if var.starts_with('#') && var.contains('[') {
                                 // This is #arr[@] - convert to scalar(@arr) without quotes
                                 if let Some(bracket_start) = var.find('[') {
@@ -1309,6 +1541,10 @@ impl PerlGenerator {
                                 } else {
                                     format!("${}", var)
                                 }
+                            } else if var.ends_with("[@]") {
+                                // This is arr[@] - convert to @arr without quotes
+                                let array_name = &var[..var.len()-3];
+                                format!("@{}", array_name)
                             } else if var.contains('[') && var.ends_with(']') {
                                 // This is arr[1] - convert to $arr[1] without quotes
                                 if let Some(bracket_start) = var.find('[') {
@@ -1318,10 +1554,6 @@ impl PerlGenerator {
                                 } else {
                                     format!("${}", var)
                                 }
-                            } else if var.starts_with('!') && var.ends_with("[@]") {
-                                // This is !map[@] - convert to keys(%map) without quotes
-                                let array_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
-                                format!("keys(%{})", array_name)
                             } else {
                                 // Regular variable - wrap in quotes
                                 format!("\"${}\"", var)
@@ -1380,7 +1612,18 @@ impl PerlGenerator {
                 }
                 _ => {
                     // Other word types - use proper word conversion
-                    format!("\"{}\"", self.word_to_perl(&items[0]))
+                    // Special handling for !map[@] variables
+                    if let Word::Variable(var) = &items[0] {
+                        if var.starts_with('!') && var.ends_with("[@]") {
+                            // This is !map[@] - convert to keys(%map) without quotes
+                            let array_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
+                            format!("keys(%{})", array_name)
+                        } else {
+                            format!("\"{}\"", self.word_to_perl(&items[0]))
+                        }
+                    } else {
+                        format!("\"{}\"", self.word_to_perl(&items[0]))
+                    }
                 }
             }
         } else if items.is_empty() {
@@ -1883,5 +2126,67 @@ impl PerlGenerator {
                 self.convert_string_interpolation_to_perl(interp)
             },
         }
+    }
+
+    fn convert_extglob_to_perl_regex(&self, pattern: &str) -> String {
+        // Handle extglob patterns like !(*.min).js
+        if pattern.starts_with("!(") && pattern.contains(")") {
+            if let Some(close_paren) = pattern.find(')') {
+                let negated_pattern = &pattern[2..close_paren];
+                let suffix = &pattern[close_paren + 1..];
+                
+                // Convert the negated pattern to a regex
+                let negated_regex = self.convert_extglob_negated_pattern(negated_pattern);
+                
+                // For !(*.min).js, we want to match strings ending in .js but not containing *.min
+                // The pattern should match the entire string, so we need to ensure
+                // the negated pattern doesn't appear anywhere before the suffix
+                if suffix.is_empty() {
+                    // No suffix, just negate the pattern
+                    format!("^(?!{})$", negated_regex)
+                } else {
+                    // Has suffix, ensure negated pattern doesn't appear before the suffix
+                    let suffix_regex = self.convert_simple_pattern_to_regex(suffix);
+                    // For the negated pattern, we need to check if it appears anywhere in the string
+                    // before the suffix. Since negated_regex already contains .* for wildcards,
+                    // we don't need to add another .* in front
+                    format!("^(?!{}){}$", negated_regex, suffix_regex)
+                }
+            } else {
+                // Fallback if parentheses don't match
+                self.convert_simple_pattern_to_regex(pattern)
+            }
+        } else {
+            // Not an extglob pattern, use regular conversion
+            self.convert_simple_pattern_to_regex(pattern)
+        }
+    }
+    
+    fn convert_extglob_negated_pattern(&self, pattern: &str) -> String {
+        // For extglob negated patterns like *.min, we need to handle * specially
+        // The * in extglob means "any sequence of characters" 
+        // We want to create a regex that matches the literal pattern
+        // For *.min, we want to match any sequence followed by .min
+        // First escape special characters, then convert * to .*
+        pattern
+            .replace(".", "\\.") // Escape dots first
+            .replace("[", "\\[") // Escape brackets
+            .replace("]", "\\]") // Escape brackets
+            .replace("(", "\\(") // Escape parentheses
+            .replace(")", "\\)") // Escape parentheses
+            .replace("*", ".*")  // Convert * to .* for regex
+            .replace("?", ".")   // Convert ? to . for regex
+    }
+    
+    fn convert_simple_pattern_to_regex(&self, pattern: &str) -> String {
+        // Convert shell glob patterns to regex
+        pattern
+            .replace("*", ".*")
+            .replace("?", ".")
+            .replace(".", "\\.")
+            .replace("[", "\\[")
+            .replace("]", "\\]")
+            .replace("(", "\\(")
+            .replace(")", "\\)")
     }
 } 
