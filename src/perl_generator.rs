@@ -3,8 +3,8 @@ use crate::shared_utils::SharedUtils;
 use std::collections::HashSet;
 // HashMap import removed as it's not used
 
-// Use the debug macros from the root of the crate
-use crate::debug_eprintln;
+//We NEED this. Do not remove it.
+#[macro_use]
 
 
 pub struct PerlGenerator {
@@ -132,11 +132,42 @@ impl PerlGenerator {
                             let args = simple_cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join(" ");
                             format!("{} {}", simple_cmd.name, args)
                         }
+                        Command::Subshell(subshell_cmd) => {
+                            // For subshells in process substitution, we need to execute the inner command
+                            match &**subshell_cmd {
+                                Command::Simple(simple_cmd) => {
+                                    let args = simple_cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join(" ");
+                                    format!("{} {}", simple_cmd.name, args)
+                                }
+                                Command::Pipeline(pipeline) => {
+                                    // Handle pipeline in subshell
+                                    let mut cmd_parts = Vec::new();
+                                    for cmd in pipeline.commands.iter() {
+                                        if let Command::Simple(simple_cmd) = cmd {
+                                            let args = simple_cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join(" ");
+                                            cmd_parts.push(format!("{} {}", simple_cmd.name, args));
+                                        }
+                                    }
+                                    cmd_parts.join(" | ")
+                                }
+                                _ => {
+                                    // For other command types, generate the command without the subshell wrapper
+                                    match &**subshell_cmd {
+                                        Command::Simple(simple_cmd) => {
+                                            let args = simple_cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join(" ");
+                                            format!("{} {}", simple_cmd.name, args)
+                                        }
+                                        _ => self.generate_command(&**subshell_cmd),
+                                    }
+                                }
+                            }
+                        }
                         _ => self.generate_command(&**cmd),
                     };
                     
-                    // Clean up the command string for system call
+                    // Clean up the command string for system call and properly escape it
                     let clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
+                    // Use proper Perl system call syntax
                     output.push_str(&format!("system('{} > $temp_file') == 0 or die \"Process substitution failed: $!\\n\";\n", clean_cmd));
                     process_sub_files.push(temp_file);
                 }
@@ -295,259 +326,9 @@ impl PerlGenerator {
                 }
             }
         } else if cmd.name == "echo" {
-            // Special handling for echo
-            if cmd.args.is_empty() {
-                output.push_str("print(\"\\n\");\n");
-            } else if cmd.args.len() == 1 {
-                // Handle single argument
-                let arg = &cmd.args[0];
-                if matches!(arg, Word::Variable(var) if var == "#") {
-                    output.push_str("print(scalar(@ARGV) . \"\\n\");\n");
-                } else if matches!(arg, Word::Variable(var) if var == "@") {
-                    output.push_str("print(join(\" \", @ARGV) . \"\\n\");\n");
-                } else if let Word::Variable(var) = arg {
-                    // Handle special array and hash operations
-                    if var.starts_with('#') && var.ends_with("[@]") {
-                        // This is #arr[@] - convert to scalar(@arr) and concatenate with newline
-                        let array_name = &var[1..var.len()-3]; // Remove # prefix and [@] suffix
-                        output.push_str(&format!("print(scalar(@{}) . \"\\n\");\n", array_name));
-                    } else if var.starts_with('#') && var.ends_with("[*]") {
-                        // This is #arr[*] - convert to scalar(@arr) and concatenate with newline
-                        let array_name = &var[1..var.len()-3]; // Remove # prefix and [*] suffix
-                        output.push_str(&format!("print(scalar(@{}) . \"\\n\");\n", array_name));
-                    } else if var.starts_with('!') && var.ends_with("[@]") {
-                        // This is !map[@] - convert to keys(%map) and concatenate with newline
-                        let array_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
-                        output.push_str(&format!("print(join(\" \", keys(%{})) . \"\\n\");\n", array_name));
-                    } else if var.starts_with('!') && var.ends_with("[*]") {
-                        // This is !map[*] - convert to keys(%map) and concatenate with newline
-                        let array_name = &var[1..var.len()-3]; // Remove ! prefix and [*] suffix
-                        output.push_str(&format!("print(join(\" \", keys(%{})) . \"\\n\");\n", array_name));
-                    } else {
-                        // Handle other variables
-                        output.push_str(&format!("print(\"${}\\n\");\n", var));
-                    }
-                } else if let Word::BraceExpansion(expansion) = arg {
-                    // Handle brace expansion
-                    if expansion.items.len() == 1 {
-                        match &expansion.items[0] {
-                            BraceItem::Range(range) => {
-                                // Check if this is a character range first
-                                if let (Some(start_char), Some(end_char)) = (range.start.chars().next(), range.end.chars().next()) {
-                                    if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
-                                        // This is a character range
-                                        let start = start_char as u8;
-                                        let end = end_char as u8;
-                                        if start <= end {
-                                            let step = range.step.as_ref().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
-                                            let values: Vec<String> = (start..=end)
-                                                .step_by(step)
-                                                .map(|c| char::from(c).to_string())
-                                                .collect();
-                                            output.push_str(&format!("print(\"{}\\n\");\n", values.join(" ")));
-                                        } else {
-                                            // Reverse range
-                                            let step = range.step.as_ref().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
-                                            let values: Vec<String> = (end..=start)
-                                                .rev()
-                                                .step_by(step)
-                                                .map(|c| char::from(c).to_string())
-                                                .collect();
-                                            output.push_str(&format!("print(\"{}\\n\");\n", values.join(" ")));
-                                        }
-                                    } else {
-                                        // Try numeric range
-                                        if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
-                                            let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
-                                            let values: Vec<String> = if step > 0 {
-                                                (start..=end).step_by(step as usize).map(|i| {
-                                                    // Preserve leading zeros by formatting with the same width as the original
-                                                    if range.start.starts_with('0') && range.start.len() > 1 {
-                                                        format!("{:0width$}", i, width = range.start.len())
-                                                    } else {
-                                                        i.to_string()
-                                                    }
-                                                }).collect()
-                                            } else {
-                                                (end..=start).rev().step_by((-step) as usize).map(|i| {
-                                                    if range.start.starts_with('0') && range.start.len() > 1 {
-                                                        format!("{:0width$}", i, width = range.start.len())
-                                                    } else {
-                                                        i.to_string()
-                                                    }
-                                                }).collect()
-                                            };
-                                            output.push_str(&format!("print(\"{}\\n\");\n", values.join(" ")));
-                                        } else {
-                                            // Fallback for non-numeric ranges
-                                            output.push_str(&format!("print(\"{{{}}}..{{{}}}\\n\");\n", range.start, range.end));
-                                        }
-                                    }
-                                } else {
-                                    // Try numeric range
-                                    if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
-                                        let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
-                                        let values: Vec<String> = if step > 0 {
-                                            (start..=end).step_by(step as usize).map(|i| {
-                                                // Preserve leading zeros by formatting with the same width as the original
-                                                if range.start.starts_with('0') && range.start.len() > 1 {
-                                                    format!("{:0width$}", i, width = range.start.len())
-                                                } else {
-                                                    i.to_string()
-                                                }
-                                            }).collect()
-                                        } else {
-                                            (end..=start).rev().step_by((-step) as usize).map(|i| {
-                                                if range.start.starts_with('0') && range.start.len() > 1 {
-                                                    format!("{:0width$}", i, width = range.start.len())
-                                                } else {
-                                                    i.to_string()
-                                                }
-                                            }).collect()
-                                        };
-                                        output.push_str(&format!("print(\"{}\\n\");\n", values.join(" ")));
-                                    } else {
-                                        // Fallback for non-numeric ranges
-                                        output.push_str(&format!("print(\"{{{}}}..{{{}}}\\n\");\n", range.start, range.end));
-                                    }
-                                }
-                            }
-                            BraceItem::Literal(s) => {
-                                // Single literal item
-                                if s.contains("..") {
-                                    // Handle ranges like "a..c" or "00..04..2"
-                                    let parts: Vec<&str> = s.split("..").collect();
-                                    if parts.len() == 2 {
-                                        if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), parts[1].chars().next()) {
-                                            if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
-                                                let start = start_char as u8;
-                                                let end = end_char as u8;
-                                                if start <= end {
-                                                    let values: Vec<String> = (start..=end)
-                                                        .map(|c| char::from(c).to_string())
-                                                        .collect();
-                                                    output.push_str(&format!("print(\"{}\\n\");\n", values.join(" ")));
-                                                } else {
-                                                    output.push_str(&format!("print(\"{{{}}}\\n\");\n", s));
-                                                }
-                                            } else {
-                                                output.push_str(&format!("print(\"{{{}}}\\n\");\n", s));
-                                            }
-                                        } else {
-                                            output.push_str(&format!("print(\"{{{}}}\\n\");\n", s));
-                                        }
-                                    } else if parts.len() == 3 {
-                                        // Range with step like "00..04..2"
-                                        if let (Ok(start), Ok(end), Ok(step)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>(), parts[2].parse::<i64>()) {
-                                            let values: Vec<String> = (start..=end).step_by(step as usize).map(|i| i.to_string()).collect();
-                                            output.push_str(&format!("print(\"{}\\n\");\n", values.join(" ")));
-                                        } else {
-                                            output.push_str(&format!("print(\"{{{}}}\\n\");\n", s));
-                                        }
-                                    } else {
-                                        output.push_str(&format!("print(\"{{{}}}\\n\");\n", s));
-                                    }
-                                } else {
-                                    output.push_str(&format!("print(\"{{{}}}\\n\");\n", s));
-                                }
-                            }
-                            BraceItem::Sequence(seq) => {
-                                // Convert {a,b,c} to a b c
-                                output.push_str(&format!("print(\"{}\\n\");\n", seq.join(" ")));
-                            }
-                        }
-                    } else {
-                        // Multiple items - expand each one
-                        let mut expanded_items = Vec::new();
-                        for item in &expansion.items {
-                            match item {
-                                BraceItem::Literal(s) => expanded_items.push(s.clone()),
-                                BraceItem::Range(range) => {
-                                    if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
-                                        let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
-                                        let values: Vec<String> = if step > 0 {
-                                            (start..=end).step_by(step as usize).map(|i| i.to_string()).collect()
-                                        } else {
-                                            (end..=start).rev().step_by((-step) as usize).map(|i| i.to_string()).collect()
-                                        };
-                                        expanded_items.extend(values);
-                                    } else {
-                                        expanded_items.push(format!("{{{}}}..{{{}}}", range.start, range.end));
-                                    }
-                                }
-                                BraceItem::Sequence(seq) => {
-                                    expanded_items.extend(seq.iter().cloned());
-                                }
-                            }
-                        }
-                        // For multiple brace expansions like {a,b,c}{1,2,3}, we need to generate all combinations
-                        if expansion.items.len() == 2 {
-                            let mut combinations = Vec::new();
-                            for item1 in &expanded_items {
-                                for item2 in &expanded_items {
-                                    combinations.push(format!("{}{}", item1, item2));
-                                }
-                            }
-                            output.push_str(&format!("print(\"{}\\n\");\n", combinations.join(" ")));
-                        } else {
-                            output.push_str(&format!("print(\"{}\\n\");\n", expanded_items.join(" ")));
-                        }
-                    }
-                } else if let Word::StringInterpolation(interp) = arg {
-                    // Handle string interpolation like "$#"
-                    if interp.parts.len() == 1 {
-                        if let StringPart::Variable(var) = &interp.parts[0] {
-                            if var == "#" {
-                                output.push_str("print(scalar(@ARGV) . \"\\n\");\n");
-                            } else if var == "@" {
-                                output.push_str("print(join(\" \", @ARGV) . \"\\n\");\n");
-                            } else if var.starts_with('#') && var.ends_with("[@]") {
-                                // This is #arr[@] - convert to scalar(@arr) and print
-                                let array_name = &var[1..var.len()-3]; // Remove # prefix and [@] suffix
-                                output.push_str(&format!("print(scalar(@{}) . \"\\n\");\n", array_name));
-                            } else if var.starts_with('#') && var.ends_with("[*]") {
-                                // This is #arr[*] - convert to scalar(@arr) and print
-                                let array_name = &var[1..var.len()-3]; // Remove # prefix and [*] suffix
-                                output.push_str(&format!("print(scalar(@{}) . \"\\n\");\n", array_name));
-                            } else if var.starts_with('!') && var.ends_with("[@]") {
-                                // This is !map[@] - convert to keys(%map) and print
-                                let array_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
-                                output.push_str(&format!("print(join(\" \", keys(%{})) . \"\\n\");\n", array_name));
-                            } else if var.starts_with('!') && var.ends_with("[*]") {
-                                // This is !map[*] - convert to keys(%map) and print
-                                let array_name = &var[1..var.len()-3]; // Remove ! prefix and [*] suffix
-                                output.push_str(&format!("print(join(\" \", keys(%{})) . \"\\n\");\n", array_name));
-                            } else {
-                                output.push_str(&format!("print(\"${}\\n\");\n", var));
-                            }
-                        } else if let StringPart::MapLength(map_name) = &interp.parts[0] {
-                            // This is ${#arr[@]} - convert to scalar(@arr) and print
-                            output.push_str(&format!("print(scalar(@{}) . \"\\n\");\n", map_name));
-                        } else if let StringPart::MapKeys(map_name) = &interp.parts[0] {
-                            // This is ${!map[@]} - convert to keys(%map) and print
-                            output.push_str(&format!("print(join(\" \", keys(%{})) . \"\\n\");\n", map_name));
-                        } else if let StringPart::ParameterExpansion(pe) = &interp.parts[0] {
-                            // This is a single parameter expansion - generate without quotes
-                            let content = self.generate_parameter_expansion(pe);
-                            output.push_str(&format!("print({} . \"\\n\");\n", content));
-                        } else {
-                            let content = self.convert_string_interpolation_to_perl(interp);
-                            output.push_str(&format!("print(\"{}\\n\");\n", content));
-                        }
-                    } else {
-                        let content = self.convert_string_interpolation_to_perl(interp);
-                        output.push_str(&format!("print(\"{}\\n\");\n", content));
-                    }
-                } else {
-                    // Handle other argument types
-                    let content = self.word_to_perl(arg);
-                    output.push_str(&format!("print(\"{}\\n\");\n", content));
-                }
-            } else {
-                // Multiple arguments - use the new brace expansion combiner
-                let expanded_args = self.combine_adjacent_brace_expansions(&cmd.args);
-                output.push_str(&format!("print(\"{}\\n\");\n", expanded_args.join(" ")));
-            }
+            // Simple: echo is just a print function call
+            let args = self.convert_echo_args_to_print_args(&cmd.args);
+            output.push_str(&format!("print({});\n", args));
         } else if cmd.name == "touch" {
             // Special handling for touch with brace expansion support
             if !cmd.args.is_empty() {
@@ -948,19 +729,28 @@ impl PerlGenerator {
                 let mut input_source = "STDIN".to_string();
                 let mut file_handle = None;
                 
-                for redir in &cmd.redirects {
-                    match &redir.operator {
-                        RedirectOperator::Input => {
-                            // Check if this is a process substitution
-                            if redir.target.starts_with("<(") && redir.target.ends_with(")") {
-                                if let Some(temp_file) = process_sub_files.first() {
-                                    input_source = temp_file.clone();
+                // Check if we have process substitution files available
+                if !process_sub_files.is_empty() {
+                    input_source = process_sub_files[0].clone();
+                } else {
+                    for redir in &cmd.redirects {
+                        match &redir.operator {
+                            RedirectOperator::Input => {
+                                // Check if this is a process substitution target
+                                if redir.target.starts_with("<(") && redir.target.ends_with(")") {
+                                    // This is a process substitution, we should have a temp file
+                                    if let Some(temp_file) = process_sub_files.first() {
+                                        input_source = temp_file.clone();
+                                    } else {
+                                        // Fallback to the target as-is (this shouldn't happen)
+                                        input_source = redir.target.to_string();
+                                    }
+                                } else {
+                                    input_source = redir.target.to_string();
                                 }
-                            } else {
-                                input_source = redir.target.to_string();
                             }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
                 
@@ -2755,6 +2545,30 @@ impl PerlGenerator {
         format!("\"{}\"", result)
     }
 
+    fn escape_perl_string_without_quotes(&self, s: &str) -> String {
+        // Handle strings that already contain escape sequences, but don't add quotes
+        let mut result = String::new();
+        
+        for ch in s.chars() {
+            match ch {
+                '\n' => result.push_str("\\n"),
+                '\t' => result.push_str("\\t"),
+                '\r' => result.push_str("\\r"),
+                '\x07' => result.push_str("\\a"),  // bell
+                '\x08' => result.push_str("\\b"),  // backspace
+                '\x0c' => result.push_str("\\f"),  // formfeed
+                '\x0b' => result.push_str("\\v"),  // vertical tab
+                '\\' => result.push_str("\\\\"),
+                '"' => result.push_str("\\\""),
+                '\'' => result.push_str("\\'"),
+                _ => result.push(ch),
+            }
+        }
+        
+        // Return the escaped string without quotes
+        result
+    }
+
     fn convert_arithmetic_to_perl(&self, expr: &str) -> String {
         SharedUtils::convert_arithmetic_operators(expr, "perl")
     }
@@ -2783,7 +2597,7 @@ impl PerlGenerator {
                             }
                         }
                     }
-                    result.push_str(&self.escape_perl_string(s));
+                    result.push_str(&self.escape_perl_string_without_quotes(s));
                 }
                 StringPart::MapAccess(map_name, key) => {
                     // Convert map access to Perl array/hash access
@@ -2902,6 +2716,21 @@ impl PerlGenerator {
             if let StringPart::ParameterExpansion(pe) = &interp.parts[0] {
                 return self.generate_parameter_expansion(pe);
             }
+            
+            // Special case: if we have only one part and it's a literal, return it without quotes
+            // since the caller will wrap it in quotes
+            if let StringPart::Literal(s) = &interp.parts[0] {
+                return self.escape_perl_string_without_quotes(s);
+            }
+            
+            // Special case: if we have only one part and it's a map access, return it without quotes
+            if let StringPart::MapAccess(map_name, key) = &interp.parts[0] {
+                if map_name == "map" {
+                    return format!("$map{{{}}}", key);
+                } else {
+                    return format!("${}[{}]", map_name, key);
+                }
+            }
         }
         
         for part in &interp.parts {
@@ -2925,7 +2754,8 @@ impl PerlGenerator {
                             }
                         }
                     }
-                    result.push_str(&self.escape_perl_string(s));
+                    // For literals, just escape them without adding quotes since we'll wrap the whole result
+                    result.push_str(&self.escape_perl_string_without_quotes(s));
                 }
                 StringPart::MapAccess(map_name, key) => {
                     // Convert map access to Perl array/hash access
@@ -2997,16 +2827,12 @@ impl PerlGenerator {
                             result.push_str(&format!("scalar(@{})", array_name));
                         } else if var.starts_with('!') && var.ends_with("[@]") {
                             // This is !map[@] - convert to keys(%map) in Perl
-                            debug_eprintln!("DEBUG: Found !map[@] pattern, converting to keys(%map)");
                             let array_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
-                            debug_eprintln!("DEBUG: Array name extracted: '{}'", array_name);
                             result.push_str(&format!("keys(%{})", array_name));
                         } else if var.starts_with('!') && var.contains('[') {
                             // This is !map[key] - convert to keys(%map) in Perl (more general pattern)
-                            debug_eprintln!("DEBUG: Found !map[key] pattern, converting to keys(%map)");
                             if let Some(bracket_start) = var.find('[') {
                                 let array_name = &var[1..bracket_start]; // Remove ! prefix
-                                debug_eprintln!("DEBUG: Array name extracted from !map[key]: '{}'", array_name);
                                 result.push_str(&format!("keys(%{})", array_name));
                             } else {
                                 result.push_str(&format!("${}", var));
@@ -3062,7 +2888,8 @@ impl PerlGenerator {
             }
         }
         
-        result
+        // Wrap the result in quotes to make it a proper Perl string literal
+        format!("\"{}\"", result)
     }
 
     fn word_to_perl(&self, word: &Word) -> String {
@@ -3202,6 +3029,7 @@ impl PerlGenerator {
                 // ${#arr[@]} -> scalar(@arr)
                 format!("scalar(@{})", map_name)
             },
+            Word::StringInterpolation(interp) => self.convert_string_interpolation_to_perl(interp),
             Word::Arithmetic(expr) => self.convert_arithmetic_to_perl(&expr.expression),
             Word::BraceExpansion(expansion) => {
                 // Handle brace expansion by expanding it to actual values
@@ -3738,70 +3566,18 @@ impl PerlGenerator {
         result
     }
 
-    fn expand_brace_expansion_to_strings(&self, expansion: &crate::ast::BraceExpansion) -> Vec<String> {
-        let mut result = Vec::new();
+    fn expand_brace_expansion_to_strings(&self, expansion: &BraceExpansion) -> Vec<String> {
+        let mut results = Vec::new();
         
         for item in &expansion.items {
             match item {
                 BraceItem::Literal(s) => {
-                    // Handle literal strings that might contain ranges like "a..c" or "00..04..2"
-                    if s.contains("..") {
-                        let parts: Vec<&str> = s.split("..").collect();
-                        if parts.len() == 2 {
-                            // Simple range like "a..c"
-                            if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), parts[1].chars().next()) {
-                                if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
-                                    let start = start_char as u8;
-                                    let end = end_char as u8;
-                                    if start <= end {
-                                        let values: Vec<String> = (start..=end)
-                                            .map(|c| char::from(c).to_string())
-                                            .collect();
-                                        result.extend(values);
-                                    } else {
-                                        result.push(s.clone());
-                                    }
-                                } else {
-                                    result.push(s.clone());
-                                }
-                            } else {
-                                result.push(s.clone());
-                            }
-                        } else if parts.len() == 3 {
-                            // Range with step like "00..04..2"
-                            if let (Ok(start), Ok(end), Ok(step)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>(), parts[2].parse::<i64>()) {
-                                let values: Vec<String> = (start..=end).step_by(step as usize).map(|i| {
-                                    // Preserve leading zeros by formatting with the same width as the original
-                                    if parts[0].starts_with('0') && parts[0].len() > 1 {
-                                        format!("{:0width$}", i, width = parts[0].len())
-                                    } else {
-                                        i.to_string()
-                                    }
-                                }).collect();
-                                result.extend(values);
-                            } else {
-                                result.push(s.clone());
-                            }
-                        } else {
-                            result.push(s.clone());
-                        }
-                    } else if s.contains(',') {
-                        // Handle comma-separated sequences like "a,b,c"
-                        let parts: Vec<&str> = s.split(',').collect();
-                        if parts.len() > 1 {
-                            result.extend(parts.iter().map(|&s| s.to_string()));
-                        } else {
-                            result.push(s.clone());
-                        }
-                    } else {
-                        result.push(s.clone());
-                    }
+                    results.push(s.clone());
                 }
                 BraceItem::Range(range) => {
-                    // Check if this is a character range
+                    // Handle character ranges like {a..z}
                     if let (Some(start_char), Some(end_char)) = (range.start.chars().next(), range.end.chars().next()) {
                         if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
-                            // This is a character range
                             let start = start_char as u8;
                             let end = end_char as u8;
                             if start <= end {
@@ -3810,7 +3586,7 @@ impl PerlGenerator {
                                     .step_by(step)
                                     .map(|c| char::from(c).to_string())
                                     .collect();
-                                result.extend(values);
+                                results.extend(values);
                             } else {
                                 // Reverse range
                                 let step = range.step.as_ref().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
@@ -3819,26 +3595,72 @@ impl PerlGenerator {
                                     .step_by(step)
                                     .map(|c| char::from(c).to_string())
                                     .collect();
-                                result.extend(values);
+                                results.extend(values);
                             }
                         } else {
-                            // This is a numeric range
-                            let expanded = self.expand_brace_range(range);
-                            result.extend(expanded.split_whitespace().map(|s| s.to_string()));
+                            // Try numeric range
+                            if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
+                                let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
+                                let values: Vec<String> = if step > 0 {
+                                    (start..=end).step_by(step as usize).map(|i| {
+                                        // Preserve leading zeros by formatting with the same width as the original
+                                        if range.start.starts_with('0') && range.start.len() > 1 {
+                                            format!("{:0width$}", i, width = range.start.len())
+                                        } else {
+                                            i.to_string()
+                                        }
+                                    }).collect()
+                                } else {
+                                    (end..=start).rev().step_by((-step) as usize).map(|i| {
+                                        if range.start.starts_with('0') && range.start.len() > 1 {
+                                            format!("{:0width$}", i, width = range.start.len())
+                                        } else {
+                                            i.to_string()
+                                        }
+                                    }).collect()
+                                };
+                                results.extend(values);
+                            } else {
+                                // Fallback for non-numeric ranges
+                                results.push(format!("{{{}}}..{{{}}}", range.start, range.end));
+                            }
                         }
                     } else {
-                        // This is a numeric range
-                        let expanded = self.expand_brace_range(range);
-                        result.extend(expanded.split_whitespace().map(|s| s.to_string()));
+                        // Try numeric range
+                        if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
+                            let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
+                            let values: Vec<String> = if step > 0 {
+                                (start..=end).step_by(step as usize).map(|i| {
+                                    // Preserve leading zeros by formatting with the same width as the original
+                                    if range.start.starts_with('0') && range.start.len() > 1 {
+                                        format!("{:0width$}", i, width = range.start.len())
+                                    } else {
+                                        i.to_string()
+                                    }
+                                }).collect()
+                            } else {
+                                (end..=start).rev().step_by((-step) as usize).map(|i| {
+                                    if range.start.starts_with('0') && range.start.len() > 1 {
+                                        format!("{:0width$}", i, width = range.start.len())
+                                    } else {
+                                        i.to_string()
+                                    }
+                                }).collect()
+                            };
+                            results.extend(values);
+                        } else {
+                            // Fallback for non-numeric ranges
+                            results.push(format!("{{{}}}..{{{}}}", range.start, range.end));
+                        }
                     }
                 }
                 BraceItem::Sequence(seq) => {
-                    result.extend(seq.iter().cloned());
+                    results.extend(seq.iter().cloned());
                 }
             }
         }
         
-        result
+        results
     }
 
     fn extract_parameter_expansion(&self, var: &str) -> Option<(String, String)> {
@@ -3935,5 +3757,97 @@ impl PerlGenerator {
 
     fn convert_glob_to_regex(&self, pattern: &str) -> String {
         SharedUtils::convert_glob_to_regex(pattern)
+    }
+
+    fn convert_echo_args_to_print_args(&self, args: &[Word]) -> String {
+        if args.is_empty() {
+            return "\"\\n\"".to_string();
+        }
+        
+        let mut parts = Vec::new();
+        for arg in args {
+            match arg {
+                Word::Literal(s) => {
+                    parts.push(format!("\"{}\"", self.escape_perl_string_without_quotes(s)));
+                }
+                Word::Variable(var) => {
+                    if var == "#" {
+                        parts.push("scalar(@ARGV)".to_string());
+                    } else if var == "@" {
+                        parts.push("join(\" \", @ARGV)".to_string());
+                    } else if var.starts_with('#') && var.ends_with("[@]") {
+                        let array_name = &var[1..var.len()-3];
+                        parts.push(format!("scalar(@{})", array_name));
+                    } else if var.starts_with('#') && var.ends_with("[*]") {
+                        let array_name = &var[1..var.len()-3];
+                        parts.push(format!("scalar(@{})", array_name));
+                    } else if var.starts_with('!') && var.ends_with("[@]") {
+                        let array_name = &var[1..var.len()-3];
+                        parts.push(format!("join(\" \", keys(%{}))", array_name));
+                    } else if var.starts_with('!') && var.ends_with("[*]") {
+                        let array_name = &var[1..var.len()-3];
+                        parts.push(format!("join(\" \", keys(%{}))", array_name));
+                    } else {
+                        parts.push(format!("${}", var));
+                    }
+                }
+                Word::StringInterpolation(interp) => {
+                    if interp.parts.len() == 1 {
+                        if let StringPart::Literal(s) = &interp.parts[0] {
+                            parts.push(format!("\"{}\"", self.escape_perl_string_without_quotes(s)));
+                        } else if let StringPart::Variable(var) = &interp.parts[0] {
+                            if var == "#" {
+                                parts.push("scalar(@ARGV)".to_string());
+                            } else if var == "@" {
+                                parts.push("join(\" \", @ARGV)".to_string());
+                            } else {
+                                parts.push(format!("${}", var));
+                            }
+                        } else if let StringPart::MapAccess(map_name, key) = &interp.parts[0] {
+                            if map_name == "map" {
+                                parts.push(format!("$map{{{}}}", key));
+                            } else {
+                                parts.push(format!("${}[{}]", map_name, key));
+                            }
+                        } else {
+                            parts.push(self.convert_string_interpolation_to_perl(interp));
+                        }
+                    } else {
+                        // Multiple parts - concatenate them
+                        let mut sub_parts = Vec::new();
+                        for part in &interp.parts {
+                            match part {
+                                StringPart::Literal(s) => {
+                                    sub_parts.push(format!("\"{}\"", self.escape_perl_string_without_quotes(s)));
+                                }
+                                StringPart::Variable(var) => {
+                                    sub_parts.push(format!("${}", var));
+                                }
+                                _ => {
+                                    sub_parts.push(self.convert_string_interpolation_to_perl(interp));
+                                }
+                            }
+                        }
+                        let concatenated = sub_parts.join(" . ");
+                        parts.push(format!("({})", concatenated));
+                    }
+                }
+                Word::BraceExpansion(expansion) => {
+                    // Use the helper method to expand brace expansions
+                    let expanded = self.expand_brace_expansion_to_strings(expansion);
+                    parts.push(format!("\"{}\"", expanded.join(" ")));
+                }
+                _ => {
+                    parts.push(self.word_to_perl(arg));
+                }
+            }
+        }
+        
+        // Join all parts with concatenation and add newline
+        if parts.len() == 1 {
+            format!("{} . \"\\n\"", parts[0])
+        } else {
+            format!("{} . \"\\n\"", parts.join(" . "))
+        }
     }
 } 
