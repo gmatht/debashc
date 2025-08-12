@@ -381,7 +381,6 @@ impl PythonGenerator {
     fn generate_shopt_command(&mut self, cmd: &ShoptCommand) -> String {
         // In Python, we can use a dictionary to track shell options
         // For now, just generate a comment indicating the option change
-        let action = if cmd.enable { "enable" } else { "disable" };
         format!("# shopt -{} {}\n", if cmd.enable { "s" } else { "u" }, cmd.option)
     }
 

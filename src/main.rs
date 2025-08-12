@@ -1788,13 +1788,6 @@ fn test_all_examples_next_fail(generators: &[String]) {
                 let path = entry.path();
                 if path.extension().and_then(|s| s.to_str()) == Some("sh") {
                     if let Some(path_str) = path.to_str() {
-                        // Skip tests with advanced bash features that aren't easily translatable
-                        let content = fs::read_to_string(path_str).unwrap_or_default();
-                        if content.contains("<<<") || content.contains("<(") || content.contains(">(") {
-                            println!("Skipping {} - contains advanced bash features (here-strings, process substitution)", 
-                                   path_str.replace("examples/", "").replace("examples\\", ""));
-                            continue;
-                        }
                         examples.push(path_str.to_string());
                     }
                 }

@@ -32,6 +32,13 @@ impl Parser {
         }
     }
 
+    pub fn new_with_lexer(lexer: Lexer) -> Self {
+        Self {
+            lexer,
+            shopt_state: TestModifiers::default(),
+        }
+    }
+
     pub fn parse(&mut self) -> Result<Vec<Command>, ParserError> {
         let mut commands = Vec::new();
         
@@ -398,12 +405,19 @@ impl Parser {
                         args.push(Word::Literal("-".to_string()));
                     }
                 }
-                // Process substitution as args: <(cmd) or >(cmd)
+                // Process substitution as redirects: <(cmd) or >(cmd)
                 Token::RedirectIn => {
                     if matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) {
                         self.lexer.next(); // consume '<'
                         let inner = self.capture_parenthetical_text()?;
-                        args.push(Word::Literal(format!("<{}", inner)));
+                        // Parse the inner command
+                        let inner_cmd = self.parse_command_from_text(&inner)?;
+                        redirects.push(Redirect {
+                            fd: None,
+                            operator: RedirectOperator::ProcessSubstitutionInput(Box::new(inner_cmd)),
+                            target: Word::Literal("".to_string()), // Not used for process substitution
+                            heredoc_body: None,
+                        });
                     } else {
                         redirects.push(self.parse_redirect()?);
                     }
@@ -412,7 +426,14 @@ impl Parser {
                     if matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) {
                         self.lexer.next(); // consume '>'
                         let inner = self.capture_parenthetical_text()?;
-                        args.push(Word::Literal(format!(">{}", inner)));
+                        // Parse the inner command
+                        let inner_cmd = self.parse_command_from_text(&inner)?;
+                        redirects.push(Redirect {
+                            fd: None,
+                            operator: RedirectOperator::ProcessSubstitutionOutput(Box::new(inner_cmd)),
+                            target: Word::Literal("".to_string()), // Not used for process substitution
+                            heredoc_body: None,
+                        });
                     } else {
                         redirects.push(self.parse_redirect()?);
                     }
@@ -1189,7 +1210,7 @@ impl Parser {
                     if var_name.starts_with('#') && var_name.contains('[') && var_name.contains(']') {
                         // This is ${#arr[@]} - array length
                         if let Some(bracket_start) = var_name.find('[') {
-                            if let Some(bracket_end) = var_name.rfind(']') {
+                            if let Some(_bracket_end) = var_name.rfind(']') {
                                 let array_name = &var_name[1..bracket_start]; // Remove # prefix
                                 return Ok(Word::MapLength(array_name.to_string()));
                             }
@@ -1197,7 +1218,7 @@ impl Parser {
                     } else if var_name.starts_with('!') && var_name.contains('[') && var_name.contains(']') {
                         // This is ${!map[@]} - get keys of associative array
                         if let Some(bracket_start) = var_name.find('[') {
-                            if let Some(bracket_end) = var_name.rfind(']') {
+                            if let Some(_bracket_end) = var_name.rfind(']') {
                                 let map_name = &var_name[1..bracket_start]; // Remove ! prefix
                                 return Ok(Word::MapKeys(map_name.to_string()));
                             }
@@ -2681,6 +2702,27 @@ impl Parser {
     fn get_current_shopt_state(&self) -> TestModifiers {
         self.shopt_state.clone()
     }
+
+
+
+    fn parse_command_from_text(&mut self, text: &str) -> Result<Command, ParserError> {
+        // Create a temporary lexer for the inner command text
+        let temp_lexer = Lexer::new(text);
+        let mut temp_parser = Parser::new_with_lexer(temp_lexer);
+        temp_parser.parse().map(|cmds| {
+            if cmds.len() == 1 {
+                cmds.into_iter().next().unwrap()
+            } else {
+                // If multiple commands, wrap in a subshell
+                Command::Subshell(Box::new(Command::Simple(SimpleCommand {
+                    name: Word::Literal("subshell".to_string()),
+                    args: vec![],
+                    env_vars: HashMap::new(),
+                    redirects: vec![],
+                })))
+            }
+        })
+    }
 }
 
 #[cfg(test)]
@@ -2751,6 +2793,10 @@ mod tests {
             panic!("Expected Simple command");
         }
     }
+
+
+
+
 
     #[test]
     fn test_parse_arithmetic_expression() {

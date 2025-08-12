@@ -98,7 +98,8 @@ impl RustGenerator {
         }
         // Add regex support for pattern matching
         if needs_fs || needs_command {
-            output.push_str("use regex;\n");
+            // Note: regex crate not available in basic setup, using string operations instead
+            // output.push_str("use regex;\n");
         }
         if output.ends_with('\n') {
             output.push('\n');
@@ -746,44 +747,39 @@ impl RustGenerator {
                     // Format string with arguments
                     let format_str_rust = self.word_to_rust_format_string(format_str);
                     let mut format_args = Vec::new();
-                    let mut format_placeholders = Vec::new();
-                    
                     for arg in args {
                         match arg {
+                            Word::Literal(s) => {
+                                // Handle literal strings like "Name", "Age", "City"
+                                format_args.push(format!("\"{}\"", self.escape_rust_string(s)));
+                            }
                             Word::Variable(var) => {
-                                format_placeholders.push("{}".to_string());
                                 format_args.push(format!("{}", var));
                             }
                             Word::StringInterpolation(interp) => {
                                 // Handle string interpolation in printf arguments
                                 let content = self.convert_string_interpolation_to_rust(interp);
-                                format_placeholders.push("{}".to_string());
                                 format_args.push(content);
                             }
                             Word::Arithmetic(expr) => {
-                                format_placeholders.push("{}".to_string());
                                 format_args.push(format!("({})", expr.expression));
                             }
                             Word::ParameterExpansion(pe) => {
                                 let pe_str = self.generate_parameter_expansion_rust(pe);
-                                format_placeholders.push("{}".to_string());
                                 format_args.push(pe_str);
                             }
                             _ => {
                                 let arg_str = self.word_to_string(arg);
-                                format_placeholders.push("{}".to_string());
                                 format_args.push(format!("\"{}\"", self.escape_rust_string(&arg_str)));
                             }
                         }
                     }
                     
-                    // Build the final format string
-                    let final_format = format_placeholders.join("");
                     if format_args.is_empty() {
                         output.push_str(&format!("print!(\"{}\");\n", format_str_rust));
                     } else {
-                        output.push_str(&format!("print!(\"{}{}\", {});\n", 
-                            format_str_rust, final_format, format_args.join(", ")));
+                        output.push_str(&format!("print!(\"{}\", {});\n", 
+                            format_str_rust, format_args.join(", ")));
                     }
                 }
             }
@@ -938,7 +934,7 @@ impl RustGenerator {
                             "-u" => output.push_str("// set -u: error on undefined variables\n"),
                             "-o" => {
                                 // Handle pipefail and other options
-                                if let Some(next_arg) = cmd.args.iter().skip(1).find(|a| {
+                                if let Some(_next_arg) = cmd.args.iter().skip(1).find(|a| {
                                     if let Word::Literal(s) = a { s == "pipefail" } else { false }
                                 }) {
                                     output.push_str("// set -o pipefail\n");
@@ -1881,7 +1877,7 @@ impl RustGenerator {
     
     fn word_to_string(&self, word: &Word) -> String {
         match word {
-            Word::Literal(s) => s.clone(),
+            Word::Literal(s) => self.escape_rust_string(s),
             Word::Variable(var) => {
                 // Special case for $@ - convert to Rust equivalent
                 if var == "@" {
@@ -2124,6 +2120,49 @@ impl RustGenerator {
         result
     }
     
+    fn simple_pattern_match(&self, pattern: &str, text: &str) -> bool {
+        // Simple pattern matching without regex - handle basic glob patterns
+        if pattern.contains('*') {
+            // Convert glob pattern to simple string matching
+            let parts: Vec<&str> = pattern.split('*').collect();
+            if parts.len() == 1 {
+                // No wildcards
+                text == parts[0]
+            } else if parts.len() == 2 {
+                // Single wildcard: "prefix*suffix"
+                text.starts_with(parts[0]) && text.ends_with(parts[1])
+            } else {
+                // Multiple wildcards - simple implementation
+                let mut pos = 0;
+                for (i, part) in parts.iter().enumerate() {
+                    if i == 0 {
+                        // First part must match at start
+                        if !text.starts_with(part) {
+                            return false;
+                        }
+                        pos = part.len();
+                    } else if i == parts.len() - 1 {
+                        // Last part must match at end
+                        if !text.ends_with(part) {
+                            return false;
+                        }
+                    } else {
+                        // Middle parts must be found in order
+                        if let Some(found_pos) = text[pos..].find(part) {
+                            pos += found_pos + part.len();
+                        } else {
+                            return false;
+                        }
+                    }
+                }
+                true
+            }
+        } else {
+            // No wildcards, exact match
+            text == pattern
+        }
+    }
+    
     fn expand_brace_expression(&self, s: &str) -> Option<Vec<String>> {
         // Simple implementation for brace expansion
         if !(s.starts_with('{') && s.ends_with('}')) {
@@ -2322,10 +2361,6 @@ impl RustGenerator {
                             StringPart::CommandSubstitution(_) => {
                                 interp_parts.push("$(...)".to_string());
                             }
-                            _ => {
-                                // For any other unhandled cases, convert to string representation
-                                interp_parts.push(format!("\"{:?}\"", part));
-                            }
                         }
                     }
                     // Join the parts and convert to string
@@ -2384,10 +2419,128 @@ impl RustGenerator {
         output.push_str("println!(\"{}\", __echo_parts.join(\" \"));\n");
     }
 
+    fn convert_shell_printf_to_rust_format(&self, format_str: &str) -> String {
+        // Convert shell printf format strings like "%-10s %-10s %s" to Rust format strings
+        let mut result = String::new();
+        let mut chars = format_str.chars().peekable();
+        
+        while let Some(ch) = chars.next() {
+            if ch == '%' {
+                if let Some(next_ch) = chars.peek() {
+                    match next_ch {
+                        '-' => {
+                            // Handle left-justified format like %-10s
+                            result.push_str("%-");
+                            chars.next(); // consume the '-'
+                            
+                            // Parse width
+                            let mut width = String::new();
+                            while let Some(width_ch) = chars.peek() {
+                                if width_ch.is_ascii_digit() {
+                                    width.push(chars.next().unwrap());
+                                } else {
+                                    break;
+                                }
+                            }
+                            
+                            // Parse format specifier
+                            if let Some(spec) = chars.next() {
+                                match spec {
+                                    's' => result.push_str(&format!("{}s", width)),
+                                    'd' => result.push_str(&format!("{}d", width)),
+                                    'f' => result.push_str(&format!("{}.2f", width)),
+                                    'x' => result.push_str(&format!("{}x", width)),
+                                    'X' => result.push_str(&format!("{}X", width)),
+                                    'o' => result.push_str(&format!("{}o", width)),
+                                    _ => result.push_str(&format!("{}s", width)), // default to string
+                                }
+                            }
+                        }
+                        '0'..='9' => {
+                            // Handle right-justified format like %10s
+                            let mut width = String::new();
+                            while let Some(width_ch) = chars.peek() {
+                                if width_ch.is_ascii_digit() {
+                                    width.push(chars.next().unwrap());
+                                } else {
+                                    break;
+                                }
+                            }
+                            
+                            // Parse format specifier
+                            if let Some(spec) = chars.next() {
+                                match spec {
+                                    's' => result.push_str(&format!("{}s", width)),
+                                    'd' => result.push_str(&format!("{}d", width)),
+                                    'f' => result.push_str(&format!("{}.2f", width)),
+                                    'x' => result.push_str(&format!("{}x", width)),
+                                    'X' => result.push_str(&format!("{}X", width)),
+                                    'o' => result.push_str(&format!("{}o", width)),
+                                    _ => result.push_str(&format!("{}s", width)), // default to string
+                                }
+                            }
+                        }
+                        's' => {
+                            result.push_str("%s");
+                            chars.next(); // consume the 's'
+                        }
+                        'd' => {
+                            result.push_str("%d");
+                            chars.next(); // consume the 'd'
+                        }
+                        'f' => {
+                            result.push_str("%.2f");
+                            chars.next(); // consume the 'f'
+                        }
+                        'x' => {
+                            result.push_str("%x");
+                            chars.next(); // consume the 'x'
+                        }
+                        'X' => {
+                            result.push_str("%X");
+                            chars.next(); // consume the 'X'
+                        }
+                        'o' => {
+                            result.push_str("%o");
+                            chars.next(); // consume the 'o'
+                        }
+                        'n' => {
+                            result.push_str("\\n");
+                            chars.next(); // consume the 'n'
+                        }
+                        't' => {
+                            result.push_str("\\t");
+                            chars.next(); // consume the 't'
+                        }
+                        'r' => {
+                            result.push_str("\\r");
+                            chars.next(); // consume the 'r'
+                        }
+                        _ => {
+                            // Unknown format specifier, treat as literal
+                            result.push(ch);
+                        }
+                    }
+                } else {
+                    // Trailing %, treat as literal
+                    result.push(ch);
+                }
+            } else if ch == '{' {
+                result.push_str("{{");
+            } else if ch == '}' {
+                result.push_str("}}");
+            } else {
+                result.push(ch);
+            }
+        }
+        
+        result
+    }
+
     fn word_to_rust_format_string(&self, word: &Word) -> String {
         match word {
             Word::Literal(s) => {
-                // Handle string interpolation in literal strings
+                // Convert shell printf format strings to Rust format strings
                 let mut result = String::new();
                 let mut chars = s.chars().peekable();
                 while let Some(ch) = chars.next() {

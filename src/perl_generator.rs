@@ -6,6 +6,7 @@ use std::collections::HashSet;
 // Use the debug macros from the root of the crate
 use crate::debug_eprintln;
 
+
 pub struct PerlGenerator {
     indent_level: usize,
     declared_locals: HashSet<String>,
@@ -13,7 +14,6 @@ pub struct PerlGenerator {
     subshell_depth: usize,
     file_handle_counter: usize,
     pipeline_counter: usize,
-    used_modules: HashSet<String>,
     needs_file_find: bool,
 }
 
@@ -26,7 +26,6 @@ impl PerlGenerator {
             subshell_depth: 0,
             file_handle_counter: 0,
             pipeline_counter: 0,
-            used_modules: HashSet::new(),
             needs_file_find: false,
         }
     }
@@ -52,7 +51,7 @@ impl PerlGenerator {
         output.push_str("use File::Basename;\n");
         
         // Add File::Find if needed
-        debug_eprintln!("DEBUG: needs_file_find = {}", self.needs_file_find);
+        // debug_eprintln!("DEBUG: needs_file_find = {}", self.needs_file_find);
         if self.needs_file_find {
             output.push_str("use File::Find;\n");
         }
@@ -86,12 +85,12 @@ impl PerlGenerator {
     }
 
     fn generate_command(&mut self, command: &Command) -> String {
-        debug_eprintln!("DEBUG: generate_command called with: {:?}", command);
+        // debug_eprintln!("DEBUG: generate_command called with: {:?}", command);
         match command {
             Command::Simple(cmd) => self.generate_simple_command(cmd),
             Command::ShoptCommand(cmd) => self.generate_shopt_command(cmd),
             Command::TestExpression(test_expr) => {
-                debug_eprintln!("DEBUG: Routing to generate_test_expression");
+                // debug_eprintln!("DEBUG: Routing to generate_test_expression");
                 self.generate_test_expression(test_expr)
             },
             Command::Pipeline(pipeline) => self.generate_pipeline(pipeline),
@@ -115,6 +114,39 @@ impl PerlGenerator {
             for (var, value) in &cmd.env_vars {
                 let val = self.perl_string_literal(value);
                 output.push_str(&format!("local $ENV{{{}}} = {};;\n", var, val));
+            }
+        }
+
+        // Pre-process process substitution redirects to create temporary files
+        let mut process_sub_files = Vec::new();
+        for redir in &cmd.redirects {
+            match &redir.operator {
+                RedirectOperator::ProcessSubstitutionInput(cmd) => {
+                    // Process substitution input: <(command)
+                    let temp_file = format!("/tmp/process_sub_{}.tmp", std::process::id());
+                    output.push_str(&format!("my $temp_file = '{}';\n", temp_file));
+                    
+                    // Generate the command for system call
+                    let cmd_str = match &**cmd {
+                        Command::Simple(simple_cmd) => {
+                            let args = simple_cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join(" ");
+                            format!("{} {}", simple_cmd.name, args)
+                        }
+                        _ => self.generate_command(&**cmd),
+                    };
+                    
+                    // Clean up the command string for system call
+                    let clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
+                    output.push_str(&format!("system('{} > $temp_file') == 0 or die \"Process substitution failed: $!\\n\";\n", clean_cmd));
+                    process_sub_files.push(temp_file);
+                }
+                RedirectOperator::ProcessSubstitutionOutput(_cmd) => {
+                    // Process substitution output: >(command)
+                    let temp_file = format!("/tmp/process_sub_out_{}.tmp", std::process::id());
+                    output.push_str(&format!("my $temp_file = '{}';\n", temp_file));
+                    process_sub_files.push(temp_file);
+                }
+                _ => {}
             }
         }
 
@@ -815,9 +847,16 @@ impl PerlGenerator {
                     // Check for -o flag (only matching part)
                     let only_matching = flags.iter().any(|&flag| flag == "-o");
                     
+                    // Check if we have a here-string file
+                    let has_here_string = cmd.redirects.iter().any(|r| matches!(r.operator, RedirectOperator::HereString));
+                    
                     if only_matching {
                         if file == "STDIN" {
-                            output.push_str("while (my $line = <STDIN>) {\n");
+                            if has_here_string {
+                                output.push_str("while (my $line = <$here_string_file>) {\n");
+                            } else {
+                                output.push_str("while (my $line = <STDIN>) {\n");
+                            }
                             output.push_str(&format!("    if ($line =~ /({})/g) {{\n", pattern));
                             output.push_str("        print \"$1\\n\";\n");
                             output.push_str("    }\n");
@@ -834,7 +873,11 @@ impl PerlGenerator {
                         }
                     } else {
                         if file == "STDIN" {
-                            output.push_str("while (my $line = <STDIN>) {\n");
+                            if has_here_string {
+                                output.push_str("while (my $line = <$here_string_file>) {\n");
+                            } else {
+                                output.push_str("while (my $line = <STDIN>) {\n");
+                            }
                             output.push_str(&format!("    print($line) if $line =~ /{}/;\n", pattern));
                             output.push_str("}\n");
                         } else {
@@ -900,10 +943,43 @@ impl PerlGenerator {
             if cmd.args.len() >= 2 && cmd.args[0] == "-t" {
                 let array_name = &cmd.args[1];
                 output.push_str(&format!("my @{} = ();\n", array_name));
-                output.push_str(&format!("while (my $line = <STDIN>) {{\n"));
+                
+                // Check if we have redirects
+                let mut input_source = "STDIN".to_string();
+                let mut file_handle = None;
+                
+                for redir in &cmd.redirects {
+                    match &redir.operator {
+                        RedirectOperator::Input => {
+                            // Check if this is a process substitution
+                            if redir.target.starts_with("<(") && redir.target.ends_with(")") {
+                                if let Some(temp_file) = process_sub_files.first() {
+                                    input_source = temp_file.clone();
+                                }
+                            } else {
+                                input_source = redir.target.to_string();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                
+                if input_source == "STDIN" {
+                    output.push_str(&format!("while (my $line = <STDIN>) {{\n"));
+                } else {
+                    let fh = self.get_unique_file_handle();
+                    file_handle = Some(fh.clone());
+                    output.push_str(&format!("open(my {}, '<', '{}') or die \"Cannot open file: $!\\n\";\n", fh, input_source));
+                    output.push_str(&format!("while (my $line = <{}>) {{\n", fh));
+                }
                 output.push_str(&format!("    chomp $line;\n"));
                 output.push_str(&format!("    push @{}, $line;\n", array_name));
                 output.push_str("}\n");
+                
+                if let Some(fh) = file_handle {
+                    output.push_str(&format!("close({});\n", fh));
+                }
+                
                 if self.subshell_depth == 0 {
                     self.declared_locals.insert(array_name.to_string());
                 }
@@ -914,12 +990,55 @@ impl PerlGenerator {
                 let flag = &cmd.args[0];
                 let file1 = &cmd.args[1];
                 let file2 = &cmd.args[2];
+                
+                // Check if we have process substitution files
+                let mut file1_path = file1.to_string();
+                let mut file2_path = file2.to_string();
+                
+                // Use process substitution files if available
+                if !process_sub_files.is_empty() {
+                    if process_sub_files.len() >= 1 {
+                        file1_path = process_sub_files[0].clone();
+                    }
+                    if process_sub_files.len() >= 2 {
+                        file2_path = process_sub_files[1].clone();
+                    }
+                }
+                
                 output.push_str(&format!("# comm {} {} {}\n", flag, file1, file2));
                 output.push_str("system('comm', ");
                 output.push_str(&format!("{}, {}, {});\n", 
                     self.perl_string_literal(flag),
-                    self.perl_string_literal(file1),
-                    self.perl_string_literal(file2)));
+                    self.perl_string_literal(&file1_path),
+                    self.perl_string_literal(&file2_path)));
+            }
+        } else if cmd.name == "diff" {
+            // Handle diff command with process substitution
+            if cmd.args.is_empty() && !process_sub_files.is_empty() {
+                // This is a diff with process substitution redirects
+                if process_sub_files.len() >= 2 {
+                    let file1 = &process_sub_files[0];
+                    let file2 = &process_sub_files[1];
+                    output.push_str(&format!("system('diff', '{}', '{}');\n", file1, file2));
+                }
+            } else {
+                // Regular diff command
+                let args = cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join(" ");
+                output.push_str(&format!("system('diff {}');\n", args));
+            }
+        } else if cmd.name == "paste" {
+            // Handle paste command with process substitution
+            if cmd.args.is_empty() && !process_sub_files.is_empty() {
+                // This is a paste with process substitution redirects
+                if process_sub_files.len() >= 2 {
+                    let file1 = &process_sub_files[0];
+                    let file2 = &process_sub_files[1];
+                    output.push_str(&format!("system('paste', '{}', '{}');\n", file1, file2));
+                }
+            } else {
+                // Regular paste command
+                let args = cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join(" ");
+                output.push_str(&format!("system('paste {}');\n", args));
             }
         } else if cmd.name == "test" || cmd.name == "[" {
             // Special handling for test
@@ -1129,12 +1248,13 @@ impl PerlGenerator {
                     // Here-string: command <<< "string"
                     if let Some(body) = &redir.heredoc_body {
                         // Create a temporary file with the string content
-                        output.push_str(&format!("my $temp_content = {};\n", self.perl_string_literal(body)));
+                        let temp_file = format!("/tmp/here_string_temp_{}.tmp", std::process::id());
                         let fh = self.get_unique_file_handle();
-                        output.push_str(&format!("open(my {}, '>', '/tmp/here_string_temp') or die \"Cannot create temp file: $!\\n\";\n", fh));
-                        output.push_str(&format!("print {} $temp_content;\n", fh));
+                        output.push_str(&format!("open(my {}, '>', '{}') or die \"Cannot create temp file: $!\\n\";\n", fh, temp_file));
+                        output.push_str(&format!("print {} {};\n", fh, self.perl_string_literal(body)));
                         output.push_str(&format!("close({});\n", fh));
-                        output.push_str("open(STDIN, '<', '/tmp/here_string_temp') or die \"Cannot open temp file: $!\\n\";\n");
+                        // Store the temp file path for the command to use
+                        output.push_str(&format!("my $here_string_file = '{}';\n", temp_file));
                     }
                 }
                 RedirectOperator::Heredoc | RedirectOperator::HeredocTabs => {
@@ -2577,7 +2697,7 @@ impl PerlGenerator {
         let mut output = String::new();
         for cmd in &block.commands {
             output.push_str(&self.indent());
-            output.push_str(&self.generate_command(cmd));
+                                    output.push_str(&self.generate_command(&cmd));
         }
         output
     }
@@ -2809,26 +2929,26 @@ impl PerlGenerator {
                 }
                 StringPart::MapAccess(map_name, key) => {
                     // Convert map access to Perl array/hash access
-                    debug_eprintln!("DEBUG: Processing MapAccess: map_name='{}', key='{}'", map_name, key);
+                    // debug_eprintln!("DEBUG: Processing MapAccess: map_name='{}', key='{}'", map_name, key);
                     // For now, assume "map" is a hash and others are indexed arrays
                     if map_name == "map" {
                         // Convert map[key] to $map{key} for associative arrays
-                        debug_eprintln!("DEBUG: Converting map access to hash access: $map{{{}}}", key);
+                        // debug_eprintln!("DEBUG: Converting map access to hash access: $map{{{}}}", key);
                         result.push_str(&format!("${}{{{}}}", map_name, key));
                     } else {
                         // Convert arr[key] to $arr[key] for indexed arrays
-                        debug_eprintln!("DEBUG: Converting array access to indexed access: ${}[{}]", map_name, key);
+                        // debug_eprintln!("DEBUG: Converting array access to indexed access: ${}[{}]", map_name, key);
                         result.push_str(&format!("${}[{}]", map_name, key));
                     }
                 }
                 StringPart::MapKeys(map_name) => {
                     // Convert ${!map[@]} to keys(%map) in Perl
-                    debug_eprintln!("DEBUG: Processing MapKeys: map_name='{}'", map_name);
+                    // debug_eprintln!("DEBUG: Processing MapKeys: map_name='{}'", map_name);
                     result.push_str(&format!("keys(%{})", map_name));
                 }
                 StringPart::MapLength(map_name) => {
                     // Convert ${#arr[@]} to scalar(@arr) in Perl
-                    debug_eprintln!("DEBUG: Processing MapLength: map_name='{}'", map_name);
+                    // debug_eprintln!("DEBUG: Processing MapLength: map_name='{}'", map_name);
                     result.push_str(&format!("scalar(@{})", map_name));
                 }
                 StringPart::ParameterExpansion(pe) => {
@@ -2836,12 +2956,12 @@ impl PerlGenerator {
                 }
                 StringPart::Variable(var) => {
                     // Convert shell variables to Perl variables
-                            debug_eprintln!("DEBUG: Processing variable: '{}'", var);
-        debug_eprintln!("DEBUG: Variable starts with '!': {}", var.starts_with('!'));
-        debug_eprintln!("DEBUG: Variable ends with '[@]': {}", var.ends_with("[@]"));
-        debug_eprintln!("DEBUG: Variable contains '[': {}", var.contains('['));
-        debug_eprintln!("DEBUG: Variable length: {}", var.len());
-        debug_eprintln!("DEBUG: Variable bytes: {:?}", var.as_bytes());
+                            // debug_eprintln!("DEBUG: Processing variable: '{}'", var);
+        // debug_eprintln!("DEBUG: Variable starts with '!': {}", var.starts_with('!'));
+        // debug_eprintln!("DEBUG: Variable ends with '[@]': {}", var.ends_with("[@]"));
+        // debug_eprintln!("DEBUG: Variable contains '[': {}", var.contains('['));
+        // debug_eprintln!("DEBUG: Variable length: {}", var.len());
+        // debug_eprintln!("DEBUG: Variable bytes: {:?}", var.as_bytes());
                     if var == "#" {
                         result.push_str("scalar(@ARGV)");
                     } else if var == "@" {

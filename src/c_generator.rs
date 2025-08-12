@@ -180,13 +180,13 @@ impl CGenerator {
         output
     }
 
-    fn generate_while_loop(&mut self, while_loop: &WhileLoop) -> String {
+    fn generate_while_loop(&mut self, _while_loop: &WhileLoop) -> String {
         let mut output = String::new();
         output.push_str("/* while loop not implemented */\n");
         output
     }
 
-    fn generate_function(&mut self, func: &Function) -> String {
+    fn generate_function(&mut self, _func: &Function) -> String {
         let mut output = String::new();
         output.push_str("/* function not implemented */\n");
         output

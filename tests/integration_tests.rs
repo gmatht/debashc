@@ -19,7 +19,7 @@ use std::sync::mpsc;
 use std::path::PathBuf;
 
 // Use the debug macros from the debug module
-use debashc::debug::debug_println;
+use debashc::debug_println;
 
 fn list_sh_examples() -> Vec<PathBuf> {
     let mut examples: Vec<PathBuf> = Vec::new();

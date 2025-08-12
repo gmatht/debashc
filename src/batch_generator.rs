@@ -80,19 +80,19 @@ impl BatchGenerator {
         self.generate_if(if_stmt)
     }
 
-    fn generate_while_loop(&mut self, while_loop: &WhileLoop) -> String {
+    fn generate_while_loop(&mut self, _while_loop: &WhileLoop) -> String {
         String::from("REM while not implemented\n")
     }
 
-    fn generate_for_loop(&mut self, for_loop: &ForLoop) -> String {
+    fn generate_for_loop(&mut self, _for_loop: &ForLoop) -> String {
         String::from("REM for not implemented\n")
     }
 
-    fn generate_function(&mut self, func: &Function) -> String {
+    fn generate_function(&mut self, _func: &Function) -> String {
         String::from("REM function not implemented\n")
     }
 
-    fn generate_subshell(&mut self, cmd: &Command) -> String {
+    fn generate_subshell(&mut self, _cmd: &Command) -> String {
         String::from("REM subshell not implemented\n")
     }
 

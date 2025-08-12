@@ -1,4 +1,4 @@
-use crate::ast::*;
+// Removed unused import: use crate::ast::*;
 
 /// Shared utilities for shell script generators
 pub struct SharedUtils;

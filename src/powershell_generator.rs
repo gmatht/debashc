@@ -79,15 +79,15 @@ impl PowerShellGenerator {
         self.if_stmt(if_stmt)
     }
 
-    fn generate_while_loop(&mut self, while_loop: &WhileLoop) -> String {
+    fn generate_while_loop(&mut self, _while_loop: &WhileLoop) -> String {
         String::from("# while not implemented\n")
     }
 
-    fn generate_for_loop(&mut self, for_loop: &ForLoop) -> String {
+    fn generate_for_loop(&mut self, _for_loop: &ForLoop) -> String {
         String::from("# for not implemented\n")
     }
 
-    fn generate_function(&mut self, func: &Function) -> String {
+    fn generate_function(&mut self, _func: &Function) -> String {
         String::from("# function not implemented\n")
     }
 

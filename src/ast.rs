@@ -100,6 +100,8 @@ pub enum RedirectOperator {
     Heredoc,   // <<
     HeredocTabs, // <<-
     HereString, // <<<
+    ProcessSubstitutionInput(Box<Command>),  // <(command)
+    ProcessSubstitutionOutput(Box<Command>), // >(command)
 }
 
 #[derive(Debug, Clone, PartialEq)]
