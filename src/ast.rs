@@ -174,7 +174,95 @@ pub enum Word {
 
 impl std::fmt::Display for Word {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_string())
+        match self {
+            Word::Literal(s) => write!(f, "{}", s),
+            Word::Variable(var) => write!(f, "${}", var),
+            Word::ParameterExpansion(pe) => {
+                match &pe.operator {
+                    ParameterExpansionOperator::UppercaseAll => write!(f, "${{{}}}", pe.variable),
+                    ParameterExpansionOperator::LowercaseAll => write!(f, "${{{}}}", pe.variable),
+                    ParameterExpansionOperator::UppercaseFirst => write!(f, "${{{}}}", pe.variable),
+                    ParameterExpansionOperator::RemoveLongestPrefix(pattern) => write!(f, "${{{}}}##{}", pe.variable, pattern),
+                    ParameterExpansionOperator::RemoveShortestPrefix(pattern) => write!(f, "${{{}}}#{}", pe.variable, pattern),
+                    ParameterExpansionOperator::RemoveLongestSuffix(pattern) => write!(f, "${{{}}}%%{}", pe.variable, pattern),
+                    ParameterExpansionOperator::RemoveShortestSuffix(pattern) => write!(f, "${{{}}}%{}", pe.variable, pattern),
+                    ParameterExpansionOperator::SubstituteAll(pattern, replacement) => write!(f, "${{{}}}//{}/{}", pe.variable, pattern, replacement),
+                    ParameterExpansionOperator::DefaultValue(default) => write!(f, "${{{}}}:-{}", pe.variable, default),
+                    ParameterExpansionOperator::AssignDefault(default) => write!(f, "${{{}}}:={}", pe.variable, default),
+                    ParameterExpansionOperator::ErrorIfUnset(error) => write!(f, "${{{}}}:?{}", pe.variable, error),
+                    ParameterExpansionOperator::Basename => write!(f, "${{{}}}##*/", pe.variable),
+                    ParameterExpansionOperator::Dirname => write!(f, "${{{}}}%/*", pe.variable),
+                }
+            },
+            Word::Array(name, elements) => write!(f, "{}=({})", name, elements.join(" ")),
+            Word::MapAccess(map_name, key) => write!(f, "{}[{}]", map_name, key),
+            Word::MapKeys(map_name) => write!(f, "!{}[@]", map_name),
+            Word::MapLength(map_name) => write!(f, "#{}[@]", map_name),
+            Word::Arithmetic(expr) => write!(f, "{}", expr.expression),
+            Word::BraceExpansion(expansion) => {
+                let mut result = String::new();
+                if let Some(ref prefix) = expansion.prefix {
+                    result.push_str(prefix);
+                }
+                for (i, item) in expansion.items.iter().enumerate() {
+                    if i > 0 {
+                        result.push(',');
+                    }
+                    match item {
+                        BraceItem::Literal(s) => result.push_str(s),
+                        BraceItem::Range(range) => {
+                            result.push_str(&range.start);
+                            result.push_str("..");
+                            result.push_str(&range.end);
+                            if let Some(ref step) = range.step {
+                                result.push_str("..");
+                                result.push_str(step);
+                            }
+                        }
+                        BraceItem::Sequence(seq) => {
+                            result.push_str(&seq.join(","));
+                        }
+                    }
+                }
+                if let Some(ref suffix) = expansion.suffix {
+                    result.push_str(suffix);
+                }
+                write!(f, "{{{}}}", result)
+            }
+            Word::CommandSubstitution(_) => write!(f, "$(...)"),
+            Word::StringInterpolation(interp) => {
+                let mut result = String::new();
+                for part in &interp.parts {
+                    match part {
+                        StringPart::Literal(s) => result.push_str(s),
+                        StringPart::Variable(var) => result.push_str(&format!("${}", var)),
+                        StringPart::ParameterExpansion(pe) => {
+                            match &pe.operator {
+                                ParameterExpansionOperator::UppercaseAll => result.push_str(&format!("${{{}}}", pe.variable)),
+                                ParameterExpansionOperator::LowercaseAll => result.push_str(&format!("${{{}}}", pe.variable)),
+                                ParameterExpansionOperator::UppercaseFirst => result.push_str(&format!("${{{}}}", pe.variable)),
+                                ParameterExpansionOperator::RemoveLongestPrefix(pattern) => result.push_str(&format!("${{{}}}##{}", pe.variable, pattern)),
+                                ParameterExpansionOperator::RemoveShortestPrefix(pattern) => result.push_str(&format!("${{{}}}#{}", pe.variable, pattern)),
+                                ParameterExpansionOperator::RemoveLongestSuffix(pattern) => result.push_str(&format!("${{{}}}%%{}", pe.variable, pattern)),
+                                ParameterExpansionOperator::RemoveShortestSuffix(pattern) => result.push_str(&format!("${{{}}}%{}", pe.variable, pattern)),
+                                ParameterExpansionOperator::SubstituteAll(pattern, replacement) => result.push_str(&format!("${{{}}}//{}/{}", pe.variable, pattern, replacement)),
+                                ParameterExpansionOperator::DefaultValue(default) => result.push_str(&format!("${{{}}}:-{}", pe.variable, default)),
+                                ParameterExpansionOperator::AssignDefault(default) => result.push_str(&format!("${{{}}}:={}", pe.variable, default)),
+                                ParameterExpansionOperator::ErrorIfUnset(error) => result.push_str(&format!("${{{}}}:?{}", pe.variable, error)),
+                                ParameterExpansionOperator::Basename => result.push_str(&format!("${{{}}}##*/", pe.variable)),
+                                ParameterExpansionOperator::Dirname => result.push_str(&format!("${{{}}}%/*", pe.variable)),
+                            }
+                        }
+                        StringPart::MapAccess(map_name, key) => result.push_str(&format!("{}[{}]", map_name, key)),
+                        StringPart::MapKeys(map_name) => result.push_str(&format!("!{}[@]", map_name)),
+                        StringPart::MapLength(map_name) => result.push_str(&format!("#{}[@]", map_name)),
+                        StringPart::Arithmetic(expr) => result.push_str(&expr.expression),
+                        StringPart::CommandSubstitution(_) => result.push_str("$(...)"),
+                    }
+                }
+                write!(f, "{}", result)
+            }
+        }
     }
 }
 

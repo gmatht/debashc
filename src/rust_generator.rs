@@ -65,6 +65,7 @@ impl RustGenerator {
                 Command::Pipeline(_) => {
                     needs_command = true; // Pipelines use external commands
                     needs_fs = true; // Pipelines often involve file operations
+                    needs_io = true; // Pipelines use stdin/stdout for piping
                 }
                 Command::Background(_) => {
                     needs_thread = true;
@@ -373,6 +374,10 @@ impl RustGenerator {
                             // This is a single parameter expansion - generate without quotes
                             let content = self.generate_parameter_expansion_rust(pe);
                             output.push_str(&format!("println!(\"{{}}\", {});\n", content));
+                        } else if let StringPart::MapAccess(map_name, key) = &interp.parts[0] {
+                            // This is ${map[key]} - convert to map access and print
+                            let map_access = self.convert_map_access_to_rust(map_name, key);
+                            output.push_str(&format!("println!(\"{{}}\", {});\n", map_access));
                         } else {
                             let content = self.convert_string_interpolation_to_rust(interp);
                             output.push_str(&format!("println!(\"{}\");\n", content));
@@ -741,11 +746,11 @@ impl RustGenerator {
                 
                 if args.is_empty() {
                     // Single format string argument
-                    let format_str_rust = self.word_to_rust_format_string(format_str);
+                    let format_str_rust = self.convert_shell_printf_to_rust_format(&self.word_to_string(format_str));
                     output.push_str(&format!("print!(\"{}\");\n", format_str_rust));
                 } else {
                     // Format string with arguments
-                    let format_str_rust = self.word_to_rust_format_string(format_str);
+                    let format_str_rust = self.convert_shell_printf_to_rust_format(&self.word_to_string(format_str));
                     let mut format_args = Vec::new();
                     for arg in args {
                         match arg {
@@ -1306,28 +1311,46 @@ impl RustGenerator {
                             for arg in &simple_cmd.args {
                                 match arg {
                                     Word::StringInterpolation(interp) => {
-                                        // Handle string interpolation by converting to Rust string concatenation
-                                        let parts: Vec<String> = interp.parts.iter().map(|part| {
+                                        // Handle string interpolation by building format string and arguments
+                                        let mut format_string = String::new();
+                                        let mut format_args = Vec::new();
+                                        
+                                        for part in &interp.parts {
                                             match part {
-                                                StringPart::Literal(lit) => format!("\"{}\"", self.escape_rust_string(lit)),
-                                                StringPart::Variable(var) => format!("{}", var),
+                                                StringPart::Literal(lit) => {
+                                                    // String literal - add to format string
+                                                    format_string.push_str(&self.escape_rust_string(lit));
+                                                }
+                                                StringPart::Variable(var) => {
+                                                    // Variable - add placeholder and keep the part
+                                                    format_string.push_str("{}");
+                                                    format_args.push(var.clone());
+                                                }
                                                 StringPart::MapAccess(map_name, key) => {
-                                                    if key.starts_with('$') {
-                                                        // Key is a variable like $k
-                                                        format!("{}.get({}).unwrap_or(&String::new())", map_name, format!("${}", &key[1..]))
-                                                    } else {
-                                                        // Key is a literal
-                                                        format!("{}.get(\"{}\").unwrap_or(&String::new())", map_name, key)
-                                                    }
+                                                    // Map access - add placeholder and convert to Rust code
+                                                    format_string.push_str("{}");
+                                                    format_args.push(self.convert_map_access_to_rust(map_name, key));
                                                 }
                                                 StringPart::MapKeys(map_name) => {
                                                     // ${!map[@]} -> keys(%map)
-                                                    format!("{}.keys()", map_name)
+                                                    format_string.push_str("{}");
+                                                    format_args.push(format!("{}.keys()", map_name));
                                                 }
-                                                _ => format!("{:?}", part)
+                                                _ => {
+                                                    // For any other unhandled cases, add placeholder and convert to string representation
+                                                    format_string.push_str("{}");
+                                                    format_args.push(format!("{:?}", part));
+                                                }
                                             }
-                                        }).collect();
-                                        echo_parts.push(format!("{}", parts.join(" + ")));
+                                        }
+                                        
+                                        if format_args.is_empty() {
+                                            // No variables, just output the literal string
+                                            echo_parts.push(format!("\"{}\"", format_string));
+                                        } else {
+                                            // Has variables, use format! macro
+                                            echo_parts.push(format!("format!(\"{}\", {})", format_string, format_args.join(", ")));
+                                        }
                                     }
                                     _ => {
                                         // For non-interpolated words, just convert normally
@@ -1335,9 +1358,35 @@ impl RustGenerator {
                                     }
                                 }
                             }
-                            let echo_str = echo_parts.join(" + ");
+                            // For multiple parts, use format! macro to avoid type issues
+                            let echo_str = if echo_parts.len() == 1 {
+                                echo_parts[0].clone()
+                            } else {
+                                // Build format string and arguments properly
+                                let mut format_string = String::new();
+                                let mut format_args = Vec::new();
+                                
+                                for part in &echo_parts {
+                                    if part.starts_with('"') && part.ends_with('"') {
+                                        // String literal - add to format string
+                                        format_string.push_str(&part[1..part.len()-1]);
+                                    } else {
+                                        // Variable or expression - add placeholder and keep the part
+                                        format_string.push_str("{}");
+                                        format_args.push(part.clone());
+                                    }
+                                }
+                                
+                                if format_args.is_empty() {
+                                    // No variables, just output the literal string
+                                    format!("\"{}\\n\"", format_string)
+                                } else {
+                                    // Has variables, use format! macro
+                                    format!("format!(\"{}\\n\", {})", format_string, format_args.join(", "))
+                                }
+                            };
                             output.push_str(&self.indent());
-                            output.push_str(&format!("output_{} += &({} + \"\\n\");\n", pipeline_id, echo_str));
+                            output.push_str(&format!("output_{} += &({});\n", pipeline_id, echo_str));
                         } else {
                             // For other commands, generate normally but capture output
                             output.push_str(&self.indent());
@@ -1477,7 +1526,7 @@ impl RustGenerator {
                 output.push_str(&self.indent());
                 output.push_str("    .spawn() {\n");
                 output.push_str(&self.indent());
-                output.push_str("    if let Some(stdin) = child.stdin.take() {\n");
+                output.push_str("    if let Some(mut stdin) = child.stdin.take() {\n");
                 output.push_str(&self.indent());
                 output.push_str(&format!("        let _ = stdin.write_all(output_{}.as_bytes());\n", pipeline_id));
                 output.push_str(&self.indent());
@@ -1919,15 +1968,7 @@ impl RustGenerator {
                     // Special case: array iteration
                     format!("{}", map_name)
                 } else {
-                    // Handle shell variable syntax in the key
-                    if key.starts_with('$') {
-                        // Extract variable name from shell syntax like $foo
-                        let var_name = &key[1..];
-                        format!("{}.get({}).unwrap_or(&String::new())", map_name, var_name)
-                    } else {
-                        // String literal key - quote it
-                        format!("{}.get(\"{}\").unwrap_or(&String::new())", map_name, key)
-                    }
+                    self.convert_map_access_to_rust(map_name, key)
                 }
             },
             Word::MapKeys(map_name) => {
@@ -2008,15 +2049,7 @@ impl RustGenerator {
                                     // Special case: array iteration
                                     result.push_str(&format!("{}", map_name));
                                 } else {
-                                    // Handle shell variable syntax in the key
-                                    if key.starts_with('$') {
-                                        // Extract variable name from shell syntax like $foo
-                                        let var_name = &key[1..];
-                                        result.push_str(&format!("{}.get({}).unwrap_or(&String::new())", map_name, var_name));
-                                    } else {
-                                        // String literal key - quote it
-                                        result.push_str(&format!("{}.get(\"{}\").unwrap_or(&String::new())", map_name, key));
-                                    }
+                                    result.push_str(&self.convert_map_access_to_rust(map_name, key));
                                 }
                             },
                         StringPart::MapKeys(map_name) => {
@@ -2337,7 +2370,7 @@ impl RustGenerator {
                                 if key == "@" {
                                     interp_parts.push(format!("{}", map_name));
                                 } else {
-                                    interp_parts.push(format!("{}.get({}).unwrap_or(&String::new())", map_name, key));
+                                    interp_parts.push(self.convert_map_access_to_rust(map_name, key));
                                 }
                             }
                             StringPart::MapKeys(map_name) => {
@@ -2420,9 +2453,10 @@ impl RustGenerator {
     }
 
     fn convert_shell_printf_to_rust_format(&self, format_str: &str) -> String {
-        // Convert shell printf format strings like "%-10s %-10s %s" to Rust format strings
+        // Convert shell printf format strings like "%-10s %-10s %s" to Rust format strings like "{:<10} {:<10} {}"
         let mut result = String::new();
         let mut chars = format_str.chars().peekable();
+        let mut arg_index = 0;
         
         while let Some(ch) = chars.next() {
             if ch == '%' {
@@ -2430,7 +2464,6 @@ impl RustGenerator {
                     match next_ch {
                         '-' => {
                             // Handle left-justified format like %-10s
-                            result.push_str("%-");
                             chars.next(); // consume the '-'
                             
                             // Parse width
@@ -2446,14 +2479,15 @@ impl RustGenerator {
                             // Parse format specifier
                             if let Some(spec) = chars.next() {
                                 match spec {
-                                    's' => result.push_str(&format!("{}s", width)),
-                                    'd' => result.push_str(&format!("{}d", width)),
-                                    'f' => result.push_str(&format!("{}.2f", width)),
-                                    'x' => result.push_str(&format!("{}x", width)),
-                                    'X' => result.push_str(&format!("{}X", width)),
-                                    'o' => result.push_str(&format!("{}o", width)),
-                                    _ => result.push_str(&format!("{}s", width)), // default to string
+                                    's' => result.push_str(&format!("{{:<{}}}", width)),
+                                    'd' => result.push_str(&format!("{{:<{}}}", width)),
+                                    'f' => result.push_str(&format!("{{:<{}.2}}", width)),
+                                    'x' => result.push_str(&format!("{{:<{}}}", width)),
+                                    'X' => result.push_str(&format!("{{:<{}}}", width)),
+                                    'o' => result.push_str(&format!("{{:<{}}}", width)),
+                                    _ => result.push_str(&format!("{{:<{}}}", width)), // default to string
                                 }
+                                arg_index += 1;
                             }
                         }
                         '0'..='9' => {
@@ -2470,39 +2504,46 @@ impl RustGenerator {
                             // Parse format specifier
                             if let Some(spec) = chars.next() {
                                 match spec {
-                                    's' => result.push_str(&format!("{}s", width)),
-                                    'd' => result.push_str(&format!("{}d", width)),
-                                    'f' => result.push_str(&format!("{}.2f", width)),
-                                    'x' => result.push_str(&format!("{}x", width)),
-                                    'X' => result.push_str(&format!("{}X", width)),
-                                    'o' => result.push_str(&format!("{}o", width)),
-                                    _ => result.push_str(&format!("{}s", width)), // default to string
+                                    's' => result.push_str(&format!("{{:>{}}}", width)),
+                                    'd' => result.push_str(&format!("{{:>{}}}", width)),
+                                    'f' => result.push_str(&format!("{{:>{}.2}}", width)),
+                                    'x' => result.push_str(&format!("{{:>{}}}", width)),
+                                    'X' => result.push_str(&format!("{{:>{}}}", width)),
+                                    'o' => result.push_str(&format!("{{:>{}}}", width)),
+                                    _ => result.push_str(&format!("{{:>{}}}", width)), // default to string
                                 }
+                                arg_index += 1;
                             }
                         }
                         's' => {
-                            result.push_str("%s");
+                            result.push_str("{}");
                             chars.next(); // consume the 's'
+                            arg_index += 1;
                         }
                         'd' => {
-                            result.push_str("%d");
+                            result.push_str("{}");
                             chars.next(); // consume the 'd'
+                            arg_index += 1;
                         }
                         'f' => {
-                            result.push_str("%.2f");
+                            result.push_str("{:.2}");
                             chars.next(); // consume the 'f'
+                            arg_index += 1;
                         }
                         'x' => {
-                            result.push_str("%x");
+                            result.push_str("{:x}");
                             chars.next(); // consume the 'x'
+                            arg_index += 1;
                         }
                         'X' => {
-                            result.push_str("%X");
+                            result.push_str("{:X}");
                             chars.next(); // consume the 'X'
+                            arg_index += 1;
                         }
                         'o' => {
-                            result.push_str("%o");
+                            result.push_str("{:o}");
                             chars.next(); // consume the 'o'
+                            arg_index += 1;
                         }
                         'n' => {
                             result.push_str("\\n");
@@ -2620,6 +2661,11 @@ impl RustGenerator {
                     if key.starts_with('$') {
                         let var_name = &key[1..];
                         format!("{}.get({}).unwrap_or(&String::new())", map_name, var_name)
+                    } else if key.contains('$') {
+                        // Handle case where key contains $ but doesn't start with it
+                        // This happens when the parser treats ${map[$k]} as MapAccess("map", "$k")
+                        let var_name = key.replace('$', "");
+                        format!("{}.get({}).unwrap_or(&String::new())", map_name, var_name)
                     } else {
                         // String literal key - quote it
                         format!("{}.get(\"{}\").unwrap_or(&String::new())", map_name, key)
@@ -2655,6 +2701,15 @@ impl RustGenerator {
                     let pe_str = self.generate_parameter_expansion_rust(pe);
                     result.push_str(&pe_str);
                 }
+                StringPart::MapAccess(map_name, key) => {
+                    result.push_str(&self.convert_map_access_to_rust(map_name, key));
+                }
+                StringPart::MapKeys(map_name) => {
+                    result.push_str(&format!("{}.keys().collect::<Vec<_>>().join(\" \")", map_name));
+                }
+                StringPart::MapLength(map_name) => {
+                    result.push_str(&format!("{}.len()", map_name));
+                }
                 _ => {
                     // For any other unhandled cases, convert to string representation
                     result.push_str(&format!("\"{:?}\"", part));
@@ -2662,6 +2717,25 @@ impl RustGenerator {
             }
         }
         result
+    }
+
+    fn convert_map_access_to_rust(&self, map_name: &str, key: &str) -> String {
+        // Helper function to convert map/array access to proper Rust code
+        // This handles both indexed arrays (Vec) and associative arrays (HashMap)
+        
+        // Check if this looks like an indexed array (numeric key)
+        if let Ok(index) = key.parse::<usize>() {
+            // This is an indexed array access like arr[1]
+            // For Vec<&str>, we need to handle the type mismatch
+            format!("{}.get({}).unwrap_or(&\"\")", map_name, index)
+        } else if key.starts_with('$') {
+            // This is a variable key like $k
+            let var_name = &key[1..];
+            format!("{}.get({}).unwrap_or(&String::new())", map_name, var_name)
+        } else {
+            // This is a string literal key like "foo"
+            format!("{}.get(\"{}\").unwrap_or(&String::new())", map_name, key)
+        }
     }
 
     fn generate_parameter_expansion_rust(&self, pe: &ParameterExpansion) -> String {

@@ -1139,7 +1139,20 @@ impl Parser {
         let result = match self.lexer.peek() {
             Some(Token::Identifier) => Ok(Word::Literal(self.get_identifier_text()?)),
             Some(Token::Number) => Ok(Word::Literal(self.get_number_text()?)),
-            Some(Token::DoubleQuotedString) => Ok(self.parse_string_interpolation()?),
+            Some(Token::DoubleQuotedString) => {
+                // Check if the string contains any $ characters for interpolation
+                if let Some((start, end)) = self.lexer.get_span() {
+                    let text = self.lexer.get_text(start, end);
+                    if text.contains('$') {
+                        Ok(self.parse_string_interpolation()?)
+                    } else {
+                        // Simple quoted string with no interpolation
+                        Ok(Word::Literal(self.get_string_text()?))
+                    }
+                } else {
+                    Ok(self.parse_string_interpolation()?)
+                }
+            },
             Some(Token::SingleQuotedString) => Ok(Word::Literal(self.get_string_text()?)),
             Some(Token::BacktickString) => Ok(Word::Literal(self.get_raw_token_text()?)),
             Some(Token::DollarSingleQuotedString) => Ok(self.parse_ansic_quoted_string()?),

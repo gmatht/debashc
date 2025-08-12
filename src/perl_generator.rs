@@ -3101,11 +3101,19 @@ impl PerlGenerator {
                 }
             },
             Word::MapAccess(map_name, key) => {
+                // Handle the key - if it starts with $, it's a variable reference
+                let processed_key = if key.starts_with('$') {
+                    // Remove the $ prefix to get the variable name
+                    &key[1..]
+                } else {
+                    key
+                };
+                
                 // For now, assume "map" is a hash and others are indexed arrays
                 if map_name == "map" {
-                    format!("${}{{{}}}", map_name, key)
+                    format!("${}{{{}}}", map_name, processed_key)
                 } else {
-                    format!("${}[{}]", map_name, key)
+                    format!("${}[{}]", map_name, processed_key)
                 }
             },
             Word::MapKeys(map_name) => {
