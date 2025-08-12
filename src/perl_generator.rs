@@ -4011,6 +4011,14 @@ impl PerlGenerator {
             if let Word::Literal(s) = current {
                 if s.contains('*') || s.contains('?') || s.contains('[') {
                     // This might be a split pattern, try to reconstruct it
+                    // But don't reconstruct if the current pattern is just a single glob character
+                    if s.len() == 1 && (s == "*" || s == "?" || s == "[") {
+                        // Single glob character - don't reconstruct, treat as separate argument
+                        reconstructed.push(args[i].clone());
+                        i += 1;
+                        continue;
+                    }
+                    
                     let mut full_pattern = s.clone();
                     let mut j = i + 1;
                     

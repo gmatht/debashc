@@ -352,7 +352,7 @@ impl Parser {
         // Parse arguments and redirects
         while let Some(token) = self.lexer.peek() {
             match token {
-                Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString | Token::SourceDot | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString | Token::Star => {
+                Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString | Token::Star => {
                     args.push(self.parse_word()?);
                 }
                 Token::Dollar | Token::DollarBrace | Token::DollarParen | Token::DollarHashSimple | Token::DollarAtSimple | Token::DollarStarSimple
@@ -1158,11 +1158,7 @@ impl Parser {
             Some(Token::DollarSingleQuotedString) => Ok(self.parse_ansic_quoted_string()?),
             Some(Token::DollarDoubleQuotedString) => Ok(self.parse_string_interpolation()?),
             Some(Token::BraceOpen) => Ok(self.parse_brace_expansion()?),
-            Some(Token::SourceDot) => {
-                // Treat standalone '.' as a normal word (e.g., `find . -name ...`)
-                self.lexer.next();
-                Ok(Word::Literal(".".to_string()))
-            }
+            // SourceDot handling removed - dots in filenames are now part of identifiers
             Some(Token::Star) => {
                 // Treat standalone '*' as a normal word (e.g., `ls *`)
                 self.lexer.next();

@@ -65,8 +65,7 @@ pub enum Token {
     Exec,
     #[token("source")]
     Source,
-    #[token(".", priority = 1)]
-    SourceDot,
+    // SourceDot removed - dots in filenames should be part of identifiers
     #[token("trap")]
     Trap,
     #[token("wait")]
@@ -272,7 +271,7 @@ pub enum Token {
     DollarDoubleQuotedString,
 
     // Identifiers and words
-    #[regex(r"[a-zA-Z_][a-zA-Z0-9_*?.-]*", priority = 2)]
+    #[regex(r"[a-zA-Z_][a-zA-Z0-9_*?.-]*|[.][a-zA-Z0-9_*?.-]*", priority = 2)]
     Identifier,
 
     #[regex(r"[0-9]+")]
