@@ -1163,6 +1163,16 @@ impl Parser {
                 self.lexer.next();
                 Ok(Word::Literal(".".to_string()))
             }
+            Some(Token::Star) => {
+                // Treat standalone '*' as a normal word (e.g., `ls *`)
+                self.lexer.next();
+                Ok(Word::Literal("*".to_string()))
+            }
+            Some(Token::Question) => {
+                // Treat standalone '?' as a normal word (e.g., `ls file?.txt`)
+                self.lexer.next();
+                Ok(Word::Literal("?".to_string()))
+            }
             Some(Token::Dollar) => Ok(self.parse_variable_expansion()?),
             Some(Token::DollarBrace) | Some(Token::DollarParen) | Some(Token::DollarHashSimple) | Some(Token::DollarAtSimple) | Some(Token::DollarStarSimple)
             | Some(Token::DollarBraceHash) | Some(Token::DollarBraceBang) | Some(Token::DollarBraceStar) | Some(Token::DollarBraceAt)

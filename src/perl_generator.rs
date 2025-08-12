@@ -573,47 +573,24 @@ impl PerlGenerator {
             let dir = cmd.args.first().unwrap_or(&empty_word);
             output.push_str(&format!("chdir('{}') or die \"Cannot change to directory: $!\\n\";\n", dir));
         } else if cmd.name == "rm" {
-            // Special handling for rm with brace expansion support
+            // Generic handling for rm with glob and brace expansion support
             if !cmd.args.is_empty() {
-                // Expand brace expansion in arguments
-                let mut expanded_args = Vec::new();
-                let mut current_pattern = String::new();
+                // Use the generic pattern expansion
+                let expanded_args = self.expand_glob_and_brace_patterns(&cmd.args);
                 
-                // Reconstruct the full pattern from multiple arguments
-                for arg in &cmd.args {
-                    let expanded = self.word_to_perl(arg);
-                    current_pattern.push_str(&expanded);
-                }
-                
-                // If we have a pattern, add it to expanded_args
-                if !current_pattern.is_empty() {
-                    expanded_args.push(current_pattern);
-                }
-                
-                // Remove each file
                 for arg in expanded_args {
-                    if arg.contains('*') {
-                        // Handle glob patterns like file_*.txt
-                        let pattern = arg.replace('*', ".*");
-                        let dh = self.get_unique_dir_handle();
-                        output.push_str(&format!("opendir(my {}, '.') or die \"Cannot open directory: $!\\n\";\n", dh));
-                        output.push_str(&format!("while (my $file = readdir({})) {{\n", dh));
-                        output.push_str(&format!("    if ($file =~ /^{}$/) {{\n", pattern));
-                        output.push_str("        unlink($file) or die \"Cannot remove file: $!\\n\";\n");
-                        output.push_str("    }\n");
-                        output.push_str("}\n");
-                        output.push_str(&format!("closedir({});\n", dh));
-                    } else if arg == "\".\"" || arg == "\"txt\"" {
-                        // Skip these arguments as they're part of the glob pattern
-                        continue;
+                    if arg.contains('*') || arg.contains('?') || arg.contains('[') {
+                        // Handle glob patterns at runtime
+                        output.push_str(&self.generate_glob_handler(&arg, "unlink($file) or die \"Cannot remove file: $!\\n\";"));
                     } else {
-                        // Regular file
-                        output.push_str(&format!("unlink('{}') or die \"Cannot remove file: $!\\n\";\n", arg));
+                        // Regular file - remove quotes if present
+                        let clean_arg = arg.trim_matches('"');
+                        output.push_str(&format!("unlink('{}') or die \"Cannot remove file: $!\\n\";\n", clean_arg));
                     }
                 }
             }
         } else if cmd.name == "ls" {
-            // Special handling for ls with brace expansion support
+            // Generic handling for ls with glob and brace expansion support
             if cmd.args.is_empty() {
                 // Default to current directory
                 let dh = self.get_unique_dir_handle();
@@ -623,27 +600,13 @@ impl PerlGenerator {
                 output.push_str("}\n");
                 output.push_str(&format!("closedir({});\n", dh));
             } else {
-                // Handle arguments with potential brace expansion
-                let mut expanded_args = Vec::new();
-                let mut current_pattern = String::new();
+                // Filter out flags and use generic pattern expansion
+                let non_flag_args: Vec<Word> = cmd.args.iter()
+                    .filter(|arg| !arg.starts_with('-'))
+                    .cloned()
+                    .collect();
                 
-                // Reconstruct the full pattern from multiple arguments
-                for arg in &cmd.args {
-                    if arg.starts_with('-') {
-                        // Skip flags
-                        continue;
-                    }
-                    // Add this argument to the current pattern
-                    let expanded = self.word_to_perl(arg);
-                    current_pattern.push_str(&expanded);
-                }
-                
-                // If we have a pattern, add it to expanded_args
-                if !current_pattern.is_empty() {
-                    expanded_args.push(current_pattern);
-                }
-                
-                if expanded_args.is_empty() {
+                if non_flag_args.is_empty() {
                     // No non-flag arguments, default to current directory
                     let dh = self.get_unique_dir_handle();
                     output.push_str(&format!("opendir(my {}, '.') or die \"Cannot open directory: $!\\n\";\n", dh));
@@ -652,26 +615,18 @@ impl PerlGenerator {
                     output.push_str("}\n");
                     output.push_str(&format!("closedir({});\n", dh));
                 } else {
-                    // Handle each expanded argument
+                    // Use the generic pattern expansion
+                    let expanded_args = self.expand_glob_and_brace_patterns(&non_flag_args);
+                    
                     for arg in expanded_args {
-                        if arg.contains('*') {
-                            // Handle glob patterns like file_*.txt
-                            let pattern = arg.replace('*', ".*");
-                            let dh = self.get_unique_dir_handle();
-                            output.push_str(&format!("opendir(my {}, '.') or die \"Cannot open directory: $!\\n\";\n", dh));
-                            output.push_str(&format!("while (my $file = readdir({})) {{\n", dh));
-                            output.push_str(&format!("    if ($file =~ /^{}$/) {{\n", pattern));
-                            output.push_str("        print(\"$file\\n\");\n");
-                            output.push_str("    }\n");
-                            output.push_str("}\n");
-                            output.push_str(&format!("closedir({});\n", dh));
-                        } else if arg == "\".\"" || arg == "\"txt\"" {
-                            // Skip these arguments as they're part of the glob pattern
-                            continue;
+                        if arg.contains('*') || arg.contains('?') || arg.contains('[') {
+                            // Handle glob patterns at runtime
+                            output.push_str(&self.generate_glob_handler(&arg, "print(\"$file\\n\");"));
                         } else {
-                            // Regular directory/file
+                            // Regular directory/file - remove quotes if present
+                            let clean_arg = arg.trim_matches('"');
                             let dh = self.get_unique_dir_handle();
-                            output.push_str(&format!("opendir(my {}, '{}') or die \"Cannot open directory: $!\\n\";\n", dh, arg));
+                            output.push_str(&format!("opendir(my {}, '{}') or die \"Cannot open directory: $!\\n\";\n", dh, clean_arg));
                             output.push_str(&format!("while (my $file = readdir({})) {{\n", dh));
                             output.push_str("    print(\"$file\\n\") unless $file =~ /^\\.\\.?$/;\n");
                             output.push_str("}\n");
@@ -1083,55 +1038,66 @@ impl PerlGenerator {
                     // Non-builtin command - use system() for external commands
                     let name = self.perl_string_literal(&cmd.name);
                     
-                    // Special handling for touch command with brace expansions
+                    // Generic handling for touch command with glob and brace expansion support
                     if cmd.name == "touch" {
-                        let mut expanded_args = Vec::new();
-                        for arg in &cmd.args {
-                            match arg {
-                                Word::BraceExpansion(expansion) => {
-                                    // Expand brace expansion for touch command
-                                    if expansion.items.len() == 1 {
-                                        match &expansion.items[0] {
-                                            BraceItem::Range(range) => {
-                                                if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
-                                                    let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
-                                                    let values: Vec<String> = if step > 0 {
-                                                        (start..=end).step_by(step as usize).map(|i| i.to_string()).collect()
-                                                    } else {
-                                                        (end..=start).rev().step_by((-step) as usize).map(|i| i.to_string()).collect()
-                                                    };
-                                                    for value in values {
-                                                        expanded_args.push(format!("\"file_{:03}.txt\"", value));
-                                                    }
-                                                } else {
-                                                    expanded_args.push(self.perl_string_literal(arg));
-                                                }
-                                            }
-                                            _ => expanded_args.push(self.perl_string_literal(arg)),
-                                        }
-                                    } else {
-                                        expanded_args.push(self.perl_string_literal(arg));
-                                    }
+                        // Use the generic pattern expansion
+                        let expanded_args = self.expand_glob_and_brace_patterns(&cmd.args);
+                        
+                        if expanded_args.is_empty() {
+                            // No arguments, create an empty file in current directory
+                            output.push_str("open(my $fh, '>', '.') or die \"Cannot create file: $!\\n\";\n");
+                            output.push_str("close($fh);\n");
+                        } else {
+                            // Handle each expanded argument
+                            for arg in expanded_args {
+                                if arg.contains('*') || arg.contains('?') || arg.contains('[') {
+                                    // Handle glob patterns at runtime - create files matching the pattern
+                                    output.push_str(&self.generate_glob_handler(&arg, "open(my $fh, '>', $file) or die \"Cannot create file: $!\\n\"; close($fh);"));
+                                } else {
+                                    // Regular file - remove quotes if present
+                                    let clean_arg = arg.trim_matches('"');
+                                    output.push_str(&format!("open(my $fh, '>', '{}') or die \"Cannot create file: $!\\n\";\n", clean_arg));
+                                    output.push_str("close($fh);\n");
                                 }
-                                _ => expanded_args.push(self.perl_string_literal(arg)),
                             }
                         }
-                        if expanded_args.is_empty() {
-                            output.push_str(&format!("system({});\n", name));
-                        } else {
-                            output.push_str(&format!("system({}, {});\n", name, expanded_args.join(", ")));
-                        }
                     } else {
-                        // Regular command handling
-                        let args = cmd
-                            .args
-                            .iter()
-                            .map(|arg| self.perl_string_literal(arg))
-                            .collect::<Vec<_>>();
-                        if args.is_empty() {
-                            output.push_str(&format!("system({});\n", name));
+                        // Check if any arguments contain glob patterns or brace expansions
+                        let has_patterns = cmd.args.iter().any(|arg| {
+                            match arg {
+                                Word::Literal(s) => s.contains('*') || s.contains('?') || s.contains('[') || s.contains('{'),
+                                Word::BraceExpansion(_) => true,
+                                _ => false
+                            }
+                        });
+                        
+                        if has_patterns {
+                            // Use generic pattern expansion for commands with glob/brace patterns
+                            let expanded_args = self.expand_glob_and_brace_patterns(&cmd.args);
+                            
+                            // For now, use system() with expanded arguments
+                            // In the future, this could be enhanced to handle patterns at runtime
+                            let clean_args: Vec<String> = expanded_args.iter()
+                                .map(|arg| arg.trim_matches('"').to_string())
+                                .collect();
+                            
+                            if clean_args.is_empty() {
+                                output.push_str(&format!("system({});\n", name));
+                            } else {
+                                output.push_str(&format!("system({}, {});\n", name, clean_args.join(", ")));
+                            }
                         } else {
-                            output.push_str(&format!("system({}, {});\n", name, args.join(", ")));
+                            // Regular command handling
+                            let args = cmd
+                                .args
+                                .iter()
+                                .map(|arg| self.perl_string_literal(arg))
+                                .collect::<Vec<_>>();
+                            if args.is_empty() {
+                                output.push_str(&format!("system({});\n", name));
+                            } else {
+                                output.push_str(&format!("system({}, {});\n", name, args.join(", ")));
+                            }
                         }
                     }
                 }
@@ -3982,6 +3948,263 @@ impl PerlGenerator {
         SharedUtils::convert_glob_to_regex(pattern)
     }
 
+    /// Generic function to expand glob patterns and brace expansions for any command
+    /// This replaces the command-specific handling with a unified approach
+    fn expand_glob_and_brace_patterns(&mut self, args: &[Word]) -> Vec<String> {
+        // First, try to reconstruct split glob patterns
+        let reconstructed_args = self.reconstruct_split_patterns(args);
+        
+        let mut expanded_args = Vec::new();
+        
+        for arg in &reconstructed_args {
+            match arg {
+                Word::Literal(s) => {
+                    if s.contains('*') || s.contains('?') || s.contains('[') || s.contains('{') {
+                        // This is a glob pattern or brace expansion
+                        expanded_args.extend(self.expand_single_pattern(s));
+                    } else {
+                        // Regular literal
+                        expanded_args.push(s.clone());
+                    }
+                }
+                Word::BraceExpansion(expansion) => {
+                    // Handle brace expansion
+                    expanded_args.extend(self.expand_brace_expansion_to_strings(expansion));
+                }
+                Word::StringInterpolation(interp) => {
+                    // Handle string interpolation that might contain patterns
+                    let expanded = self.convert_string_interpolation_to_perl(interp);
+                    // Remove quotes if present
+                    let clean_expanded = expanded.trim_matches('"');
+                    if clean_expanded.contains('*') || clean_expanded.contains('?') || clean_expanded.contains('[') || clean_expanded.contains('{') {
+                        expanded_args.extend(self.expand_single_pattern(clean_expanded));
+                    } else {
+                        expanded_args.push(clean_expanded.to_string());
+                    }
+                }
+                _ => {
+                    // For other types, convert to string and check for patterns
+                    let arg_str = self.word_to_perl(arg);
+                    let clean_arg = arg_str.trim_matches('"');
+                    if clean_arg.contains('*') || clean_arg.contains('?') || clean_arg.contains('[') || clean_arg.contains('{') {
+                        expanded_args.extend(self.expand_single_pattern(clean_arg));
+                    } else {
+                        expanded_args.push(clean_arg.to_string());
+                    }
+                }
+            }
+        }
+        
+        expanded_args
+    }
+
+    /// Reconstruct split glob patterns that the parser may have broken apart
+    /// For example, "file_*.txt" might be parsed as ["file_*", ".", "txt"]
+    fn reconstruct_split_patterns(&self, args: &[Word]) -> Vec<Word> {
+        let mut reconstructed = Vec::new();
+        let mut i = 0;
+        
+        while i < args.len() {
+            let current = &args[i];
+            
+            // Check if this looks like the start of a split pattern
+            if let Word::Literal(s) = current {
+                if s.contains('*') || s.contains('?') || s.contains('[') {
+                    // This might be a split pattern, try to reconstruct it
+                    let mut full_pattern = s.clone();
+                    let mut j = i + 1;
+                    
+                    // Look ahead to see if we can reconstruct the full pattern
+                    while j < args.len() {
+                        if let Word::Literal(next_s) = &args[j] {
+                            // If the next argument is just a single character or short string,
+                            // it might be part of the pattern
+                            if next_s.len() <= 3 && !next_s.contains('*') && !next_s.contains('?') && !next_s.contains('[') && !next_s.contains('{') {
+                                full_pattern.push_str(next_s);
+                                j += 1;
+                            } else {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    
+                    // If we reconstructed a pattern, add it and skip the consumed arguments
+                    if j > i + 1 {
+                        reconstructed.push(Word::Literal(full_pattern));
+                        i = j;
+                        continue;
+                    }
+                }
+            }
+            
+            // If no reconstruction was possible, add the argument as-is
+            reconstructed.push(args[i].clone());
+            i += 1;
+        }
+        
+        reconstructed
+    }
+
+    /// Expand a single pattern that may contain both glob and brace expansions
+    fn expand_single_pattern(&self, pattern: &str) -> Vec<String> {
+        let mut results = Vec::new();
+        
+        // First, expand any brace expansions within the pattern
+        let brace_expanded = self.expand_braces_in_pattern(pattern);
+        
+        // Then, for each brace-expanded result, handle glob patterns
+        for expanded_pattern in brace_expanded {
+            if expanded_pattern.contains('*') || expanded_pattern.contains('?') || expanded_pattern.contains('[') {
+                // This is a glob pattern - we'll handle it at runtime
+                results.push(expanded_pattern);
+            } else {
+                // No glob patterns, just add the literal
+                results.push(expanded_pattern);
+            }
+        }
+        
+        results
+    }
+
+    /// Expand braces within a pattern string
+    fn expand_braces_in_pattern(&self, pattern: &str) -> Vec<String> {
+        let mut results = Vec::new();
+        
+        // Handle multiple brace expansions by recursively expanding each one
+        if pattern.contains('{') && pattern.contains('}') {
+            // Find the first complete brace expression
+            let mut brace_start = None;
+            let mut brace_depth = 0;
+            
+            for (i, ch) in pattern.chars().enumerate() {
+                match ch {
+                    '{' => {
+                        if brace_depth == 0 {
+                            brace_start = Some(i);
+                        }
+                        brace_depth += 1;
+                    }
+                    '}' => {
+                        brace_depth -= 1;
+                        if brace_depth == 0 {
+                            // We have a complete brace expression
+                            if let Some(start) = brace_start {
+                                let before_brace = &pattern[..start];
+                                let brace_content = &pattern[start + 1..i];
+                                let after_brace = &pattern[i + 1..];
+                                
+                                // Parse the brace content
+                                let expanded = self.parse_brace_content(brace_content);
+                                
+                                // Recursively expand any remaining braces in the after_brace part
+                                let after_expanded = if after_brace.contains('{') && after_brace.contains('}') {
+                                    self.expand_braces_in_pattern(after_brace)
+                                } else {
+                                    vec![after_brace.to_string()]
+                                };
+                                
+                                // Generate all combinations
+                                for item in expanded {
+                                    for after_item in &after_expanded {
+                                        let mut combined = String::new();
+                                        combined.push_str(before_brace);
+                                        combined.push_str(&item);
+                                        combined.push_str(after_item);
+                                        results.push(combined);
+                                    }
+                                }
+                            }
+                            break; // Only handle the first brace expression in this iteration
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        
+        // If we didn't find any braces, return the original pattern
+        if results.is_empty() {
+            results.push(pattern.to_string());
+        }
+        
+        results
+    }
+
+    /// Parse brace content and expand it
+    fn parse_brace_content(&self, content: &str) -> Vec<String> {
+        let mut results = Vec::new();
+        
+        // Handle comma-separated lists: {a,b,c}
+        if content.contains(',') {
+            for item in content.split(',') {
+                results.push(item.trim().to_string());
+            }
+        }
+        // Handle ranges: {1..5} or {a..z}
+        else if content.contains("..") {
+            if let Some((start, end)) = content.split_once("..") {
+                // Check if it's numeric
+                if let (Ok(start_num), Ok(end_num)) = (start.parse::<i64>(), end.parse::<i64>()) {
+                    for i in start_num..=end_num {
+                        results.push(i.to_string());
+                    }
+                }
+                // Check if it's alphabetic
+                else if start.len() == 1 && end.len() == 1 {
+                    if let (Some(start_char), Some(end_char)) = (start.chars().next(), end.chars().next()) {
+                        if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                            for c in start_char..=end_char {
+                                results.push(c.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Handle step ranges: {1..10..2}
+        else if content.matches("..").count() == 2 {
+            let parts: Vec<&str> = content.split("..").collect();
+            if parts.len() == 3 {
+                if let (Ok(start), Ok(end), Ok(step)) = (
+                    parts[0].parse::<i64>(),
+                    parts[1].parse::<i64>(),
+                    parts[2].parse::<i64>()
+                ) {
+                    let mut i = start;
+                    while i <= end {
+                        results.push(i.to_string());
+                        i += step;
+                    }
+                }
+            }
+        }
+        // If no special syntax, just return the content as-is
+        else {
+            results.push(content.to_string());
+        }
+        
+        results
+    }
+
+    /// Generate Perl code to handle glob patterns at runtime
+    fn generate_glob_handler(&mut self, pattern: &str, action: &str) -> String {
+        let regex_pattern = self.convert_glob_to_regex(pattern);
+        let dh = self.get_unique_dir_handle();
+        
+        format!(
+            "opendir(my {}, '.') or die \"Cannot open directory: $!\\n\";\n\
+            while (my $file = readdir({})) {{\n\
+                if ($file =~ /^{}$/) {{\n\
+                    {}\n\
+                }}\n\
+            }}\n\
+            closedir({});\n",
+            dh, dh, regex_pattern, action, dh
+        )
+    }
+
     fn convert_echo_args_to_print_args(&mut self, args: &[Word]) -> String {
         if args.is_empty() {
             return "\"\\n\"".to_string();
@@ -4013,13 +4236,13 @@ impl PerlGenerator {
             // Generate cartesian product
             self.generate_cartesian_product(&expansion_values, &mut all_combinations, 0, &mut Vec::new());
             
-            // Convert combinations to Perl strings
-            let combination_strings: Vec<String> = all_combinations.iter()
-                .map(|combo| format!("\"{}\"", combo.join("")))
-                .collect();
-            
-            // Join with spaces between combinations
-            format!("{} . \"\\n\"", combination_strings.join(" . "))
+                                        // Convert combinations to Perl strings and join with spaces
+                            let combination_strings: Vec<String> = all_combinations.iter()
+                                .map(|combo| format!("\"{}\"", combo.join("")))
+                                .collect();
+                            
+                            // Join with spaces between combinations
+                            format!("{} . \"\\n\"", combination_strings.join(" . \" \" . "))
         } else {
             // Single brace expansion or no brace expansions - handle normally
             let mut parts = Vec::new();
