@@ -150,6 +150,124 @@ impl RustGenerator {
         let mut has_associative_array = false;
         let mut associative_array_name = String::new();
         
+        // Pre-process process substitution and here-string redirects to create temporary files
+        let mut process_sub_files = Vec::new();
+        let mut has_here_string = false;
+        let mut temp_file_counter = 0;
+        
+        for redir in &cmd.redirects {
+            match &redir.operator {
+                RedirectOperator::ProcessSubstitutionInput(cmd) => {
+                    // Process substitution input: <(command)
+                    temp_file_counter += 1;
+                    let temp_file = format!("/tmp/process_sub_{}_{}.tmp", std::process::id(), temp_file_counter);
+                    let temp_var = format!("temp_file_ps_{}", temp_file_counter);
+                    output.push_str(&format!("let {} = \"{}\";\n", temp_var, temp_file));
+                    
+                    // Generate the command for system call
+                    let cmd_str = match &**cmd {
+                        Command::Simple(simple_cmd) => {
+                            let args = simple_cmd.args.iter().map(|arg| self.word_to_string(arg)).collect::<Vec<_>>().join(" ");
+                            format!("{} {}", simple_cmd.name, args)
+                        }
+                        Command::Subshell(subshell_cmd) => {
+                            // For subshells in process substitution, we need to execute the inner command
+                            match &**subshell_cmd {
+                                Command::Simple(simple_cmd) => {
+                                    let args = simple_cmd.args.iter().map(|arg| self.word_to_string(arg)).collect::<Vec<_>>().join(" ");
+                                    format!("{} {}", simple_cmd.name, args)
+                                }
+                                Command::Pipeline(pipeline) => {
+                                    // Handle pipeline in subshell
+                                    let mut cmd_parts = Vec::new();
+                                    for cmd in pipeline.commands.iter() {
+                                        if let Command::Simple(simple_cmd) = cmd {
+                                            let args = simple_cmd.args.iter().map(|arg| self.word_to_string(arg)).collect::<Vec<_>>().join(" ");
+                                            cmd_parts.push(format!("{} {}", simple_cmd.name, args));
+                                        }
+                                    }
+                                    cmd_parts.join(" | ")
+                                }
+                                _ => {
+                                    // For other command types, generate the command without the subshell wrapper
+                                    match &**subshell_cmd {
+                                        Command::Simple(simple_cmd) => {
+                                            let args = simple_cmd.args.iter().map(|arg| self.word_to_string(arg)).collect::<Vec<_>>().join(" ");
+                                            format!("{} {}", simple_cmd.name, args)
+                                        }
+                                        _ => self.command_to_string(&**subshell_cmd),
+                                    }
+                                }
+                            }
+                        }
+                        _ => self.command_to_string(&**cmd),
+                    };
+                    
+                    // Clean up the command string for system call and properly escape it
+                    let clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
+                    // Use proper Rust system call syntax
+                    output.push_str(&format!("let _ = Command::new(\"sh\")\n"));
+                    output.push_str(&self.indent());
+                    output.push_str(&format!("    .arg(\"-c\")\n"));
+                    output.push_str(&self.indent());
+                    output.push_str(&format!("    .arg(\"{} > {}\")\n", clean_cmd, temp_var));
+                    output.push_str(&self.indent());
+                    output.push_str("    .status();\n");
+                    process_sub_files.push((temp_var, temp_file));
+                }
+                RedirectOperator::ProcessSubstitutionOutput(_cmd) => {
+                    // Process substitution output: >(command)
+                    temp_file_counter += 1;
+                    let temp_file = format!("/tmp/process_sub_out_{}_{}.tmp", std::process::id(), temp_file_counter);
+                    let temp_var = format!("temp_file_out_{}", temp_file_counter);
+                    output.push_str(&format!("let {} = \"{}\";\n", temp_var, temp_file));
+                    process_sub_files.push((temp_var, temp_file));
+                }
+                RedirectOperator::HereString => {
+                    // Here-string: command <<< "string"
+                    has_here_string = true;
+                    if let Some(body) = &redir.heredoc_body {
+                        // Use a variable to store the here-string content
+                        output.push_str(&format!("let here_string_content = \"{}\";\n", self.escape_rust_string(body)));
+                    }
+                }
+                RedirectOperator::Input => {
+                    // Check if this input redirect looks like a process substitution
+                    // The parser might not have converted this to ProcessSubstitutionInput
+                    if redir.target.starts_with("(") && redir.target.ends_with(")") {
+                        // This looks like a process substitution, create a temp file
+                        temp_file_counter += 1;
+                        let temp_file = format!("/tmp/process_sub_input_{}_{}.tmp", std::process::id(), temp_file_counter);
+                        let temp_var = format!("temp_file_input_{}", temp_file_counter);
+                        output.push_str(&format!("let {} = \"{}\";\n", temp_var, temp_file));
+                        
+                        // Extract the command from the target (remove parentheses)
+                        let cmd_str = redir.target.trim_start_matches('(').trim_end_matches(')');
+                        
+                        // For simple commands like printf 'x\ny\n', create the temp file directly
+                        if cmd_str.starts_with("printf '") && cmd_str.ends_with("'") {
+                            // Extract the content between the quotes
+                            let content = &cmd_str[8..cmd_str.len()-1]; // Remove "printf '" and "'"
+                            // Create temp file with the content
+                            output.push_str(&format!("let _ = fs::write({}, \"{}\");\n", temp_var, content.replace("\\n", "\n")));
+                        } else {
+                            // For other commands, use system() with proper escaping
+                            let clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
+                            output.push_str(&format!("let _ = Command::new(\"sh\")\n"));
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("    .arg(\"-c\")\n"));
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("    .arg(\"{} > {}\")\n", clean_cmd, temp_var));
+                            output.push_str(&self.indent());
+                            output.push_str("    .status();\n");
+                        }
+                        process_sub_files.push((temp_var, temp_file));
+                    }
+                }
+                _ => {}
+            }
+        }
+        
         for (var, value) in &cmd.env_vars {
             if var.contains('[') {
                 // This is an associative array assignment like map[foo]=bar
@@ -213,189 +331,9 @@ impl RustGenerator {
         } else if cmd.name == "false" {
             // Builtin false: early return with error to reflect non-zero status
             output.push_str("return std::process::ExitCode::FAILURE;\n");
-        } else if cmd.name == "echo" {
-            // Special handling for echo with brace expansion support
-            if cmd.args.is_empty() {
-                output.push_str("println!();\n");
-            } else if cmd.args.len() == 1 {
-                // Handle single argument
-                let arg = &cmd.args[0];
-                if self.word_to_string(arg) == "$#" {
-                    output.push_str("let argc = std::env::args().count().saturating_sub(1);\n");
-                    output.push_str("println!(\"{}\", argc);\n");
-                } else if self.word_to_string(arg) == "$@" || self.word_to_string(arg) == "${@}" {
-                    output.push_str("let joined = std::env::args().skip(1).collect::<Vec<_>>().join(\" \" );\n");
-                    output.push_str("println!(\"{}\", joined);\n");
-                } else if let Word::BraceExpansion(expansion) = arg {
-                    // Handle brace expansion
-                    if expansion.items.len() == 1 {
-                        match &expansion.items[0] {
-                            BraceItem::Range(range) => {
-                                if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
-                                    let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
-                                    let values: Vec<String> = if step > 0 {
-                                        (start..=end).step_by(step as usize).map(|i| {
-                                            // Preserve leading zeros by formatting with the same width as the original
-                                            if range.start.starts_with('0') && range.start.len() > 1 {
-                                                format!("{:0width$}", i, width = range.start.len())
-                                            } else {
-                                                i.to_string()
-                                            }
-                                        }).collect()
-                                    } else {
-                                        (end..=start).rev().step_by((-step) as usize).map(|i| {
-                                            if range.start.starts_with('0') && range.start.len() > 1 {
-                                                format!("{:0width$}", i, width = range.start.len())
-                                            } else {
-                                                i.to_string()
-                                            }
-                                        }).collect()
-                                    };
-                                    output.push_str(&format!("println!(\"{}\");\n", values.join(" ")));
-                                } else {
-                                    output.push_str(&format!("println!(\"{{{}}}..{{{}}}\");\n", range.start, range.end));
-                                }
-                            }
-                            BraceItem::Literal(s) => {
-                                // Single literal item
-                                if s.contains("..") {
-                                    // Handle ranges like "a..c" or "00..04..2"
-                                    let parts: Vec<&str> = s.split("..").collect();
-                                    if parts.len() == 2 {
-                                        if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), parts[1].chars().next()) {
-                                            if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
-                                                let start = start_char as u8;
-                                                let end = end_char as u8;
-                                                if start <= end {
-                                                    let values: Vec<String> = (start..=end)
-                                                        .map(|c| char::from(c).to_string())
-                                                        .collect();
-                                                    output.push_str(&format!("println!(\"{}\");\n", values.join(" ")));
-                                                } else {
-                                                    output.push_str(&format!("println!(\"{{{}}}\");\n", s));
-                                                }
-                                            } else {
-                                                output.push_str(&format!("println!(\"{{{}}}\");\n", s));
-                                            }
-                                        } else {
-                                            output.push_str(&format!("println!(\"{{{}}}\");\n", s));
-                                        }
-                                    } else if parts.len() == 3 {
-                                        // Range with step like "00..04..2"
-                                        if let (Ok(start), Ok(end), Ok(step)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>(), parts[2].parse::<i64>()) {
-                                            let values: Vec<String> = (start..=end).step_by(step as usize).map(|i| i.to_string()).collect();
-                                            output.push_str(&format!("println!(\"{}\");\n", values.join(" ")));
-                                        } else {
-                                            output.push_str(&format!("println!(\"{{{}}}\");\n", s));
-                                        }
-                                    } else {
-                                        output.push_str(&format!("println!(\"{{{}}}\");\n", s));
-                                    }
-                                } else {
-                                    output.push_str(&format!("println!(\"{{{}}}\");\n", s));
-                                }
-                            }
-                            BraceItem::Sequence(seq) => {
-                                // Convert {a,b,c} to a b c
-                                output.push_str(&format!("println!(\"{}\");\n", seq.join(" ")));
-                            }
-                        }
-                    } else {
-                        // Multiple items - expand each one
-                        let mut expanded_items = Vec::new();
-                        for item in &expansion.items {
-                            match item {
-                                BraceItem::Literal(s) => expanded_items.push(s.clone()),
-                                BraceItem::Range(range) => {
-                                    if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
-                                        let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
-                                        let values: Vec<String> = if step > 0 {
-                                            (start..=end).step_by(step as usize).map(|i| i.to_string()).collect()
-                                        } else {
-                                            (end..=start).rev().step_by((-step) as usize).map(|i| i.to_string()).collect()
-                                        };
-                                        expanded_items.extend(values);
-                                    } else {
-                                        expanded_items.push(format!("{{{}}}..{{{}}}", range.start, range.end));
-                                    }
-                                }
-                                BraceItem::Sequence(seq) => {
-                                    expanded_items.extend(seq.iter().cloned());
-                                }
-                            }
-                        }
-                        // For multiple brace expansions like {a,b,c}{1,2,3}, we need to generate all combinations
-                        if expansion.items.len() == 2 {
-                            let mut combinations = Vec::new();
-                            for item1 in &expanded_items {
-                                for item2 in &expanded_items {
-                                    combinations.push(format!("{}{}", item1, item2));
-                                }
-                            }
-                            output.push_str(&format!("println!(\"{}\");\n", combinations.join(" ")));
-                        } else {
-                            output.push_str(&format!("println!(\"{}\");\n", expanded_items.join(" ")));
-                        }
-                    }
-                } else if let Word::StringInterpolation(interp) = arg {
-                    // Handle string interpolation like "$#"
-                    if interp.parts.len() == 1 {
-                        if let StringPart::Variable(var) = &interp.parts[0] {
-                            if var == "#" {
-                                output.push_str("println!(\"{}\", std::env::args().count().saturating_sub(1));\n");
-                            } else if var == "@" {
-                                output.push_str("println!(\"{}\", std::env::args().skip(1).collect::<Vec<_>>().join(\" \"));\n");
-                            } else if var.starts_with('#') && var.ends_with("[@]") {
-                                // This is #arr[@] - convert to array length and print
-                                let array_name = &var[1..var.len()-3]; // Remove # prefix and [@] suffix
-                              output.push_str(&format!("println!(\"{{}}\", {}.len());\n", array_name));
-                            } else if var.starts_with('#') && var.ends_with("[*]") {
-                                // This is #arr[*] - convert to array length and print
-                                let array_name = &var[1..var.len()-3]; // Remove # prefix and [*] suffix
-                                output.push_str(&format!("println!(\"{{}}\", {}.len());\n", array_name));
-                            } else if var.starts_with('!') && var.ends_with("[@]") {
-                                // This is !map[@] - convert to map keys and print
-                                let map_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
-                                output.push_str(&format!("println!(\"{{}}\", {}.keys().collect::<Vec<_>>().join(\" \"));\n", map_name));
-                            } else if var.starts_with('!') && var.ends_with("[*]") {
-                                // This is !map[*] - convert to map keys and print
-                                let map_name = &var[1..var.len()-3]; // Remove ! prefix and [*] suffix
-                                output.push_str(&format!("println!(\"{{}}\", {}.keys().collect::<Vec<_>>().join(\" \"));\n", map_name));
-                            } else {
-                                output.push_str(&format!("println!(\"{{}}\", {});\n", var));
-                            }
-                        } else if let StringPart::MapLength(map_name) = &interp.parts[0] {
-                            // This is ${#arr[@]} - convert to array length and print
-                            output.push_str(&format!("println!(\"{{}}\", {}.len());\n", map_name));
-                        } else if let StringPart::MapKeys(map_name) = &interp.parts[0] {
-                            // This is ${!map[@]} - convert to map keys and print
-                            output.push_str(&format!("println!(\"{{}}\", {}.keys().collect::<Vec<_>>().join(\" \"));\n", map_name));
-                        } else if let StringPart::ParameterExpansion(pe) = &interp.parts[0] {
-                            // This is a single parameter expansion - generate without quotes
-                            let content = self.generate_parameter_expansion_rust(pe);
-                            output.push_str(&format!("println!(\"{{}}\", {});\n", content));
-                        } else if let StringPart::MapAccess(map_name, key) = &interp.parts[0] {
-                            // This is ${map[key]} - convert to map access and print
-                            let map_access = self.convert_map_access_to_rust(map_name, key);
-                            output.push_str(&format!("println!(\"{{}}\", {});\n", map_access));
-                        } else {
-                            let content = self.convert_string_interpolation_to_rust(interp);
-                            output.push_str(&format!("println!(\"{}\");\n", content));
-                        }
-                    } else {
-                        let content = self.convert_string_interpolation_to_rust(interp);
-                        output.push_str(&format!("println!(\"{}\");\n", content));
-                    }
-                } else {
-                    // Handle other argument types
-                    let content = self.word_to_string(arg);
-                    output.push_str(&format!("println!(\"{}\");\n", content));
-                }
-            } else {
-                // Multiple arguments - use the new brace expansion combiner
-                let expanded_args = self.expand_brace_expansions_in_args(&cmd.args);
-                output.push_str(&format!("println!(\"{}\");\n", expanded_args.join(" ")));
-            }
+        } else if cmd.name == "test" || cmd.name == "[" {
+            // Special handling for test command
+            self.generate_test_command(cmd, &mut output);
         } else if cmd.name == "[[" {
             // Builtin [[ test: succeed (no-op)
             output.push_str("/* [[ test */\n");
@@ -404,11 +342,11 @@ impl RustGenerator {
             output.push_str("/* builtin */\n");
         } else if cmd.name == "sleep" {
             // Use std::thread::sleep
-                            let dur = cmd.args.get(0).cloned().unwrap_or_else(|| Word::Literal("1".to_string()));
+            let dur = cmd.args.get(0).cloned().unwrap_or_else(|| Word::Literal("1".to_string()));
             output.push_str(&format!("thread::sleep(Duration::from_secs_f64({}f64));\n", dur));
         } else if cmd.name == "cd" {
             // Special handling for cd
-                            let dir = if cmd.args.is_empty() { "." } else { &cmd.args[0] };
+            let dir = if cmd.args.is_empty() { "." } else { &cmd.args[0] };
             output.push_str(&format!("if let Err(_) = env::set_current_dir(\"{}\") {{\n", dir));
             output.push_str(&self.indent());
             output.push_str("    return std::process::ExitCode::FAILURE;\n");
@@ -487,7 +425,7 @@ impl RustGenerator {
                             output.push_str(&self.indent());
                             output.push_str("            if let Some(name) = entry.file_name().to_str() {\n");
                             output.push_str(&self.indent());
-                            output.push_str(&format!("                if name.matches(\"{}\") {{\n", pattern));
+                            output.push_str(&format!("                if name.contains(\"{}\") {{\n", pattern));
                             output.push_str(&self.indent());
                             output.push_str("                    println!(\"{}\", name);\n");
                             output.push_str(&self.indent());
@@ -552,26 +490,47 @@ impl RustGenerator {
                     
                     if only_matching {
                         if file == "STDIN" {
-                            output.push_str("let stdin = io::stdin();\n");
-                            output.push_str("let mut buffer = String::new();\n");
-                            output.push_str("while stdin.read_line(&mut buffer).unwrap() > 0 {\n");
-                            output.push_str(&self.indent());
-                            output.push_str(&format!("    if let Ok(re) = regex::Regex::new(\"{}\") {{\n", pattern));
-                            output.push_str(&self.indent());
-                            output.push_str("        if let Some(captures) = re.captures(&buffer) {\n");
-                            output.push_str(&self.indent());
-                            output.push_str("            if let Some(m) = captures.get(1) {\n");
-                            output.push_str(&self.indent());
-                            output.push_str("                println!(\"{}\", m.as_str());\n");
-                            output.push_str(&self.indent());
-                            output.push_str("            }\n");
-                            output.push_str(&self.indent());
-                            output.push_str("        }\n");
-                            output.push_str(&self.indent());
-                            output.push_str("    }\n");
-                            output.push_str(&self.indent());
-                            output.push_str("    buffer.clear();\n");
-                            output.push_str("}\n");
+                            if has_here_string {
+                                // Use string splitting to process here-string content directly
+                                output.push_str("let here_lines: Vec<&str> = here_string_content.split('\\n').collect();\n");
+                                output.push_str("for line in here_lines {\n");
+                                output.push_str(&self.indent());
+                                output.push_str(&format!("    if let Ok(re) = regex::Regex::new(\"{}\") {{\n", pattern));
+                                output.push_str(&self.indent());
+                                output.push_str("        if let Some(captures) = re.captures(line) {\n");
+                                output.push_str(&self.indent());
+                                output.push_str("            if let Some(m) = captures.get(1) {\n");
+                                output.push_str(&self.indent());
+                                output.push_str("                println!(\"{}\", m.as_str());\n");
+                                output.push_str(&self.indent());
+                                output.push_str("            }\n");
+                                output.push_str(&self.indent());
+                                output.push_str("        }\n");
+                                output.push_str(&self.indent());
+                                output.push_str("    }\n");
+                                output.push_str("}\n");
+                            } else {
+                                output.push_str("let stdin = io::stdin();\n");
+                                output.push_str("let mut buffer = String::new();\n");
+                                output.push_str("while stdin.read_line(&mut buffer).unwrap() > 0 {\n");
+                                output.push_str(&self.indent());
+                                output.push_str(&format!("    if let Ok(re) = regex::Regex::new(\"{}\") {{\n", pattern));
+                                output.push_str(&self.indent());
+                                output.push_str("        if let Some(captures) = re.captures(&buffer) {\n");
+                                output.push_str(&self.indent());
+                                output.push_str("            if let Some(m) = captures.get(1) {\n");
+                                output.push_str(&self.indent());
+                                output.push_str("                println!(\"{}\", m.as_str());\n");
+                                output.push_str(&self.indent());
+                                output.push_str("            }\n");
+                                output.push_str(&self.indent());
+                                output.push_str("        }\n");
+                                output.push_str(&self.indent());
+                                output.push_str("    }\n");
+                                output.push_str(&self.indent());
+                                output.push_str("    buffer.clear();\n");
+                                output.push_str("}\n");
+                            }
                         } else {
                             output.push_str(&format!("if let Ok(content) = fs::read_to_string(\"{}\") {{\n", file));
                             output.push_str(&self.indent());
@@ -596,22 +555,39 @@ impl RustGenerator {
                         }
                     } else {
                         if file == "STDIN" {
-                            output.push_str("let stdin = io::stdin();\n");
-                            output.push_str("let mut buffer = String::new();\n");
-                            output.push_str("while stdin.read_line(&mut buffer).unwrap() > 0 {\n");
-                            output.push_str(&self.indent());
-                            output.push_str(&format!("    if let Ok(re) = regex::Regex::new(\"{}\") {{\n", pattern));
-                            output.push_str(&self.indent());
-                            output.push_str("        if re.is_match(&buffer) {\n");
-                            output.push_str(&self.indent());
-                            output.push_str("            print!(\"{}\", buffer);\n");
-                            output.push_str(&self.indent());
-                            output.push_str("        }\n");
-                            output.push_str(&self.indent());
-                            output.push_str("    }\n");
-                            output.push_str(&self.indent());
-                            output.push_str("    buffer.clear();\n");
-                            output.push_str("}\n");
+                            if has_here_string {
+                                // Use string splitting to process here-string content directly
+                                output.push_str("let here_lines: Vec<&str> = here_string_content.split('\\n').collect();\n");
+                                output.push_str("for line in here_lines {\n");
+                                output.push_str(&self.indent());
+                                output.push_str(&format!("    if let Ok(re) = regex::Regex::new(\"{}\") {{\n", pattern));
+                                output.push_str(&self.indent());
+                                output.push_str("        if re.is_match(line) {\n");
+                                output.push_str(&self.indent());
+                                output.push_str("            println!(\"{}\", line);\n");
+                                output.push_str(&self.indent());
+                                output.push_str("        }\n");
+                                output.push_str(&self.indent());
+                                output.push_str("    }\n");
+                                output.push_str("}\n");
+                            } else {
+                                output.push_str("let stdin = io::stdin();\n");
+                                output.push_str("let mut buffer = String::new();\n");
+                                output.push_str("while stdin.read_line(&mut buffer).unwrap() > 0 {\n");
+                                output.push_str(&self.indent());
+                                output.push_str(&format!("    if let Ok(re) = regex::Regex::new(\"{}\") {{\n", pattern));
+                                output.push_str(&self.indent());
+                                output.push_str("        if re.is_match(&buffer) {\n");
+                                output.push_str(&self.indent());
+                                output.push_str("            print!(\"{}\", buffer);\n");
+                                output.push_str(&self.indent());
+                                output.push_str("        }\n");
+                                output.push_str(&self.indent());
+                                output.push_str("    }\n");
+                                output.push_str(&self.indent());
+                                output.push_str("    buffer.clear();\n");
+                                output.push_str("}\n");
+                            }
                         } else {
                             output.push_str(&format!("if let Ok(content) = fs::read_to_string(\"{}\") {{\n", file));
                             output.push_str(&self.indent());
@@ -684,7 +660,7 @@ impl RustGenerator {
                         output.push_str(&self.indent());
                         output.push_str("            if let Some(name) = entry.file_name().to_str() {\n");
                         output.push_str(&self.indent());
-                        output.push_str(&format!("                if name.matches(\"{}\") {{\n", arg.replace('*', ".*")));
+                        output.push_str(&format!("                if name.contains(\"{}\") {{\n", arg.replace('*', ".*")));
                         output.push_str(&self.indent());
                         output.push_str("                    let _ = fs::remove_file(entry.path());\n");
                         output.push_str(&self.indent());
@@ -701,6 +677,7 @@ impl RustGenerator {
                         output.push_str(&format!("if let Err(_) = fs::remove_file(\"{}\") {{\n", arg));
                         output.push_str(&self.indent());
                         output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                        output.push_str(&self.indent());
                         output.push_str("}\n");
                     }
                 }
@@ -713,6 +690,7 @@ impl RustGenerator {
                 output.push_str(&format!("if let Err(_) = fs::rename(\"{}\", \"{}\") {{\n", src, dst));
                 output.push_str(&self.indent());
                 output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                output.push_str(&self.indent());
                 output.push_str("}\n");
             }
         } else if cmd.name == "cp" {
@@ -723,6 +701,7 @@ impl RustGenerator {
                 output.push_str(&format!("if let Err(_) = fs::copy(\"{}\", \"{}\") {{\n", src, dst));
                 output.push_str(&self.indent());
                 output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                output.push_str(&self.indent());
                 output.push_str("}\n");
             }
         } else if cmd.name == "read" {
@@ -733,6 +712,7 @@ impl RustGenerator {
                 output.push_str(&format!("if let Err(_) = io::stdin().read_line(&mut {}) {{\n", var_name));
                 output.push_str(&self.indent());
                 output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                output.push_str(&self.indent());
                 output.push_str("}\n");
                 output.push_str(&format!("let {v} = {v}.trim().to_string();\n", v = var_name));
             }
@@ -799,6 +779,7 @@ impl RustGenerator {
                     output.push_str(&format!("if let Err(_) = fs::write(\"{}\", \"\") {{\n", file));
                     output.push_str(&self.indent());
                     output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                    output.push_str(&self.indent());
                     output.push_str("}\n");
                 }
             }
@@ -807,14 +788,60 @@ impl RustGenerator {
             if cmd.args.len() >= 2 && self.word_to_string(&cmd.args[0]) == "-t" {
                 let array_name = &cmd.args[1];
                 output.push_str(&format!("let mut {}: Vec<String> = Vec::new();\n", array_name));
-                output.push_str("let stdin = io::stdin();\n");
-                output.push_str("let mut buffer = String::new();\n");
-                output.push_str("while stdin.read_line(&mut buffer).unwrap() > 0 {\n");
+                
+                // Check if we have process substitution files available
+                let mut input_source = "STDIN".to_string();
+                let mut file_handle = None;
+                
+                // Check if we have process substitution files available
+                if !process_sub_files.is_empty() {
+                    input_source = process_sub_files[0].1.clone();
+                } else {
+                    // Check if we have a process substitution redirect
+                    for redir in &cmd.redirects {
+                        match &redir.operator {
+                            RedirectOperator::Input => {
+                                // Check if this is a process substitution target
+                                // The parser might not have converted this to ProcessSubstitutionInput,
+                                // so we check if the target looks like a process substitution
+                                if (redir.target.starts_with("<(") && redir.target.ends_with(")")) ||
+                                   (redir.target.starts_with("(") && redir.target.ends_with(")")) {
+                                    // This is a process substitution, we should have a temp file
+                                    if let Some(temp_file) = process_sub_files.first() {
+                                        input_source = temp_file.1.clone();
+                                    } else {
+                                        // Fallback to the target as-is (this shouldn't happen)
+                                        input_source = redir.target.to_string();
+                                    }
+                                } else {
+                                    input_source = redir.target.to_string();
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                
+                if input_source == "STDIN" {
+                    output.push_str("let stdin = io::stdin();\n");
+                    output.push_str("let mut buffer = String::new();\n");
+                    output.push_str("while stdin.read_line(&mut buffer).unwrap() > 0 {\n");
+                } else {
+                    let fh = format!("fh_{}", array_name);
+                    file_handle = Some(fh.clone());
+                    output.push_str(&format!("let mut {} = fs::File::open(\"{}\").unwrap();\n", fh, input_source));
+                    output.push_str(&format!("let mut buffer = String::new();\n"));
+                    output.push_str(&format!("while {}.read_line(&mut buffer).unwrap() > 0 {{\n", fh));
+                }
                 output.push_str(&self.indent());
-                output.push_str(&format!("    {}.push(buffer.trim().to_string());\n", array_name));
+                output.push_str(&format!("{}.push(buffer.trim().to_string());\n", array_name));
                 output.push_str(&self.indent());
-                output.push_str("    buffer.clear();\n");
+                output.push_str("buffer.clear();\n");
                 output.push_str("}\n");
+                
+                if let Some(fh) = file_handle {
+                    // No need to close file handle in Rust, it's automatically closed when dropped
+                }
             }
         } else if cmd.name == "comm" {
             // Handle comm command for comparing sorted files
@@ -822,16 +849,97 @@ impl RustGenerator {
                 let flag = &cmd.args[0];
                 let file1 = &cmd.args[1];
                 let file2 = &cmd.args[2];
+                
+                // Check if we have process substitution files
+                let mut file1_path = file1.to_string();
+                let mut file2_path = file2.to_string();
+                
+                // Use process substitution files if available
+                if !process_sub_files.is_empty() {
+                    if process_sub_files.len() >= 1 {
+                        file1_path = process_sub_files[0].1.clone();
+                    }
+                    if process_sub_files.len() >= 2 {
+                        file2_path = process_sub_files[1].1.clone();
+                    }
+                }
+                
                 output.push_str(&format!("// comm {} {} {}\n", flag, file1, file2));
                 output.push_str("let _ = Command::new(\"comm\")\n");
                 output.push_str(&self.indent());
                 output.push_str(&format!("    .arg(\"{}\")\n", flag));
                 output.push_str(&self.indent());
-                output.push_str(&format!("    .arg(\"{}\")\n", file1));
+                output.push_str(&format!("    .arg(\"{}\")\n", file1_path));
                 output.push_str(&self.indent());
-                output.push_str(&format!("    .arg(\"{}\")\n", file2));
+                output.push_str(&format!("    .arg(\"{}\")\n", file2_path));
                 output.push_str(&self.indent());
                 output.push_str("    .status();\n");
+            }
+        } else if cmd.name == "diff" {
+            // Handle diff command with process substitution
+            if cmd.args.is_empty() && !process_sub_files.is_empty() {
+                // This is a diff with process substitution redirects
+                if process_sub_files.len() >= 2 {
+                    let file1 = &process_sub_files[0].1;
+                    let file2 = &process_sub_files[1].1;
+                    output.push_str(&format!("let _ = Command::new(\"diff\")\n"));
+                    output.push_str(&self.indent());
+                    output.push_str(&format!("    .arg(\"{}\")\n", file1));
+                    output.push_str(&self.indent());
+                    output.push_str(&format!("    .arg(\"{}\")\n", file2));
+                    output.push_str(&self.indent());
+                    output.push_str("    .status();\n");
+                }
+            } else {
+                // Regular diff command
+                let args = cmd.args.iter().map(|arg| self.word_to_string(arg)).collect::<Vec<_>>().join(" ");
+                output.push_str(&format!("let _ = Command::new(\"diff\")\n"));
+                output.push_str(&self.indent());
+                output.push_str(&format!("    .arg(\"{}\")\n", args));
+                output.push_str(&self.indent());
+                output.push_str("    .status();\n");
+            }
+        } else if cmd.name == "paste" {
+            // Handle paste command with process substitution
+            if cmd.args.is_empty() && !process_sub_files.is_empty() {
+                // This is a paste with process substitution redirects
+                if process_sub_files.len() >= 2 {
+                    let file1 = &process_sub_files[0].1;
+                    let file2 = &process_sub_files[1].1;
+                    output.push_str(&format!("let _ = Command::new(\"paste\")\n"));
+                    output.push_str(&self.indent());
+                    output.push_str(&format!("    .arg(\"{}\")\n", file1));
+                    output.push_str(&self.indent());
+                    output.push_str(&format!("    .arg(\"{}\")\n", file2));
+                    output.push_str(&self.indent());
+                    output.push_str("    .status();\n");
+                }
+            } else {
+                // Regular paste command
+                let args = cmd.args.iter().map(|arg| self.word_to_string(arg)).collect::<Vec<_>>().join(" ");
+                output.push_str(&format!("let _ = Command::new(\"paste\")\n"));
+                output.push_str(&self.indent());
+                output.push_str(&format!("    .arg(\"{}\")\n", args));
+                output.push_str(&self.indent());
+                output.push_str("    .status();\n");
+            }
+        } else if cmd.name == "echo" {
+            // Simple: echo is just a print function call
+            let args = self.convert_echo_args_to_print_args(&cmd.args);
+            if args.starts_with('"') && args.ends_with('"') {
+                // Single literal string
+                output.push_str(&format!("println!({});\n", args));
+            } else if args.starts_with("format!") {
+                // Multiple parts that need formatting - use println! with format!
+                output.push_str(&format!("println!(\"{{}}\", {});\n", args));
+            } else if args.contains(" + ") {
+                // String concatenation - convert to format!
+                let parts: Vec<&str> = args.split(" + ").collect();
+                let format_string = "{}".repeat(parts.len());
+                output.push_str(&format!("println!(\"{}\", {});\n", format_string, parts.join(", ")));
+            } else {
+                // Variable or other expression
+                output.push_str(&format!("println!(\"{{}}\", {});\n", args));
             }
         } else {
             // Generic command
@@ -841,6 +949,7 @@ impl RustGenerator {
                 output.push_str("    .status() {\n");
                 output.push_str(&self.indent());
                 output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                output.push_str(&self.indent());
                 output.push_str("}\n");
             } else {
                 let args_str = cmd.args.iter().map(|arg| {
@@ -880,10 +989,61 @@ impl RustGenerator {
                 output.push_str("    .status() {\n");
                 output.push_str(&self.indent());
                 output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                output.push_str(&self.indent());
                 output.push_str("}\n");
             }
         }
 
+        // Handle redirects
+        for redir in &cmd.redirects {
+            match redir.operator {
+                RedirectOperator::Input => {
+                    // Input redirection: command < file
+                    // Check if we have a here-string - if so, skip this since the command will read from $here_string_file
+                    if !has_here_string {
+                        // Check if this is a process substitution target
+                        if redir.target.starts_with("<(") && redir.target.ends_with(")") {
+                            // This is a process substitution, we should have a temp file
+                            // Don't redirect STDIN here - let the command handle it directly
+                            // The command (like mapfile) will use the temp file directly
+                        } else if redir.target.starts_with("(") && redir.target.ends_with(")") {
+                            // This looks like a process substitution, don't redirect STDIN
+                            // The command (like mapfile) will use the temp file directly
+                        } else {
+                            output.push_str(&format!("// Input redirection to: {}\n", redir.target));
+                            output.push_str(&format!("// Note: Input redirection not fully implemented in Rust generator\n"));
+                        }
+                    }
+                }
+                RedirectOperator::Output => {
+                    // Output redirection: command > file
+                    output.push_str(&format!("// Output redirection to: {}\n", redir.target));
+                    output.push_str(&format!("// Note: Output redirection not fully implemented in Rust generator\n"));
+                }
+                RedirectOperator::Append => {
+                    // Append redirection: command >> file
+                    output.push_str(&format!("// Append redirection to: {}\n", redir.target));
+                    output.push_str(&format!("// Note: Append redirection not fully implemented in Rust generator\n"));
+                }
+                RedirectOperator::Heredoc | RedirectOperator::HeredocTabs => {
+                    // Heredoc: command << delimiter
+                    // Skip heredoc handling for 'cat' command since it's handled specially in the cat command handler
+                    if cmd.name != "cat" {
+                        if let Some(body) = &redir.heredoc_body {
+                            // Create a temporary file with the heredoc content
+                            output.push_str(&format!("let temp_content = \"{}\";\n", self.escape_rust_string(body)));
+                            output.push_str("let _ = fs::write(\"/tmp/heredoc_temp\", temp_content);\n");
+                            output.push_str("// Note: Heredoc redirection not fully implemented in Rust generator\n");
+                        }
+                    }
+                }
+                _ => {
+                    // Other redirects not yet implemented
+                    output.push_str(&format!("// Redirect {:?} not yet implemented\n", redir.operator));
+                }
+            }
+        }
+        
         output
     }
 
@@ -1981,34 +2141,150 @@ impl RustGenerator {
             },
             Word::Arithmetic(expr) => expr.expression.clone(),
             Word::BraceExpansion(expansion) => {
-                let mut result = String::new();
-                if let Some(ref prefix) = expansion.prefix {
-                    result.push_str(prefix);
-                }
-                for (i, item) in expansion.items.iter().enumerate() {
-                    if i > 0 {
-                        result.push(',');
-                    }
-                    match item {
-                        BraceItem::Literal(s) => result.push_str(s),
+                // Handle brace expansion by expanding it to actual values
+                if expansion.items.len() == 1 {
+                    match &expansion.items[0] {
                         BraceItem::Range(range) => {
-                            result.push_str(&range.start);
-                            result.push_str("..");
-                            result.push_str(&range.end);
-                            if let Some(ref step) = range.step {
-                                result.push_str("..");
-                                result.push_str(step);
+                            // Expand range like {1..5} to "1 2 3 4 5"
+                            // Check if this is a character range
+                            if let (Some(start_char), Some(end_char)) = (range.start.chars().next(), range.end.chars().next()) {
+                                if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                                    // This is a character range
+                                    let start = start_char as u8;
+                                    let end = end_char as u8;
+                                    if start <= end {
+                                        let step = range.step.as_ref().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
+                                        let values: Vec<String> = (start..=end)
+                                            .step_by(step)
+                                            .map(|c| char::from(c).to_string())
+                                            .collect();
+                                        values.join(" ")
+                                    } else {
+                                        // Reverse range
+                                        let step = range.step.as_ref().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
+                                        let values: Vec<String> = (end..=start)
+                                            .rev()
+                                            .step_by(step)
+                                            .map(|c| char::from(c).to_string())
+                                            .collect();
+                                        values.join(" ")
+                                    }
+                                } else {
+                                    // This is a numeric range
+                                    self.expand_brace_range(range)
+                                }
+                            } else {
+                                // This is a numeric range
+                                self.expand_brace_range(range)
+                            }
+                        }
+                        BraceItem::Literal(s) => {
+                            // Handle literal strings that might contain ranges like "a..c" or "00..04..2"
+                            if s.contains("..") {
+                                let parts: Vec<&str> = s.split("..").collect();
+                                if parts.len() == 2 {
+                                    // Simple range like "a..c"
+                                    if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), parts[1].chars().next()) {
+                                        if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                                            let start = start_char as u8;
+                                            let end = end_char as u8;
+                                            if start <= end {
+                                                let values: Vec<String> = (start..=end)
+                                                    .map(|c| char::from(c).to_string())
+                                                    .collect();
+                                                values.join(" ")
+                                            } else {
+                                                s.clone()
+                                            }
+                                        } else {
+                                            s.clone()
+                                        }
+                                    } else {
+                                        s.clone()
+                                    }
+                                } else if parts.len() == 3 && parts[1].contains("..") {
+                                    // Character range with step like "a..z..3"
+                                    let sub_parts: Vec<&str> = parts[1].split("..").collect();
+                                    if sub_parts.len() == 2 {
+                                        if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), sub_parts[1].chars().next()) {
+                                            if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                                                if let Ok(step) = parts[2].parse::<usize>() {
+                                                    let start = start_char as u8;
+                                                    let end = end_char as u8;
+                                                    if start <= end {
+                                                        let values: Vec<String> = (start..=end)
+                                                            .step_by(step)
+                                                            .map(|c| char::from(c).to_string())
+                                                            .collect();
+                                                        values.join(" ")
+                                                    } else {
+                                                        s.clone()
+                                                    }
+                                                } else {
+                                                    s.clone()
+                                                }
+                                            } else {
+                                                s.clone()
+                                            }
+                                        } else {
+                                            s.clone()
+                                        }
+                                    } else {
+                                        s.clone()
+                                    }
+                                } else if parts.len() == 3 {
+                                    // Range with step like "00..04..2"
+                                    if let (Ok(start), Ok(end), Ok(step)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>(), parts[2].parse::<i64>()) {
+                                        let values: Vec<String> = (start..=end).step_by(step as usize).map(|i| {
+                                            // Preserve leading zeros by formatting with the same width as the original
+                                            if parts[0].starts_with('0') && parts[0].len() > 1 {
+                                                format!("{:0width$}", i, width = parts[0].len())
+                                            } else {
+                                                i.to_string()
+                                            }
+                                        }).collect();
+                                        values.join(" ")
+                                    } else {
+                                        s.clone()
+                                    }
+                                } else {
+                                    s.clone()
+                                }
+                            } else {
+                                s.clone()
                             }
                         }
                         BraceItem::Sequence(seq) => {
-                            result.push_str(&seq.join(","));
+                            // Expand sequence like {a,b,c} to "a b c"
+                            seq.join(" ")
                         }
                     }
+                } else {
+                    // Multiple items - expand each one and join
+                    let expanded_items: Vec<Vec<String>> = expansion.items.iter().map(|item| {
+                        match item {
+                            BraceItem::Literal(s) => vec![s.clone()],
+                            BraceItem::Range(range) => {
+                                self.expand_brace_range(range).split_whitespace().map(|s| s.to_string()).collect()
+                            }
+                            BraceItem::Sequence(seq) => seq.clone()
+                        }
+                    }).collect();
+                    
+                    // Generate cartesian product for multiple brace expansions like {a,b,c}{1,2,3}
+                    if expanded_items.len() == 2 {
+                        let mut result = Vec::new();
+                        for item1 in &expanded_items[0] {
+                            for item2 in &expanded_items[1] {
+                                result.push(format!("{}{}", item1, item2));
+                            }
+                        }
+                        result.join(" ")
+                    } else {
+                        // For more than 2 items, just join them (this could be enhanced for full cartesian product)
+                        expanded_items.iter().map(|items| items.join(" ")).collect::<Vec<_>>().join(" ")
+                    }
                 }
-                if let Some(ref suffix) = expansion.suffix {
-                    result.push_str(suffix);
-                }
-                format!("{{{}}}", result)
             }
             Word::CommandSubstitution(_) => "$(...)".to_string(),
             Word::StringInterpolation(interp) => {
@@ -2325,6 +2601,10 @@ impl RustGenerator {
                         let rust_key = if key.starts_with('$') {
                             // Extract variable name from shell syntax like $foo
                             &key[1..]
+                        } else if self.is_valid_variable_name(key) {
+                            // This looks like a variable name (e.g., 'foo' in map[foo])
+                            // Treat it as a variable, not a string literal
+                            key
                         } else {
                             // String literal key - quote it
                             &format!("\"{}\"", key)
@@ -2666,6 +2946,10 @@ impl RustGenerator {
                         // This happens when the parser treats ${map[$k]} as MapAccess("map", "$k")
                         let var_name = key.replace('$', "");
                         format!("{}.get({}).unwrap_or(&String::new())", map_name, var_name)
+                    } else if self.is_valid_variable_name(key) {
+                        // This looks like a variable name (e.g., 'foo' in map[foo])
+                        // Treat it as a variable, not a string literal
+                        format!("{}.get({}).unwrap_or(&String::new())", map_name, key)
                     } else {
                         // String literal key - quote it
                         format!("{}.get(\"{}\").unwrap_or(&String::new())", map_name, key)
@@ -2732,10 +3016,30 @@ impl RustGenerator {
             // This is a variable key like $k
             let var_name = &key[1..];
             format!("{}.get({}).unwrap_or(&String::new())", map_name, var_name)
+        } else if self.is_valid_variable_name(key) {
+            // This looks like a variable name (e.g., 'foo' in map[foo])
+            // Treat it as a variable, not a string literal
+            format!("{}.get({}).unwrap_or(&String::new())", map_name, key)
         } else {
-            // This is a string literal key like "foo"
+            // This is a string literal key like "foo" or contains special characters
             format!("{}.get(\"{}\").unwrap_or(&String::new())", map_name, key)
         }
+    }
+
+    fn is_valid_variable_name(&self, name: &str) -> bool {
+        // Check if a string looks like a valid variable name
+        // Valid variable names in shell: alphanumeric + underscore, starting with letter or underscore
+        if name.is_empty() {
+            return false;
+        }
+        
+        let first_char = name.chars().next().unwrap();
+        if !first_char.is_ascii_alphabetic() && first_char != '_' {
+            return false;
+        }
+        
+        // All characters must be alphanumeric or underscore
+        name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
     }
 
     fn generate_parameter_expansion_rust(&self, pe: &ParameterExpansion) -> String {
@@ -2840,12 +3144,256 @@ impl RustGenerator {
             Command::BlankLine => "".to_string(),
         }
     }
-}
 
-impl RustGenerator {
+    fn expand_brace_range(&self, range: &crate::ast::BraceRange) -> String {
+        // First check if this is a character range
+        if let (Some(start_char), Some(end_char)) = (range.start.chars().next(), range.end.chars().next()) {
+            if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                // This is a character range
+                let start = start_char as u8;
+                let end = end_char as u8;
+                if start <= end {
+                    let step = range.step.as_ref().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
+                    let values: Vec<String> = (start..=end)
+                        .step_by(step)
+                        .map(|c| char::from(c).to_string())
+                        .collect();
+                    values.join(" ")
+                } else {
+                    // Reverse range
+                    let step = range.step.as_ref().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
+                    let values: Vec<String> = (end..=start)
+                        .rev()
+                        .step_by(step)
+                        .map(|c| char::from(c).to_string())
+                        .collect();
+                    values.join(" ")
+                }
+            } else {
+                // Try numeric range
+                if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
+                    let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
+                    let values: Vec<String> = if step > 0 {
+                        (start..=end).step_by(step as usize).map(|i| {
+                            // Preserve leading zeros by formatting with the same width as the original
+                            if range.start.starts_with('0') && range.start.len() > 1 {
+                                format!("{:0width$}", i, width = range.start.len())
+                            } else {
+                                i.to_string()
+                            }
+                        }).collect()
+                    } else {
+                        (end..=start).rev().step_by((-step) as usize).map(|i| {
+                            if range.start.starts_with('0') && range.start.len() > 1 {
+                                format!("{:0width$}", i, width = range.start.len())
+                            } else {
+                                i.to_string()
+                            }
+                        }).collect()
+                    };
+                    values.join(" ")
+                } else {
+                    // If parsing fails, fall back to literal
+                    format!("{{{}}}", range.start)
+                }
+            }
+        } else {
+            // Try numeric range
+            if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
+                let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
+                let values: Vec<String> = if step > 0 {
+                    (start..=end).step_by(step as usize).map(|i| {
+                        // Preserve leading zeros by formatting with the same width as the original
+                        if range.start.starts_with('0') && range.start.len() > 1 {
+                            format!("{:0width$}", i, width = range.start.len())
+                        } else {
+                            i.to_string()
+                        }
+                    }).collect()
+                } else {
+                    (end..=start).rev().step_by((-step) as usize).map(|i| {
+                        if range.start.starts_with('0') && range.start.len() > 1 {
+                            format!("{:0width$}", i, width = range.start.len())
+                        } else {
+                            i.to_string()
+                        }
+                    }).collect()
+                };
+                values.join(" ")
+            } else {
+                // If parsing fails, fall back to literal
+                format!("{{{}}}", range.start)
+            }
+        }
+    }
+
     fn extract_var_name(arg: &str) -> Option<String> {
         SharedUtils::extract_var_name(arg)
     }
+
+    fn generate_test_command(&mut self, cmd: &SimpleCommand, output: &mut String) {
+        // Convert test conditions to Rust
+        if cmd.args.len() == 3 {
+            // Format: [ operand1 operator operand2 ]
+            let operand1 = &cmd.args[0];
+            let operator = &cmd.args[1];
+            let operand2 = &cmd.args[2];
+            
+            match operator.as_str() {
+                "-lt" => {
+                    output.push_str(&format!("{} < {}", operand1, operand2));
+                }
+                "-le" => {
+                    output.push_str(&format!("{} <= {}", operand1, operand2));
+                }
+                "-eq" => {
+                    output.push_str(&format!("{} == {}", operand1, operand2));
+                }
+                "-ne" => {
+                    output.push_str(&format!("{} != {}", operand1, operand2));
+                }
+                "-gt" => {
+                    output.push_str(&format!("{} > {}", operand1, operand2));
+                }
+                "-ge" => {
+                    output.push_str(&format!("{} >= {}", operand1, operand2));
+                }
+                _ => {
+                    output.push_str(&format!("{} {} {}", operand1, operator, operand2));
+                }
+            }
+        } else if cmd.args.len() >= 2 {
+            let operator = &cmd.args[0];
+            let operand = &cmd.args[1];
+            
+            match operator.as_str() {
+                "-f" => {
+                    output.push_str(&format!("std::path::Path::new({}).is_file()", self.word_to_string(operand)));
+                }
+                "-d" => {
+                    output.push_str(&format!("std::path::Path::new({}).is_dir()", self.word_to_string(operand)));
+                }
+                "-e" => {
+                    output.push_str(&format!("std::path::Path::new({}).exists()", self.word_to_string(operand)));
+                }
+                "-r" => {
+                    output.push_str(&format!("std::fs::metadata({}).map(|m| m.permissions().readonly()).unwrap_or(false)", self.word_to_string(operand)));
+                }
+                "-w" => {
+                    output.push_str(&format!("std::fs::metadata({}).map(|m| !m.permissions().readonly()).unwrap_or(false)", self.word_to_string(operand)));
+                }
+                "-x" => {
+                    output.push_str(&format!("std::fs::metadata({}).map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false)", self.word_to_string(operand)));
+                }
+                "-z" => {
+                    output.push_str(&format!("{}.is_empty()", self.word_to_string(operand)));
+                }
+                "-n" => {
+                    output.push_str(&format!("!{}.is_empty()", self.word_to_string(operand)));
+                }
+                _ => {
+                    output.push_str(&format!("{} {} {}", self.word_to_string(operand), operator, self.word_to_string(operand)));
+                }
+            }
+        }
+    }
+
+    fn convert_echo_args_to_print_args(&self, args: &[Word]) -> String {
+        if args.is_empty() {
+            return "\"\\n\"".to_string();
+        }
+        
+        let mut parts = Vec::new();
+        for arg in args {
+            match arg {
+                Word::Literal(s) => {
+                    parts.push(format!("\"{}\"", self.escape_rust_string(s)));
+                }
+                Word::Variable(var) => {
+                    if var == "#" {
+                        parts.push("env::args().len() - 1".to_string());
+                    } else if var == "@" {
+                        parts.push("env::args().skip(1).collect::<Vec<_>>().join(\" \")".to_string());
+                    } else if var.starts_with('#') && var.ends_with("[@]") {
+                        let array_name = &var[1..var.len()-3];
+                        parts.push(format!("{}.len()", array_name));
+                    } else if var.starts_with('#') && var.ends_with("[*]") {
+                        let array_name = &var[1..var.len()-3];
+                        parts.push(format!("{}.len()", array_name));
+                    } else if var.starts_with('!') && var.ends_with("[@]") {
+                        let array_name = &var[1..var.len()-3];
+                        parts.push(format!("{}.keys().cloned().collect::<Vec<_>>().join(\" \")", array_name));
+                    } else if var.starts_with('!') && var.ends_with("[*]") {
+                        let array_name = &var[1..var.len()-3];
+                        parts.push(format!("{}.keys().cloned().collect::<Vec<_>>().join(\" \")", array_name));
+                    } else {
+                        parts.push(format!("{}", var));
+                    }
+                }
+                Word::StringInterpolation(interp) => {
+                    if interp.parts.len() == 1 {
+                        if let StringPart::Literal(s) = &interp.parts[0] {
+                            parts.push(format!("\"{}\"", self.escape_rust_string(s)));
+                        } else if let StringPart::Variable(var) = &interp.parts[0] {
+                            if var == "#" {
+                                parts.push("env::args().len() - 1".to_string());
+                            } else if var == "@" {
+                                parts.push("env::args().skip(1).collect::<Vec<_>>().join(\" \")".to_string());
+                            } else {
+                                parts.push(format!("{}", var));
+                            }
+                        } else if let StringPart::MapAccess(map_name, key) = &interp.parts[0] {
+                            if map_name == "map" {
+                                parts.push(format!("map.get({}).unwrap_or(&String::new())", key));
+                            } else {
+                                parts.push(format!("{}.get({}).unwrap_or(&String::new())", map_name, key));
+                            }
+                        } else {
+                            parts.push(self.convert_string_interpolation_to_rust(interp));
+                        }
+                    } else {
+                        // Multiple parts - handle each part separately
+                        for part in &interp.parts {
+                            match part {
+                                StringPart::Literal(s) => {
+                                    parts.push(format!("\"{}\"", self.escape_rust_string(s)));
+                                }
+                                StringPart::Variable(var) => {
+                                    if var == "#" {
+                                        parts.push("env::args().len() - 1".to_string());
+                                    } else if var == "@" {
+                                        parts.push("env::args().skip(1).collect::<Vec<_>>().join(\" \")".to_string());
+                                    } else {
+                                        parts.push(format!("{}", var));
+                                    }
+                                }
+                                _ => {
+                                    parts.push(self.convert_string_interpolation_to_rust(interp));
+                                }
+                            }
+                        }
+                    }
+                }
+                Word::BraceExpansion(expansion) => {
+                    // Use the helper method to expand brace expansions
+                    let expanded = self.expand_brace_expansions_in_args(&[arg.clone()]);
+                    parts.push(format!("\"{}\"", expanded.join(" ")));
+                }
+                _ => {
+                    parts.push(self.word_to_string(arg));
+                }
+            }
+        }
+        
+        // For Rust, we need to use println! with format! for proper string handling
+        if parts.len() == 1 {
+            parts[0].clone()
+        } else {
+            // Use format! macro for multiple parts to avoid string concatenation issues
+            format!("format!(\"{}\", {})", "{}".repeat(parts.len()), parts.join(", "))
+        }
+    }
+
 }
 
 

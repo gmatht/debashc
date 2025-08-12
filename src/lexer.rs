@@ -95,7 +95,7 @@ pub enum Token {
     Semicolon,
     #[token(";;")]
     DoubleSemicolon,
-    #[token("..")]
+    #[token("..", priority = 3)]
     Range,
     #[token("(")]
     ParenOpen,
@@ -272,7 +272,7 @@ pub enum Token {
     DollarDoubleQuotedString,
 
     // Identifiers and words
-    #[regex(r"[a-zA-Z_][a-zA-Z0-9_.*?-]*", priority = 2)]
+    #[regex(r"[a-zA-Z_][a-zA-Z0-9_*?-]*", priority = 2)]
     Identifier,
 
     #[regex(r"[0-9]+")]

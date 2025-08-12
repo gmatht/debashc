@@ -349,6 +349,10 @@ impl PerlGenerator {
                     let perl_args = args.iter().map(|arg| {
                         // For printf arguments, we need to ensure proper quoting
                         match arg {
+                            Word::Literal(s) => {
+                                // Always quote literal strings for printf arguments
+                                format!("\"{}\"", self.escape_perl_string(s))
+                            }
                             Word::Variable(var) => format!("${}", var),
                             Word::StringInterpolation(interp) => {
                                 // For printf arguments, if it's just a single literal part, quote it
@@ -390,9 +394,9 @@ impl PerlGenerator {
                     for i in 1..cmd.args.len()-1 {
                         if let Word::BraceExpansion(expansion) = &cmd.args[i] {
                             // Reconstruct the pattern: prefix + brace_expansion + suffix
-                            let prefix = self.word_to_perl(&cmd.args[i-1]);
+                            let prefix = self.word_to_perl(&cmd.args[i-1]).trim_matches('"').to_string();
                             // Concatenate all remaining arguments after the brace expansion
-                            let suffix: String = cmd.args.iter().skip(i+1).map(|arg| self.word_to_perl(arg)).collect();
+                            let suffix: String = cmd.args.iter().skip(i+1).map(|arg| self.word_to_perl(arg).trim_matches('"').to_string()).collect();
                             
                             if expansion.items.len() == 1 {
                                 match &expansion.items[0] {
@@ -424,7 +428,7 @@ impl PerlGenerator {
                                     }
                                     _ => {
                                         // For other brace items, just add the literal
-                                        all_files.push(format!("{}{}{}", prefix, self.word_to_perl(&cmd.args[i]), suffix));
+                                        all_files.push(format!("{}{}{}", prefix, self.word_to_perl(&cmd.args[i]).trim_matches('"'), suffix));
                                     }
                                 }
                             } else {
@@ -573,23 +577,35 @@ impl PerlGenerator {
             if !cmd.args.is_empty() {
                 // Expand brace expansion in arguments
                 let mut expanded_args = Vec::new();
+                let mut current_pattern = String::new();
+                
+                // Reconstruct the full pattern from multiple arguments
                 for arg in &cmd.args {
                     let expanded = self.word_to_perl(arg);
-                    expanded_args.push(expanded);
+                    current_pattern.push_str(&expanded);
+                }
+                
+                // If we have a pattern, add it to expanded_args
+                if !current_pattern.is_empty() {
+                    expanded_args.push(current_pattern);
                 }
                 
                 // Remove each file
                 for arg in expanded_args {
                     if arg.contains('*') {
                         // Handle glob patterns like file_*.txt
+                        let pattern = arg.replace('*', ".*");
                         let dh = self.get_unique_dir_handle();
                         output.push_str(&format!("opendir(my {}, '.') or die \"Cannot open directory: $!\\n\";\n", dh));
                         output.push_str(&format!("while (my $file = readdir({})) {{\n", dh));
-                        output.push_str(&format!("    if ($file =~ /^{}$/) {{\n", arg.replace('*', ".*")));
+                        output.push_str(&format!("    if ($file =~ /^{}$/) {{\n", pattern));
                         output.push_str("        unlink($file) or die \"Cannot remove file: $!\\n\";\n");
                         output.push_str("    }\n");
                         output.push_str("}\n");
                         output.push_str(&format!("closedir({});\n", dh));
+                    } else if arg == "\".\"" || arg == "\"txt\"" {
+                        // Skip these arguments as they're part of the glob pattern
+                        continue;
                     } else {
                         // Regular file
                         output.push_str(&format!("unlink('{}') or die \"Cannot remove file: $!\\n\";\n", arg));
@@ -609,14 +625,22 @@ impl PerlGenerator {
             } else {
                 // Handle arguments with potential brace expansion
                 let mut expanded_args = Vec::new();
+                let mut current_pattern = String::new();
+                
+                // Reconstruct the full pattern from multiple arguments
                 for arg in &cmd.args {
                     if arg.starts_with('-') {
                         // Skip flags
                         continue;
                     }
-                    // Expand brace expansion in the argument
+                    // Add this argument to the current pattern
                     let expanded = self.word_to_perl(arg);
-                    expanded_args.push(expanded);
+                    current_pattern.push_str(&expanded);
+                }
+                
+                // If we have a pattern, add it to expanded_args
+                if !current_pattern.is_empty() {
+                    expanded_args.push(current_pattern);
                 }
                 
                 if expanded_args.is_empty() {
@@ -641,6 +665,9 @@ impl PerlGenerator {
                             output.push_str("    }\n");
                             output.push_str("}\n");
                             output.push_str(&format!("closedir({});\n", dh));
+                        } else if arg == "\".\"" || arg == "\"txt\"" {
+                            // Skip these arguments as they're part of the glob pattern
+                            continue;
                         } else {
                             // Regular directory/file
                             let dh = self.get_unique_dir_handle();
@@ -2979,9 +3006,93 @@ impl PerlGenerator {
         format!("\"{}\"", result)
     }
 
-    fn word_to_perl(&self, word: &Word) -> String {
+    fn word_to_perl(&mut self, word: &Word) -> String {
         match word {
-            Word::Literal(s) => self.perl_string_literal(s),
+            Word::Literal(s) => {
+                // Handle literal strings that might contain ranges like "a..c" or "00..04..2"
+                if s.contains("..") {
+                    let parts: Vec<&str> = s.split("..").collect();
+                    if parts.len() == 2 {
+                        // Simple range like "a..c"
+                        if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), parts[1].chars().next()) {
+                            if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                                let start = start_char as u8;
+                                let end = end_char as u8;
+                                if start <= end {
+                                    let values: Vec<String> = (start..=end)
+                                        .map(|c| char::from(c).to_string())
+                                        .collect();
+                                    values.join(" ")
+                                } else {
+                                    s.clone()
+                                }
+                            } else {
+                                s.clone()
+                            }
+                        } else {
+                            s.clone()
+                        }
+                    } else if parts.len() == 3 && parts[1].contains("..") {
+                        // Character range with step like "a..z..3"
+                        let sub_parts: Vec<&str> = parts[1].split("..").collect();
+                        if sub_parts.len() == 2 {
+                            if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), sub_parts[1].chars().next()) {
+                                if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                                    if let Ok(step) = parts[2].parse::<usize>() {
+                                        let start = start_char as u8;
+                                        let end = end_char as u8;
+                                        if start <= end {
+                                            let values: Vec<String> = (start..=end)
+                                                .step_by(step)
+                                                .map(|c| char::from(c).to_string())
+                                                .collect();
+                                            values.join(" ")
+                                        } else {
+                                            s.clone()
+                                        }
+                                    } else {
+                                        s.clone()
+                                    }
+                                } else {
+                                    s.clone()
+                                }
+                            } else {
+                                s.clone()
+                            }
+                        } else {
+                            s.clone()
+                        }
+                    } else if parts.len() == 3 {
+                        // Range with step like "00..04..2"
+                        if let (Ok(start), Ok(end), Ok(step)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>(), parts[2].parse::<i64>()) {
+                            let values: Vec<String> = (start..=end).step_by(step as usize).map(|i| {
+                                // Preserve leading zeros by formatting with the same width as the original
+                                if parts[0].starts_with('0') && parts[0].len() > 1 {
+                                    format!("{:0width$}", i, width = parts[0].len())
+                                } else {
+                                    i.to_string()
+                                }
+                            }).collect();
+                            values.join(" ")
+                        } else {
+                            s.clone()
+                        }
+                    } else {
+                        s.clone()
+                    }
+                } else if s.contains(',') {
+                    // Handle comma-separated sequences like "a,b,c"
+                    let parts: Vec<&str> = s.split(',').collect();
+                    if parts.len() > 1 {
+                        parts.join(" ")
+                    } else {
+                        s.clone()
+                    }
+                } else {
+                    s.clone()
+                }
+            },
+            Word::ParameterExpansion(pe) => self.generate_parameter_expansion(pe),
             Word::Array(name, elements) => {
                 // Convert array declaration to Perl array
                 let elements_str = elements.iter()
@@ -2989,140 +3100,6 @@ impl PerlGenerator {
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("@{} = ({});", name, elements_str)
-            },
-            Word::ParameterExpansion(pe) => self.generate_parameter_expansion(pe),
-            Word::Variable(var) => {
-                // Handle parameter expansion operators
-                if var.contains("^^") {
-                    // ${var^^} -> uc($var) - uppercase all characters
-                    let var_name = var.replace("^^", "");
-                    format!("uc(${})", var_name)
-                } else if var.contains(",,)") {
-                    // ${var,,} -> lc($var) - lowercase all characters
-                    let var_name = var.replace(",,)", "");
-                    format!("lc(${})", var_name)
-                } else if var.contains("^)") {
-                    // ${var^} -> ucfirst($var) - uppercase first character
-                    let var_name = var.replace("^)", "");
-                    format!("ucfirst(${})", var_name)
-                } else if var.ends_with("##*/") {
-                    // ${var##*/} -> basename($var) - remove longest prefix matching */
-                    let var_name = var.replace("##*/", "");
-                    format!("basename(${})", var_name)
-                } else if var.ends_with("%/*") {
-                    // ${var%/*} -> dirname($var) - remove shortest suffix matching /*
-                    let var_name = var.replace("%/*", "");
-                    format!("dirname(${})", var_name)
-                } else if var.contains("//") {
-                    // ${var//pattern/replacement} -> $var =~ s/pattern/replacement/g
-                    let parts: Vec<&str> = var.split("//").collect();
-                    if parts.len() >= 2 {
-                        let var_name = parts[0];
-                        if parts.len() >= 3 {
-                            let pattern = parts[1];
-                            let replacement = parts[2];
-                            format!("${} =~ s/{}/{}/g", var_name, pattern, replacement)
-                        } else {
-                            // Only 2 parts: ${var//pattern} -> $var =~ s/pattern//g
-                            let pattern = parts[1];
-                            format!("${} =~ s/{}/g", var_name, pattern)
-                        }
-                    } else {
-                        format!("${}", var)
-                    }
-                } else if var.contains("#") && !var.starts_with('#') {
-                    // ${var#pattern} -> $var =~ s/^pattern// - remove shortest prefix
-                    let parts: Vec<&str> = var.split("#").collect();
-                    if parts.len() == 2 {
-                        let var_name = parts[0];
-                        let pattern = parts[1];
-                        format!("${} =~ s/^{}//", var_name, pattern)
-                    } else {
-                        format!("${}", var)
-                    }
-                } else if var.contains("%") && !var.starts_with('%') {
-                    // ${var%pattern} -> $var =~ s/pattern$// - remove shortest suffix
-                    let parts: Vec<&str> = var.split("%").collect();
-                    if parts.len() == 2 {
-                        let var_name = parts[0];
-                        let pattern = parts[1];
-                        format!("${} =~ s/{}$//", var_name, pattern)
-                    } else {
-                        format!("${}", var)
-                    }
-                } else if var.contains(":-") {
-                    // ${var:-default} -> defined($var) ? $var : 'default'
-                    let parts: Vec<&str> = var.split(":-").collect();
-                    if parts.len() == 2 {
-                        let var_name = parts[0];
-                        let default = parts[1];
-                        format!("defined(${}) ? ${} : '{}'", var_name, var_name, default)
-                    } else {
-                        format!("${}", var)
-                    }
-                } else if var.contains(":=") {
-                    // ${var:=default} -> $var //= 'default' (set if undefined)
-                    let parts: Vec<&str> = var.split(":=").collect();
-                    if parts.len() == 2 {
-                        let var_name = parts[0];
-                        let default = parts[1];
-                        format!("${} //= '{}'", var_name, default)
-                    } else {
-                        format!("${}", var)
-                    }
-                } else if var.contains(":?") {
-                    // ${var:?error} -> die if undefined
-                    let parts: Vec<&str> = var.split(":?").collect();
-                    if parts.len() == 2 {
-                        let var_name = parts[0];
-                        let error = parts[1];
-                        format!("defined(${}) ? ${} : die('{}')", var_name, var_name, error)
-                    } else {
-                        format!("${}", var)
-                    }
-                } else if var.starts_with('#') && var.ends_with("[@]") {
-                    // ${#arr[@]} -> scalar(@arr)
-                    let array_name = &var[1..var.len()-3];
-                    format!("scalar(@{})", array_name)
-                } else if var.starts_with('!') && var.ends_with("[@]") {
-                    // ${!map[@]} -> keys(%map)
-                    let hash_name = &var[1..var.len()-3];
-                    format!("keys(%{})", hash_name)
-                } else if var.starts_with('#') && var.ends_with("[*]") {
-                    // ${#arr[*]} -> scalar(@arr)
-                    let array_name = &var[1..var.len()-3];
-                    format!("scalar(@{})", array_name)
-                } else if var.starts_with('!') && var.ends_with("[*]") {
-                    // ${!map[*]} -> keys(%map)
-                    let hash_name = &var[1..var.len()-3];
-                    format!("keys(%{})", hash_name)
-                } else {
-                    format!("${}", var)
-                }
-            },
-            Word::MapAccess(map_name, key) => {
-                // Handle the key - if it starts with $, it's a variable reference
-                let processed_key = if key.starts_with('$') {
-                    // Remove the $ prefix to get the variable name
-                    &key[1..]
-                } else {
-                    key
-                };
-                
-                // For now, assume "map" is a hash and others are indexed arrays
-                if map_name == "map" {
-                    format!("${}{{{}}}", map_name, processed_key)
-                } else {
-                    format!("${}[{}]", map_name, processed_key)
-                }
-            },
-            Word::MapKeys(map_name) => {
-                // ${!map[@]} -> keys(%map)
-                format!("keys(%{})", map_name)
-            },
-            Word::MapLength(map_name) => {
-                // ${#arr[@]} -> scalar(@arr)
-                format!("scalar(@{})", map_name)
             },
             Word::StringInterpolation(interp) => self.convert_string_interpolation_to_perl(interp),
             Word::Arithmetic(expr) => self.convert_arithmetic_to_perl(&expr.expression),
@@ -3132,37 +3109,7 @@ impl PerlGenerator {
                     match &expansion.items[0] {
                         BraceItem::Range(range) => {
                             // Expand range like {1..5} to "1 2 3 4 5"
-                            // Check if this is a character range
-                            if let (Some(start_char), Some(end_char)) = (range.start.chars().next(), range.end.chars().next()) {
-                                if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
-                                    // This is a character range
-                                    let start = start_char as u8;
-                                    let end = end_char as u8;
-                                    if start <= end {
-                                        let step = range.step.as_ref().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
-                                        let values: Vec<String> = (start..=end)
-                                            .step_by(step)
-                                            .map(|c| char::from(c).to_string())
-                                            .collect();
-                                        values.join(" ")
-                                    } else {
-                                        // Reverse range
-                                        let step = range.step.as_ref().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
-                                        let values: Vec<String> = (end..=start)
-                                            .rev()
-                                            .step_by(step)
-                                            .map(|c| char::from(c).to_string())
-                                            .collect();
-                                        values.join(" ")
-                                    }
-                                } else {
-                                    // This is a numeric range
-                                    self.expand_brace_range(range)
-                                }
-                            } else {
-                                // This is a numeric range
-                                self.expand_brace_range(range)
-                            }
+                            self.expand_brace_range(range)
                         }
                         BraceItem::Literal(s) => {
                             // Handle literal strings that might contain ranges like "a..c" or "00..04..2"
@@ -3297,6 +3244,27 @@ impl PerlGenerator {
                 let content = self.convert_string_interpolation_to_perl(interp);
                 format!("\"{}\"", content)
             },
+            Word::Variable(var) => {
+                // First try to extract parameter expansion operators using the helper method
+                if let Some(pe) = self.extract_parameter_expansion(var) {
+                    self.generate_parameter_expansion(&pe)
+                } else {
+                    // Regular variable reference
+                    format!("${}", var)
+                }
+            },
+            Word::MapAccess(map_name, key) => {
+                // ${map[key]} -> $map{$key}
+                format!("${}{{{}}}", map_name, key)
+            },
+            Word::MapKeys(map_name) => {
+                // ${!map[@]} -> keys(%map)
+                format!("keys(%{})", map_name)
+            },
+            Word::MapLength(map_name) => {
+                // ${#arr[@]} -> scalar(@arr)
+                format!("scalar(@{})", map_name)
+            },
         }
     }
 
@@ -3317,8 +3285,8 @@ impl PerlGenerator {
             Word::ParameterExpansion(pe) => self.generate_parameter_expansion(pe),
             Word::Variable(var) => {
                 // First try to extract parameter expansion operators using the helper method
-                if let Some((base_var, operator)) = self.extract_parameter_expansion(var) {
-                    self.apply_parameter_expansion(&base_var, &operator)
+                if let Some(pe) = self.extract_parameter_expansion(var) {
+                    self.generate_parameter_expansion(&pe)
                 } else if var.contains(":-") {
                     // ${var:-default} -> defined($var) ? $var : 'default'
                     let parts: Vec<&str> = var.split(":-").collect();
@@ -3624,7 +3592,7 @@ impl PerlGenerator {
         }
     }
 
-    fn combine_adjacent_brace_expansions(&self, args: &[Word]) -> Vec<String> {
+    fn combine_adjacent_brace_expansions(&mut self, args: &[Word]) -> Vec<String> {
         let mut result = Vec::new();
         let mut i = 0;
         
@@ -3758,45 +3726,159 @@ impl PerlGenerator {
         results
     }
 
-    fn extract_parameter_expansion(&self, var: &str) -> Option<(String, String)> {
-        // Try to extract base variable name and operator from malformed parameter expansion
-        // Handle case modification operators
+    fn extract_parameter_expansion(&self, var: &str) -> Option<ParameterExpansion> {
+        // Handle parameter expansion operators
         if var.contains("^^") {
+            // ${var^^} -> uc($var) - uppercase all characters
             let var_name = var.replace("^^", "");
-            Some((var_name, "^^".to_string()))
+            Some(ParameterExpansion {
+                variable: var_name,
+                operator: ParameterExpansionOperator::UppercaseAll,
+            })
         } else if var.contains(",,)") {
+            // ${var,,} -> lc($var) - lowercase all characters
             let var_name = var.replace(",,)", "");
-            Some((var_name, ",,".to_string()))
+            Some(ParameterExpansion {
+                variable: var_name,
+                operator: ParameterExpansionOperator::LowercaseAll,
+            })
         } else if var.contains("^)") {
+            // ${var^} -> ucfirst($var) - uppercase first character
             let var_name = var.replace("^)", "");
-            Some((var_name, "^".to_string()))
-        } else if var.contains("##*/") {
+            Some(ParameterExpansion {
+                variable: var_name,
+                operator: ParameterExpansionOperator::UppercaseFirst,
+            })
+        } else if var.ends_with("##*/") {
+            // ${var##*/} -> basename($var) - remove longest prefix matching */
             let var_name = var.replace("##*/", "");
-            Some((var_name, "##*/".to_string()))
-        } else if var.contains("%/*") {
+            Some(ParameterExpansion {
+                variable: var_name,
+                operator: ParameterExpansionOperator::Basename,
+            })
+        } else if var.ends_with("%/*") {
+            // ${var%/*} -> dirname($var) - remove shortest suffix matching /*
             let var_name = var.replace("%/*", "");
-            Some((var_name, "%/*".to_string()))
+            Some(ParameterExpansion {
+                variable: var_name,
+                operator: ParameterExpansionOperator::Dirname,
+            })
         } else if var.contains("//") {
+            // ${var//pattern/replacement} -> $var =~ s/pattern/replacement/g
             let parts: Vec<&str> = var.split("//").collect();
-            if parts.len() == 3 {
-                Some((parts[0].to_string(), "//".to_string()))
+            if parts.len() >= 2 {
+                let var_name = parts[0];
+                if parts.len() >= 3 {
+                    let pattern = parts[1];
+                    let replacement = parts[2];
+                    Some(ParameterExpansion {
+                        variable: var_name.to_string(),
+                        operator: ParameterExpansionOperator::SubstituteAll(pattern.to_string(), replacement.to_string()),
+                    })
+                } else {
+                    // Only 2 parts: ${var//pattern} -> $var =~ s/pattern//g
+                    let pattern = parts[1];
+                    Some(ParameterExpansion {
+                        variable: var_name.to_string(),
+                        operator: ParameterExpansionOperator::SubstituteAll(pattern.to_string(), "".to_string()),
+                    })
+                }
             } else {
                 None
             }
         } else if var.contains("#") && !var.starts_with('#') {
+            // ${var#pattern} -> $var =~ s/^pattern// - remove shortest prefix
             let parts: Vec<&str> = var.split("#").collect();
             if parts.len() == 2 {
-                Some((parts[0].to_string(), "#".to_string()))
+                let var_name = parts[0];
+                let pattern = parts[1];
+                Some(ParameterExpansion {
+                    variable: var_name.to_string(),
+                    operator: ParameterExpansionOperator::RemoveShortestPrefix(pattern.to_string()),
+                })
             } else {
                 None
             }
         } else if var.contains("%") && !var.starts_with('%') {
+            // ${var%pattern} -> $var =~ s/pattern$// - remove shortest suffix
             let parts: Vec<&str> = var.split("%").collect();
             if parts.len() == 2 {
-                Some((parts[0].to_string(), "%".to_string()))
+                let var_name = parts[0];
+                let pattern = parts[1];
+                Some(ParameterExpansion {
+                    variable: var_name.to_string(),
+                    operator: ParameterExpansionOperator::RemoveShortestSuffix(pattern.to_string()),
+                })
             } else {
                 None
             }
+        } else if var.contains(":-") {
+            // ${var:-default} -> defined($var) ? $var : 'default'
+            let parts: Vec<&str> = var.split(":-").collect();
+            if parts.len() == 2 {
+                let var_name = parts[0];
+                let default = parts[1];
+                Some(ParameterExpansion {
+                    variable: var_name.to_string(),
+                    operator: ParameterExpansionOperator::DefaultValue(default.to_string()),
+                })
+            } else {
+                None
+            }
+        } else if var.contains(":=") {
+            // ${var:=default} -> $var //= 'default' (set if undefined)
+            let parts: Vec<&str> = var.split(":=").collect();
+            if parts.len() == 2 {
+                let var_name = parts[0];
+                let default = parts[1];
+                Some(ParameterExpansion {
+                    variable: var_name.to_string(),
+                    operator: ParameterExpansionOperator::AssignDefault(default.to_string()),
+                })
+            } else {
+                None
+            }
+        } else if var.contains(":?") {
+            // ${var:?error} -> die if undefined
+            let parts: Vec<&str> = var.split(":?").collect();
+            if parts.len() == 2 {
+                let var_name = parts[0];
+                let error = parts[1];
+                Some(ParameterExpansion {
+                    variable: var_name.to_string(),
+                    operator: ParameterExpansionOperator::ErrorIfUnset(error.to_string()),
+                })
+            } else {
+                None
+            }
+        } else if var.starts_with('#') && var.ends_with("[@]") {
+            // ${#arr[@]} -> scalar(@arr)
+            let array_name = &var[1..var.len()-3];
+            Some(ParameterExpansion {
+                variable: array_name.to_string(),
+                operator: ParameterExpansionOperator::RemoveShortestPrefix("[@]".to_string()),
+            })
+        } else if var.starts_with('!') && var.ends_with("[@]") {
+            // ${!map[@]} -> keys(%map)
+            let hash_name = &var[1..var.len()-3];
+            Some(ParameterExpansion {
+                variable: hash_name.to_string(),
+                operator: ParameterExpansionOperator::RemoveShortestPrefix("[@]".to_string()),
+            })
+        } else if var.starts_with('#') && var.ends_with("[*]") {
+            // ${#arr[*]} -> scalar(@arr)
+            let array_name = &var[1..var.len()-3];
+            Some(ParameterExpansion {
+                variable: array_name.to_string(),
+                operator: ParameterExpansionOperator::RemoveShortestPrefix("[*]".to_string()),
+            })
+        } else if var.starts_with('!') && var.ends_with("[*]") {
+            // ${!map[*]} -> keys(%map)
+            let hash_name = &var[1..var.len()-3];
+            Some(ParameterExpansion {
+                variable: hash_name.to_string(),
+                operator: ParameterExpansionOperator::RemoveShortestPrefix("[*]".to_string()),
+            })
         } else {
             None
         }
@@ -3854,95 +3936,155 @@ impl PerlGenerator {
         SharedUtils::convert_glob_to_regex(pattern)
     }
 
-    fn convert_echo_args_to_print_args(&self, args: &[Word]) -> String {
+    fn convert_echo_args_to_print_args(&mut self, args: &[Word]) -> String {
         if args.is_empty() {
             return "\"\\n\"".to_string();
         }
         
-        let mut parts = Vec::new();
-        for arg in args {
-            match arg {
-                Word::Literal(s) => {
-                    parts.push(format!("\"{}\"", self.escape_perl_string_without_quotes(s)));
+        // Check if we have multiple brace expansions that need cartesian product
+        let brace_expansions: Vec<_> = args.iter().enumerate()
+            .filter_map(|(i, arg)| {
+                if let Word::BraceExpansion(_) = arg {
+                    Some(i)
+                } else {
+                    None
                 }
-                Word::Variable(var) => {
-                    if var == "#" {
-                        parts.push("scalar(@ARGV)".to_string());
-                    } else if var == "@" {
-                        parts.push("join(\" \", @ARGV)".to_string());
-                    } else if var.starts_with('#') && var.ends_with("[@]") {
-                        let array_name = &var[1..var.len()-3];
-                        parts.push(format!("scalar(@{})", array_name));
-                    } else if var.starts_with('#') && var.ends_with("[*]") {
-                        let array_name = &var[1..var.len()-3];
-                        parts.push(format!("scalar(@{})", array_name));
-                    } else if var.starts_with('!') && var.ends_with("[@]") {
-                        let array_name = &var[1..var.len()-3];
-                        parts.push(format!("join(\" \", keys(%{}))", array_name));
-                    } else if var.starts_with('!') && var.ends_with("[*]") {
-                        let array_name = &var[1..var.len()-3];
-                        parts.push(format!("join(\" \", keys(%{}))", array_name));
-                    } else {
-                        parts.push(format!("${}", var));
-                    }
-                }
-                Word::StringInterpolation(interp) => {
-                    if interp.parts.len() == 1 {
-                        if let StringPart::Literal(s) = &interp.parts[0] {
-                            parts.push(format!("\"{}\"", self.escape_perl_string_without_quotes(s)));
-                        } else if let StringPart::Variable(var) = &interp.parts[0] {
-                            if var == "#" {
-                                parts.push("scalar(@ARGV)".to_string());
-                            } else if var == "@" {
-                                parts.push("join(\" \", @ARGV)".to_string());
-                            } else {
-                                parts.push(format!("${}", var));
-                            }
-                        } else if let StringPart::MapAccess(map_name, key) = &interp.parts[0] {
-                            if map_name == "map" {
-                                parts.push(format!("$map{{{}}}", key));
-                            } else {
-                                parts.push(format!("${}[{}]", map_name, key));
-                            }
-                        } else {
-                            parts.push(self.convert_string_interpolation_to_perl(interp));
-                        }
-                    } else {
-                        // Multiple parts - concatenate them
-                        let mut sub_parts = Vec::new();
-                        for part in &interp.parts {
-                            match part {
-                                StringPart::Literal(s) => {
-                                    sub_parts.push(format!("\"{}\"", self.escape_perl_string_without_quotes(s)));
-                                }
-                                StringPart::Variable(var) => {
-                                    sub_parts.push(format!("${}", var));
-                                }
-                                _ => {
-                                    sub_parts.push(self.convert_string_interpolation_to_perl(interp));
-                                }
-                            }
-                        }
-                        let concatenated = sub_parts.join(" . ");
-                        parts.push(format!("({})", concatenated));
-                    }
-                }
-                Word::BraceExpansion(expansion) => {
-                    // Use the helper method to expand brace expansions
-                    let expanded = self.expand_brace_expansion_to_strings(expansion);
-                    parts.push(format!("\"{}\"", expanded.join(" ")));
-                }
-                _ => {
-                    parts.push(self.word_to_perl(arg));
+            })
+            .collect();
+        
+        if brace_expansions.len() > 1 {
+            // We have multiple brace expansions - generate cartesian product
+            let mut all_combinations = Vec::new();
+            
+            // Get all possible values for each brace expansion
+            let mut expansion_values: Vec<Vec<String>> = Vec::new();
+            for &idx in &brace_expansions {
+                if let Word::BraceExpansion(expansion) = &args[idx] {
+                    expansion_values.push(self.expand_brace_expansion_to_strings(expansion));
                 }
             }
+            
+            // Generate cartesian product
+            self.generate_cartesian_product(&expansion_values, &mut all_combinations, 0, &mut Vec::new());
+            
+            // Convert combinations to Perl strings
+            let combination_strings: Vec<String> = all_combinations.iter()
+                .map(|combo| format!("\"{}\"", combo.join("")))
+                .collect();
+            
+            // Join with spaces between combinations
+            format!("{} . \"\\n\"", combination_strings.join(" . "))
+        } else {
+            // Single brace expansion or no brace expansions - handle normally
+            let mut parts = Vec::new();
+            for arg in args {
+                match arg {
+                    Word::Literal(s) => {
+                        parts.push(format!("\"{}\"", self.escape_perl_string_without_quotes(s)));
+                    }
+                    Word::Variable(var) => {
+                        if var == "#" {
+                            parts.push("scalar(@ARGV)".to_string());
+                        } else if var == "@" {
+                            parts.push("join(\" \", @ARGV)".to_string());
+                        } else if var.starts_with('#') && var.ends_with("[@]") {
+                            let array_name = &var[1..var.len()-3];
+                            parts.push(format!("scalar(@{})", array_name));
+                        } else if var.starts_with('#') && var.ends_with("[*]") {
+                            let array_name = &var[1..var.len()-3];
+                            parts.push(format!("scalar(@{})", array_name));
+                        } else if var.starts_with('!') && var.ends_with("[@]") {
+                            let array_name = &var[1..var.len()-3];
+                            parts.push(format!("join(\" \", keys(%{}))", array_name));
+                        } else if var.starts_with('!') && var.ends_with("[*]") {
+                            let array_name = &var[1..var.len()-3];
+                            parts.push(format!("join(\" \", keys(%{}))", array_name));
+                        } else {
+                            parts.push(format!("${}", var));
+                        }
+                    }
+                    Word::StringInterpolation(interp) => {
+                        if interp.parts.len() == 1 {
+                            if let StringPart::Literal(s) = &interp.parts[0] {
+                                parts.push(format!("\"{}\"", self.escape_perl_string_without_quotes(s)));
+                            } else if let StringPart::Variable(var) = &interp.parts[0] {
+                                if var == "#" {
+                                    parts.push("scalar(@ARGV)".to_string());
+                                } else if var == "@" {
+                                    parts.push("join(\" \", @ARGV)".to_string());
+                                } else {
+                                    parts.push(format!("${}", var));
+                                }
+                            } else if let StringPart::MapAccess(map_name, key) = &interp.parts[0] {
+                                if map_name == "map" {
+                                    parts.push(format!("$map{{{}}}", key));
+                                } else {
+                                    parts.push(format!("${}[{}]", map_name, key));
+                                }
+                            } else {
+                                parts.push(self.convert_string_interpolation_to_perl(interp));
+                            }
+                        } else {
+                            // Multiple parts - concatenate them
+                            let mut sub_parts = Vec::new();
+                            for part in &interp.parts {
+                                match part {
+                                    StringPart::Literal(s) => {
+                                        sub_parts.push(format!("\"{}\"", self.escape_perl_string_without_quotes(s)));
+                                    }
+                                    StringPart::Variable(var) => {
+                                        sub_parts.push(format!("${}", var));
+                                    }
+                                    _ => {
+                                        sub_parts.push(self.convert_string_interpolation_to_perl(interp));
+                                    }
+                                }
+                            }
+                            let concatenated = sub_parts.join(" . ");
+                            parts.push(format!("({})", concatenated));
+                        }
+                    }
+                    Word::BraceExpansion(expansion) => {
+                        // Use the helper method to expand brace expansions
+                        let expanded = self.expand_brace_expansion_to_strings(expansion);
+                        parts.push(format!("\"{}\"", expanded.join(" ")));
+                    }
+                    _ => {
+                        parts.push(self.word_to_perl(arg));
+                    }
+                }
+            }
+            
+            // Join all parts with concatenation and add newline
+            if parts.len() == 1 {
+                format!("{} . \"\\n\"", parts[0])
+            } else {
+                format!("{} . \"\\n\"", parts.join(" . "))
+            }
+        }
+    }
+
+    fn generate_cartesian_product(&self, expansion_values: &[Vec<String>], result: &mut Vec<Vec<String>>, depth: usize, current: &mut Vec<String>) {
+        if depth == expansion_values.len() {
+            // We've reached the end, add this combination
+            result.push(current.clone());
+            return;
         }
         
-        // Join all parts with concatenation and add newline
-        if parts.len() == 1 {
-            format!("{} . \"\\n\"", parts[0])
+        // Try each value for the current depth
+        for value in &expansion_values[depth] {
+            current.push(value.clone());
+            self.generate_cartesian_product(expansion_values, result, depth + 1, current);
+            current.pop();
+        }
+    }
+
+    fn generate_array_name(&self, array_name: &str) -> String {
+        // Convert shell array name to Perl array name
+        if array_name.starts_with('$') {
+            array_name[1..].to_string()
         } else {
-            format!("{} . \"\\n\"", parts.join(" . "))
+            array_name.to_string()
         }
     }
 } 

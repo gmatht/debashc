@@ -1,10 +1,10 @@
 [package]
-name = "debashc"
+name = "debashl"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "debashc-bin"
+name = "debashc"
 path = "src/main.rs"
 
 [[bin]]

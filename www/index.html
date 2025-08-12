@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Debashc - Shell Script Converter</title>
+    <title>Debashc - De Bash Compiler</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -137,18 +137,94 @@
             margin-bottom: 10px;
         }
         
+        .examples-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            background-color: #f8f9fa;
+        }
+        
         .example-item {
-            margin-bottom: 10px;
+            margin-bottom: 0;
         }
         
         .example-item button {
             background-color: #6c757d;
-            font-size: 12px;
-            padding: 5px 10px;
+            font-size: 11px;
+            padding: 6px 8px;
+            width: 100%;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         
         .example-item button:hover {
             background-color: #545b62;
+        }
+        
+        /* Dropdown styles */
+        .dropdown {
+            position: relative;
+            display: inline-block;
+        }
+
+        .dropdown-btn {
+            background-color: #007acc;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+
+        .dropdown-btn:hover {
+            background-color: #005a9e;
+        }
+
+        .dropdown-content {
+            display: none;
+            position: absolute;
+            background-color: #f9f9f9;
+            min-width: 160px;
+            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+            z-index: 1;
+            border-radius: 4px;
+            margin-top: 5px;
+        }
+
+        .dropdown-content button {
+            width: 100%;
+            text-align: left;
+            padding: 10px 15px;
+            border-bottom: 1px solid #eee;
+            border-radius: 0;
+        }
+
+        .dropdown-content button:last-child {
+            border-bottom: none;
+        }
+
+        .dropdown-content button:hover {
+            background-color: #f1f1f1;
+        }
+
+        .dropdown:hover .dropdown-content {
+            display: block;
+        }
+        
+        .main-generator {
+            background-color: #28a745;
+            font-weight: bold;
+        }
+        
+        .main-generator:hover {
+            background-color: #218838;
         }
         
         @media (max-width: 768px) {
@@ -161,7 +237,7 @@
 <body>
     <div class="header">
         <h1>Debashc</h1>
-        <p>Convert shell scripts to Perl, Rust, Python, Lua, C, JavaScript, Batch, PowerShell, or Pseudocode</p>
+        <p>Convert shell scripts to Perl, Rust, and other languages with experimental generators</p>
     </div>
     
     <div class="container">
@@ -171,21 +247,31 @@
             <div class="controls">
                 <button id="lex-btn">Tokenize</button>
                 <button id="parse-btn">Parse AST</button>
-                <button id="perl-btn">To Perl</button>
-                <button id="rust-btn">To Rust</button>
-                <button id="python-btn">To Python</button>
-                <button id="lua-btn">To Lua</button>
-                <button id="c-btn">To C</button>
-                <button id="js-btn">To JS</button>
-                <button id="english-btn">To English</button>
-                <button id="french-btn">To French</button>
-                <button id="bat-btn">To Batch</button>
-                <button id="ps-btn">To PowerShell</button>
+                
+                <!-- Main Generators -->
+                <button id="perl-btn" class="main-generator">To Perl</button>
+                <button id="rust-btn" class="main-generator">To Rust</button>
+                
+                <!-- Experimental Generators Dropdown -->
+                <div class="dropdown">
+                    <button class="dropdown-btn">Experimental Generators ▼</button>
+                    <div class="dropdown-content">
+                        <button id="python-btn">To Python</button>
+                        <button id="lua-btn">To Lua</button>
+                        <button id="c-btn">To C</button>
+                        <button id="js-btn">To JS</button>
+                        <button id="english-btn">To English</button>
+                        <button id="french-btn">To French</button>
+                        <button id="bat-btn">To Batch</button>
+                        <button id="ps-btn">To PowerShell</button>
+                    </div>
+                </div>
+                
                 <button id="clear-btn" class="clear-btn">Clear</button>
             </div>
             <div class="examples">
                 <h4>Examples:</h4>
-                <div id="examples-list"></div>
+                <div id="examples-list" class="examples-grid"></div>
             </div>
         </div>
         
@@ -331,23 +417,63 @@
                 const data = JSON.parse(examples_json());
                 const container = document.getElementById('examples-list');
                 container.innerHTML = '';
-                data.forEach(ex => {
-                    const div = document.createElement('div');
-                    div.className = 'example-item';
-                    const btn = document.createElement('button');
-                    btn.className = 'example-btn';
-                    btn.textContent = ex.name;
-                    btn.addEventListener('click', () => {
-                        document.getElementById('input').value = ex.content;
-                        setOutput('');
-                        document.getElementById('status').style.display = 'none';
-                        executeOperation(currentOperation);
+                
+                // Group examples by category
+                const categories = {
+                    'Basic': ['simple.sh', 'simple_backup.sh', 'args.sh', 'misc.sh'],
+                    'Control Flow': ['control_flow.sh', 'local.sh'],
+                    'Text Processing': ['pipeline.sh', 'subprocess.sh', 'cat_EOF.sh'],
+                    'Advanced Features': ['parameter_expansion.sh', 'brace_expansion.sh', 'arrays.sh', 'pattern_matching.sh', 'process_substitution.sh', 'ansi_quoting.sh', 'test_quoted.sh'],
+                    'Grep Examples': ['grep_basic.sh', 'grep_context.sh', 'grep_params.sh', 'grep_regex.sh', 'grep_advanced.sh'],
+                    'Other': ['file.txt']
+                };
+                
+                // Create category sections
+                Object.entries(categories).forEach(([category, exampleNames]) => {
+                    const categoryDiv = document.createElement('div');
+                    categoryDiv.className = 'example-category';
+                    categoryDiv.style.gridColumn = '1 / -1';
+                    categoryDiv.style.marginTop = '10px';
+                    categoryDiv.style.marginBottom = '5px';
+                    
+                    const categoryTitle = document.createElement('div');
+                    categoryTitle.className = 'category-title';
+                    categoryTitle.textContent = category;
+                    categoryTitle.style.fontWeight = 'bold';
+                    categoryTitle.style.color = '#495057';
+                    categoryTitle.style.fontSize = '12px';
+                    categoryTitle.style.textTransform = 'uppercase';
+                    categoryTitle.style.letterSpacing = '0.5px';
+                    categoryTitle.style.borderBottom = '1px solid #dee2e6';
+                    categoryTitle.style.paddingBottom = '3px';
+                    categoryTitle.style.marginBottom = '5px';
+                    
+                    categoryDiv.appendChild(categoryTitle);
+                    container.appendChild(categoryDiv);
+                    
+                    // Add examples for this category
+                    exampleNames.forEach(exampleName => {
+                        const example = data.find(ex => ex.name === exampleName);
+                        if (example) {
+                            const div = document.createElement('div');
+                            div.className = 'example-item';
+                            const btn = document.createElement('button');
+                            btn.className = 'example-btn';
+                            btn.textContent = example.name;
+                            btn.title = example.content.substring(0, 100) + (example.content.length > 100 ? '...' : '');
+                            btn.addEventListener('click', () => {
+                                document.getElementById('input').value = example.content;
+                                setOutput('');
+                                document.getElementById('status').style.display = 'none';
+                                executeOperation(currentOperation);
+                            });
+                            div.appendChild(btn);
+                            container.appendChild(div);
+                        }
                     });
-                    div.appendChild(btn);
-                    container.appendChild(div);
                 });
             } catch (e) {
-                console.error('Failed to load examples:', e);
+                console.error('Error populating examples:', e);
             }
         }
 

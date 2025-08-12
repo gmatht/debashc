@@ -111,6 +111,7 @@ fn all_examples() -> Vec<ExampleEntry> {
         ExampleEntry { name: "misc.sh", content: include_str!("../examples/misc.sh") },
         ExampleEntry { name: "pipeline.sh", content: include_str!("../examples/pipeline.sh") },
         ExampleEntry { name: "simple.sh", content: include_str!("../examples/simple.sh") },
+        ExampleEntry { name: "simple_backup.sh", content: include_str!("../examples/simple_backup.sh") },
         ExampleEntry { name: "subprocess.sh", content: include_str!("../examples/subprocess.sh") },
         ExampleEntry { name: "test_quoted.sh", content: include_str!("../examples/test_quoted.sh") },
         ExampleEntry { name: "parameter_expansion.sh", content: include_str!("../examples/parameter_expansion.sh") },
@@ -120,6 +121,13 @@ fn all_examples() -> Vec<ExampleEntry> {
         ExampleEntry { name: "process_substitution.sh", content: include_str!("../examples/process_substitution.sh") },
         ExampleEntry { name: "ansi_quoting.sh", content: include_str!("../examples/ansi_quoting.sh") },
         ExampleEntry { name: "cat_EOF.sh", content: include_str!("../examples/cat_EOF.sh") },
+        ExampleEntry { name: "file.txt", content: include_str!("../examples/file.txt") },
+        // Todo examples
+        ExampleEntry { name: "grep_advanced.sh", content: include_str!("../examples/todo/grep_advanced.sh") },
+        ExampleEntry { name: "grep_basic.sh", content: include_str!("../examples/todo/grep_basic.sh") },
+        ExampleEntry { name: "grep_context.sh", content: include_str!("../examples/todo/grep_context.sh") },
+        ExampleEntry { name: "grep_params.sh", content: include_str!("../examples/todo/grep_params.sh") },
+        ExampleEntry { name: "grep_regex.sh", content: include_str!("../examples/todo/grep_regex.sh") },
     ]
 }
 

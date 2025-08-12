@@ -35,7 +35,7 @@ use std::time::Duration;
 use std::thread;
 
 // Use the debug module for controlling DEBUG output
-use debashc::{debug_println, debug_eprintln, debug::set_debug_enabled};
+use debashl::{debug_println, debug_eprintln, debug::set_debug_enabled};
 
 #[derive(Debug)]
 struct TestResult {
@@ -103,9 +103,10 @@ impl AstFormatOptions {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+    let program_name = &args[0];
     
     if args.len() < 2 {
-        show_help(&args[0]);
+        show_help(program_name);
         return;
     }
     
@@ -432,6 +433,43 @@ fn main() {
         "interactive" => {
             interactive_mode();
         }
+        "fail" => {
+            // Shorthand for --next-fail
+            // Disable DEBUG output for fail mode
+            set_debug_enabled(false);
+            
+            // Parse optional generator list after fail
+            let mut generators = Vec::new();
+            let mut i = 2;
+            
+            // Collect generators until we hit an AST option or run out of args
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--ast-pretty" | "--ast-compact" | "--ast-indent" | "--ast-no-indent" | 
+                    "--ast-newlines" | "--ast-no-newlines" => {
+                        // Stop parsing generators, let the AST options parsing continue
+                        break;
+                    }
+                    generator => {
+                        // Validate that it's a known generator
+                        let valid_generators = vec!["perl", "python", "rust", "lua", "js", "ps", "c", "english", "french", "bat"];
+                        if valid_generators.contains(&generator) {
+                            generators.push(generator.to_string());
+                        } else {
+                            println!("Warning: Unknown generator '{}', skipping", generator);
+                        }
+                    }
+                }
+                i += 1;
+            }
+            
+            // If no generators specified, use all available ones
+            if generators.is_empty() {
+                generators = vec!["perl", "python", "rust", "lua", "js", "ps"].into_iter().map(|s| s.to_string()).collect();
+            }
+            
+            test_all_examples_next_fail(&generators);
+        }
         _ => {
             // Handle input file option
             if let Some(input_filename) = &input_file {
@@ -517,88 +555,8 @@ fn main() {
                     }
                 }
             } else {
-                // Check if it looks like a shell command (contains shell-like syntax)
-                if command.contains("echo") || command.contains("ls") || command.contains("cat") || 
-                   command.contains("grep") || command.contains("find") || command.contains("cd") ||
-                   command.contains("pwd") || command.contains("mkdir") || command.contains("rm") ||
-                   command.contains("cp") || command.contains("mv") || command.contains("chmod") ||
-                   command.contains("chown") || command.contains("tar") || command.contains("gzip") ||
-                   command.contains("curl") || command.contains("wget") || command.contains("ssh") ||
-                   command.contains("scp") || command.contains("rsync") || command.contains("git") ||
-                   command.contains("docker") || command.contains("kubectl") || command.contains("npm") ||
-                   command.contains("pip") || command.contains("cargo") || command.contains("go") ||
-                   command.contains("java") || command.contains("python") || command.contains("node") ||
-                   command.contains("perl") || command.contains("ruby") || command.contains("php") ||
-                   command.contains("awk") || command.contains("sed") || command.contains("sort") ||
-                   command.contains("uniq") || command.contains("wc") || command.contains("head") ||
-                   command.contains("tail") || command.contains("cut") || command.contains("paste") ||
-                   command.contains("join") || command.contains("tr") || command.contains("tee") ||
-                   command.contains("xargs") || command.contains("parallel") || command.contains("time") ||
-                   command.contains("which") || command.contains("whereis") || command.contains("type") ||
-                   command.contains("help") || command.contains("man") || command.contains("info") ||
-                   command.contains("apropos") || command.contains("whatis") || command.contains("alias") ||
-                   command.contains("unalias") || command.contains("export") || command.contains("unset") ||
-                   command.contains("set") || command.contains("env") || command.contains("printenv") ||
-                   command.contains("history") || command.contains("fc") || command.contains("jobs") ||
-                   command.contains("bg") || command.contains("fg") || command.contains("kill") ||
-                   command.contains("wait") || command.contains("trap") || command.contains("exit") ||
-                   command.contains("return") || command.contains("break") || command.contains("continue") ||
-                   command.contains("shift") || command.contains("getopts") || command.contains("read") ||
-                   command.contains("printf") || command.contains("test") || command.contains("[") ||
-                   command.contains("if") || command.contains("then") || command.contains("else") ||
-                   command.contains("elif") || command.contains("fi") || command.contains("case") ||
-                   command.contains("esac") || command.contains("for") || command.contains("while") ||
-                   command.contains("until") || command.contains("do") || command.contains("done") ||
-                   command.contains("in") || command.contains("function") || command.contains("select") ||
-                   command.contains("until") || command.contains("(") || command.contains(")") ||
-                   command.contains("{") || command.contains("}") || command.contains(";") ||
-                   command.contains("|") || command.contains("&") || command.contains("&&") ||
-                   command.contains("||") || command.contains(">") || command.contains("<") ||
-                   command.contains(">>") || command.contains("<<") || command.contains("2>") ||
-                   command.contains("2>>") || command.contains("&>") || command.contains("&>>") ||
-                   command.contains("$") || command.contains("`") || command.contains("'") ||
-                   command.contains("\"") || command.contains("\\") || command.contains("=") ||
-                   command.contains("+") || command.contains("-") || command.contains("*") ||
-                   command.contains("/") || command.contains("%") || command.contains("!") ||
-                   command.contains("?") || command.contains("*") || command.contains("[") ||
-                   command.contains("]") || command.contains("^") || command.contains("~") {
-                    
-                    // Treat as shell command input
-                    println!("Running shell command: {}", command);
-                    // Parse and run the shell command
-                    let commands = match Parser::new(command).parse() {
-                        Ok(c) => c,
-                        Err(e) => { 
-                            println!("Parse error: {}", e); 
-                            return; 
-                        }
-                    };
-                    
-                    // Generate Perl code
-                    let mut gen = PerlGenerator::new();
-                    let code = gen.generate(&commands);
-                    
-                    // Handle output file option
-                    if let Some(output_filename) = &output_file {
-                        // Write to output file
-                        match fs::write(output_filename, &code) {
-                            Ok(_) => println!("Generated Perl code written to: {}", output_filename),
-                            Err(e) => println!("Error writing to output file {}: {}", output_filename, e),
-                        }
-                    } else {
-                        // Show generated code and run it
-                        println!("Generated Perl code:");
-                        println!("{}", code);
-                        println!("\n--- Running generated Perl code ---");
-                        let tmp = "__tmp_run.pl";
-                        if fs::write(tmp, &code).is_ok() {
-                            let _ = std::process::Command::new("perl").arg(tmp).status();
-                            let _ = fs::remove_file(tmp);
-                        }
-                    }
-                } else {
-                    println!("Unknown command: {}", command);
-                }
+                println!("Unknown command: {}", command);
+                println!("Use '{} --help' for usage information", args[0]);
             }
         }
     }
@@ -2038,6 +1996,7 @@ fn show_help(program_name: &str) {
     println!("  file --test-file <lang> <filename> - Same as above");
     println!("  --test-eq                      - Test all generators against all examples");
     println!("  --next-fail [gen1 gen2 ...]    - Test specified generators (or all if none specified), exit after first failure");
+    println!("  fail [gen1 gen2 ...]           - Shorthand for --next-fail");
     println!();
     println!("AST FORMATTING OPTIONS (for --next-fail):");
     println!();
