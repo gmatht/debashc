@@ -4,7 +4,9 @@ use std::collections::HashSet;
 // HashMap import removed as it's not used
 
 //We NEED this. Do not remove it.
-#[macro_use]
+// use crate::debug::*;
+//#[macro_use]
+
 
 
 pub struct PerlGenerator {
@@ -51,7 +53,6 @@ impl PerlGenerator {
         output.push_str("use File::Basename;\n");
         
         // Add File::Find if needed
-        // debug_eprintln!("DEBUG: needs_file_find = {}", self.needs_file_find);
         if self.needs_file_find {
             output.push_str("use File::Find;\n");
         }
@@ -85,12 +86,10 @@ impl PerlGenerator {
     }
 
     fn generate_command(&mut self, command: &Command) -> String {
-        // debug_eprintln!("DEBUG: generate_command called with: {:?}", command);
         match command {
             Command::Simple(cmd) => self.generate_simple_command(cmd),
             Command::ShoptCommand(cmd) => self.generate_shopt_command(cmd),
             Command::TestExpression(test_expr) => {
-                // debug_eprintln!("DEBUG: Routing to generate_test_expression");
                 self.generate_test_expression(test_expr)
             },
             Command::Pipeline(pipeline) => self.generate_pipeline(pipeline),
@@ -117,8 +116,9 @@ impl PerlGenerator {
             }
         }
 
-        // Pre-process process substitution redirects to create temporary files
+        // Pre-process process substitution and here-string redirects to create temporary files
         let mut process_sub_files = Vec::new();
+        let mut has_here_string = false;
         for redir in &cmd.redirects {
             match &redir.operator {
                 RedirectOperator::ProcessSubstitutionInput(cmd) => {
@@ -176,6 +176,14 @@ impl PerlGenerator {
                     let temp_file = format!("/tmp/process_sub_out_{}.tmp", std::process::id());
                     output.push_str(&format!("my $temp_file = '{}';\n", temp_file));
                     process_sub_files.push(temp_file);
+                }
+                RedirectOperator::HereString => {
+                    // Here-string: command <<< "string"
+                    has_here_string = true;
+                    if let Some(body) = &redir.heredoc_body {
+                        // Use a pipe to feed the string content directly to the command
+                        output.push_str(&format!("my $here_string_content = {};\n", self.perl_string_literal(body)));
+                    }
                 }
                 _ => {}
             }
@@ -628,20 +636,25 @@ impl PerlGenerator {
                     // Check for -o flag (only matching part)
                     let only_matching = flags.iter().any(|&flag| flag == "-o");
                     
-                    // Check if we have a here-string file
-                    let has_here_string = cmd.redirects.iter().any(|r| matches!(r.operator, RedirectOperator::HereString));
+                    // Use the has_here_string variable set at the beginning of the function
                     
                     if only_matching {
                         if file == "STDIN" {
                             if has_here_string {
-                                output.push_str("while (my $line = <$here_string_file>) {\n");
+                                // Use string splitting to process here-string content directly
+                                output.push_str("my @lines = split(/\\n/, $here_string_content);\n");
+                                output.push_str("foreach my $line (@lines) {\n");
+                                output.push_str(&format!("    if ($line =~ /({})/g) {{\n", pattern));
+                                output.push_str("        print \"$1\\n\";\n");
+                                output.push_str("    }\n");
+                                output.push_str("}\n");
                             } else {
                                 output.push_str("while (my $line = <STDIN>) {\n");
+                                output.push_str(&format!("    if ($line =~ /({})/g) {{\n", pattern));
+                                output.push_str("        print \"$1\\n\";\n");
+                                output.push_str("    }\n");
+                                output.push_str("}\n");
                             }
-                            output.push_str(&format!("    if ($line =~ /({})/g) {{\n", pattern));
-                            output.push_str("        print \"$1\\n\";\n");
-                            output.push_str("    }\n");
-                            output.push_str("}\n");
                         } else {
                             let fh = self.get_unique_file_handle();
                             output.push_str(&format!("open(my {}, '<', '{}') or die \"Cannot open file: $!\\n\";\n", fh, file));
@@ -655,12 +668,16 @@ impl PerlGenerator {
                     } else {
                         if file == "STDIN" {
                             if has_here_string {
-                                output.push_str("while (my $line = <$here_string_file>) {\n");
+                                // Use string splitting to process here-string content directly
+                                output.push_str("my @lines = split(/\\n/, $here_string_content);\n");
+                                output.push_str("foreach my $line (@lines) {\n");
+                                output.push_str(&format!("    print($line) if $line =~ /{}/;\n", pattern));
+                                output.push_str("}\n");
                             } else {
                                 output.push_str("while (my $line = <STDIN>) {\n");
+                                output.push_str(&format!("    print($line) if $line =~ /{}/;\n", pattern));
+                                output.push_str("}\n");
                             }
-                            output.push_str(&format!("    print($line) if $line =~ /{}/;\n", pattern));
-                            output.push_str("}\n");
                         } else {
                             let fh = self.get_unique_file_handle();
                             output.push_str(&format!("open(my {}, '<', '{}') or die \"Cannot open file: $!\\n\";\n", fh, file));
@@ -1024,7 +1041,10 @@ impl PerlGenerator {
             match redir.operator {
                 RedirectOperator::Input => {
                     // Input redirection: command < file
-                    output.push_str(&format!("open(STDIN, '<', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
+                    // Check if we have a here-string - if so, skip this since the command will read from $here_string_file
+                    if !has_here_string {
+                        output.push_str(&format!("open(STDIN, '<', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
+                    }
                 }
                 RedirectOperator::Output => {
                     // Output redirection: command > file
@@ -1034,19 +1054,7 @@ impl PerlGenerator {
                     // Append redirection: command >> file
                     output.push_str(&format!("open(STDOUT, '>>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
                 }
-                RedirectOperator::HereString => {
-                    // Here-string: command <<< "string"
-                    if let Some(body) = &redir.heredoc_body {
-                        // Create a temporary file with the string content
-                        let temp_file = format!("/tmp/here_string_temp_{}.tmp", std::process::id());
-                        let fh = self.get_unique_file_handle();
-                        output.push_str(&format!("open(my {}, '>', '{}') or die \"Cannot create temp file: $!\\n\";\n", fh, temp_file));
-                        output.push_str(&format!("print {} {};\n", fh, self.perl_string_literal(body)));
-                        output.push_str(&format!("close({});\n", fh));
-                        // Store the temp file path for the command to use
-                        output.push_str(&format!("my $here_string_file = '{}';\n", temp_file));
-                    }
-                }
+
                 RedirectOperator::Heredoc | RedirectOperator::HeredocTabs => {
                     // Heredoc: command << delimiter
                     // Skip heredoc handling for 'cat' command since it's handled specially in the cat command handler
@@ -2717,10 +2725,9 @@ impl PerlGenerator {
                 return self.generate_parameter_expansion(pe);
             }
             
-            // Special case: if we have only one part and it's a literal, return it without quotes
-            // since the caller will wrap it in quotes
+            // Special case: if we have only one part and it's a literal, return it properly quoted
             if let StringPart::Literal(s) = &interp.parts[0] {
-                return self.escape_perl_string_without_quotes(s);
+                return self.perl_string_literal(s);
             }
             
             // Special case: if we have only one part and it's a map access, return it without quotes
@@ -2759,26 +2766,21 @@ impl PerlGenerator {
                 }
                 StringPart::MapAccess(map_name, key) => {
                     // Convert map access to Perl array/hash access
-                    // debug_eprintln!("DEBUG: Processing MapAccess: map_name='{}', key='{}'", map_name, key);
                     // For now, assume "map" is a hash and others are indexed arrays
                     if map_name == "map" {
                         // Convert map[key] to $map{key} for associative arrays
-                        // debug_eprintln!("DEBUG: Converting map access to hash access: $map{{{}}}", key);
                         result.push_str(&format!("${}{{{}}}", map_name, key));
                     } else {
                         // Convert arr[key] to $arr[key] for indexed arrays
-                        // debug_eprintln!("DEBUG: Converting array access to indexed access: ${}[{}]", map_name, key);
                         result.push_str(&format!("${}[{}]", map_name, key));
                     }
                 }
                 StringPart::MapKeys(map_name) => {
                     // Convert ${!map[@]} to keys(%map) in Perl
-                    // debug_eprintln!("DEBUG: Processing MapKeys: map_name='{}'", map_name);
                     result.push_str(&format!("keys(%{})", map_name));
                 }
                 StringPart::MapLength(map_name) => {
                     // Convert ${#arr[@]} to scalar(@arr) in Perl
-                    // debug_eprintln!("DEBUG: Processing MapLength: map_name='{}'", map_name);
                     result.push_str(&format!("scalar(@{})", map_name));
                 }
                 StringPart::ParameterExpansion(pe) => {
@@ -2786,12 +2788,6 @@ impl PerlGenerator {
                 }
                 StringPart::Variable(var) => {
                     // Convert shell variables to Perl variables
-                            // debug_eprintln!("DEBUG: Processing variable: '{}'", var);
-        // debug_eprintln!("DEBUG: Variable starts with '!': {}", var.starts_with('!'));
-        // debug_eprintln!("DEBUG: Variable ends with '[@]': {}", var.ends_with("[@]"));
-        // debug_eprintln!("DEBUG: Variable contains '[': {}", var.contains('['));
-        // debug_eprintln!("DEBUG: Variable length: {}", var.len());
-        // debug_eprintln!("DEBUG: Variable bytes: {:?}", var.as_bytes());
                     if var == "#" {
                         result.push_str("scalar(@ARGV)");
                     } else if var == "@" {
@@ -2839,19 +2835,14 @@ impl PerlGenerator {
                             }
                         } else if var.starts_with('!') {
                             // This is !map - convert to keys(%map) in Perl (fallback)
-                            debug_eprintln!("DEBUG: Found !map pattern (fallback), converting to keys(%map)");
                             let array_name = &var[1..]; // Remove ! prefix
-                            debug_eprintln!("DEBUG: Array name extracted from !map: '{}'", array_name);
                             result.push_str(&format!("keys(%{})", array_name));
                         } else if var.ends_with("[@]") {
                             // This is arr[@] - convert to @arr in Perl
-                            debug_eprintln!("DEBUG: Found arr[@] pattern, converting to @arr");
                             let array_name = &var[..var.len()-3]; // Remove [@] suffix
-                            debug_eprintln!("DEBUG: Array name extracted from arr[@]: '{}'", array_name);
                             result.push_str(&format!("@{}", array_name));
                         } else if var.contains('[') && var.ends_with(']') {
                             // This is arr[1] - convert to $arr[1] in Perl or $arr{key} for hashes
-                            debug_eprintln!("DEBUG: Found arr[1] pattern, converting to array access");
                             if let Some(bracket_start) = var.find('[') {
                                 let array_name = &var[..bracket_start];
                                 let key = &var[bracket_start..];
@@ -2859,11 +2850,9 @@ impl PerlGenerator {
                                 if array_name == "map" {
                                     // Convert map[key] to $map{key} for associative arrays
                                     let key_content = &key[1..key.len()-1]; // Remove [ and ]
-                                    debug_eprintln!("DEBUG: Converting map[key] to $map{{{}}}", key_content);
                                     result.push_str(&format!("${}{{{}}}", array_name, key_content));
                                 } else {
                                     // Regular indexed array - use [] syntax in Perl
-                                    debug_eprintln!("DEBUG: Converting arr[key] to ${}[{}]", array_name, key);
                                     result.push_str(&format!("${}[{}]", array_name, key));
                                 }
                             } else {
@@ -2871,7 +2860,6 @@ impl PerlGenerator {
                             }
                         } else {
                             // For simple variable names, use $var instead of ${var}
-                            debug_eprintln!("DEBUG: Simple variable, using ${}", var);
                             result.push_str(&format!("${}", var));
                         }
                     }
@@ -2894,7 +2882,7 @@ impl PerlGenerator {
 
     fn word_to_perl(&self, word: &Word) -> String {
         match word {
-            Word::Literal(s) => self.escape_perl_string(s),
+            Word::Literal(s) => self.perl_string_literal(s),
             Word::Array(name, elements) => {
                 // Convert array declaration to Perl array
                 let elements_str = elements.iter()

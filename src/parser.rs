@@ -1029,10 +1029,10 @@ impl Parser {
         self.skip_whitespace_and_comments();
 
         // Process substitution as redirect target, allowing an optional extra '<' before '('
-        // For here-strings, we don't need a target - the string content follows immediately
+        // For here-strings, parse the string content as the target
         let target = if matches!(operator, RedirectOperator::HereString) {
-            // For here-strings, create a placeholder target since we'll get the content from heredoc_body
-            Word::Literal("".to_string())
+            // For here-strings, parse the string content that follows
+            self.parse_word()?
         } else if matches!(self.lexer.peek(), Some(Token::RedirectIn)) && matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) {
             // consume the extra '<' and capture ( ... )
             self.lexer.next();

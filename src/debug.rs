@@ -1,5 +1,6 @@
 // Global flag to control DEBUG output
 use std::sync::atomic::{AtomicBool, Ordering};
+use crate::shared_utils::SharedUtils;
 
 static DEBUG_ENABLED: AtomicBool = AtomicBool::new(true);
 
@@ -22,7 +23,6 @@ macro_rules! debug_println {
         }
     };
 }
-
 #[macro_export]
 macro_rules! debug_eprintln {
     ($($arg:tt)*) => {
