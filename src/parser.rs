@@ -352,7 +352,7 @@ impl Parser {
         // Parse arguments and redirects
         while let Some(token) = self.lexer.peek() {
             match token {
-                Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString | Token::Star => {
+                Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString | Token::Source | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString | Token::Star | Token::Range => {
                     args.push(self.parse_word()?);
                 }
                 Token::Dollar | Token::DollarBrace | Token::DollarParen | Token::DollarHashSimple | Token::DollarAtSimple | Token::DollarStarSimple
@@ -1158,16 +1158,20 @@ impl Parser {
             Some(Token::DollarSingleQuotedString) => Ok(self.parse_ansic_quoted_string()?),
             Some(Token::DollarDoubleQuotedString) => Ok(self.parse_string_interpolation()?),
             Some(Token::BraceOpen) => Ok(self.parse_brace_expansion()?),
-            // SourceDot handling removed - dots in filenames are now part of identifiers
+            Some(Token::Source) => {
+                // Treat standalone 'source' as a normal word (e.g., `source file.sh`)
+                self.lexer.next();
+                Ok(Word::Literal("source".to_string()))
+            }
+            Some(Token::Range) => {
+                // Treat standalone '..' as a literal (e.g., `cd ..`)
+                self.lexer.next();
+                Ok(Word::Literal("..".to_string()))
+            }
             Some(Token::Star) => {
-                // Treat standalone '*' as a normal word (e.g., `ls *`)
+                // Treat standalone '*' as a literal (e.g., `ls *`)
                 self.lexer.next();
                 Ok(Word::Literal("*".to_string()))
-            }
-            Some(Token::Question) => {
-                // Treat standalone '?' as a normal word (e.g., `ls file?.txt`)
-                self.lexer.next();
-                Ok(Word::Literal("?".to_string()))
             }
             Some(Token::Dollar) => Ok(self.parse_variable_expansion()?),
             Some(Token::DollarBrace) | Some(Token::DollarParen) | Some(Token::DollarHashSimple) | Some(Token::DollarAtSimple) | Some(Token::DollarStarSimple)

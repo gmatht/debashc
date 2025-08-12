@@ -47,30 +47,40 @@ impl PythonGenerator {
         
         // Handle environment variables
         for (var, value) in &cmd.env_vars {
-            // Check if this looks like an array assignment
-            if value.as_str().starts_with('(') && value.as_str().ends_with(')') {
-                // This is an array assignment like arr=(one two three)
-                let content = &value.as_str()[1..value.as_str().len()-1];
-                let elements: Vec<&str> = content.split_whitespace().collect();
-                let elements_str = elements.iter().map(|&s| format!("'{}'", s)).collect::<Vec<_>>().join(", ");
-                output.push_str(&format!("{} = [{}]\n", var, elements_str));
-            } else if var.contains('[') && var.contains(']') {
-                // This is an associative array assignment like map[foo]=bar
-                if let Some(bracket_pos) = var.find('[') {
-                    let map_name = &var[..bracket_pos];
-                    let key = &var[bracket_pos + 1..var.len() - 1]; // Remove [ and ]
-                    // Initialize the map if it doesn't exist
-                    output.push_str(&format!("if '{}' not in globals():\n", map_name));
-                    output.push_str(&self.indent());
-                    output.push_str(&format!("    {} = {{}}\n", map_name));
-                    output.push_str(&format!("{}['{}'] = '{}'\n", map_name, key, value));
-                } else {
-                    // Fallback
-                    output.push_str(&format!("os.environ['{}'] = '{}'\n", var, value));
+            // Check if this is an array assignment
+            match value {
+                Word::Array(_, elements) => {
+                    // This is an array assignment like arr=(one two three)
+                    let elements_str = elements.iter().map(|s| format!("'{}'", s)).collect::<Vec<_>>().join(", ");
+                    output.push_str(&format!("{} = [{}]\n", var, elements_str));
                 }
-            } else {
-                // Regular environment variable
-                output.push_str(&format!("os.environ['{}'] = '{}'\n", var, value));
+                _ => {
+                    // Check if this looks like an array assignment
+                    if value.as_str().starts_with('(') && value.as_str().ends_with(')') {
+                        // This is an array assignment like arr=(one two three) - fallback for string-based arrays
+                        let content = &value.as_str()[1..value.as_str().len()-1];
+                        let elements: Vec<&str> = content.split_whitespace().collect();
+                        let elements_str = elements.iter().map(|&s| format!("'{}'", s)).collect::<Vec<_>>().join(", ");
+                        output.push_str(&format!("{} = [{}]\n", var, elements_str));
+                    } else if var.contains('[') && var.contains(']') {
+                        // This is an associative array assignment like map[foo]=bar
+                        if let Some(bracket_pos) = var.find('[') {
+                            let map_name = &var[..bracket_pos];
+                            let key = &var[bracket_pos + 1..var.len() - 1]; // Remove [ and ]
+                            // Initialize the map if it doesn't exist
+                            output.push_str(&format!("if '{}' not in globals():\n", map_name));
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("    {} = {{}}\n", map_name));
+                            output.push_str(&format!("{}['{}'] = '{}'\n", map_name, key, value));
+                        } else {
+                            // Fallback
+                            output.push_str(&format!("os.environ['{}'] = '{}'\n", var, value));
+                        }
+                    } else {
+                        // Regular environment variable
+                        output.push_str(&format!("os.environ['{}'] = '{}'\n", var, value));
+                    }
+                }
             }
         }
 
@@ -1098,7 +1108,11 @@ impl PythonGenerator {
                 if key == "@" {
                     // Special case: @ means all elements
                     format!("' '.join({})", map_name)
+                } else if key.parse::<usize>().is_ok() {
+                    // Numeric key - treat as array access
+                    format!("{}[{}]", map_name, key)
                 } else {
+                    // String key - treat as map access
                     format!("{}.get('{}', '')", map_name, key)
                 }
             }
@@ -1134,7 +1148,11 @@ impl PythonGenerator {
                             if key == "@" {
                                 // Special case: @ means all elements
                                 parts.push(format!("' '.join({})", map_name));
+                            } else if key.parse::<usize>().is_ok() {
+                                // Numeric key - treat as array access
+                                parts.push(format!("{}[{}]", map_name, key));
                             } else {
+                                // String key - treat as map access
                                 parts.push(format!("{}.get('{}', '')", map_name, key));
                             }
                         }
