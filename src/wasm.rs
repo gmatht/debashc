@@ -1,5 +1,5 @@
 use wasm_bindgen::prelude::*;
-use crate::{Lexer, Parser, PerlGenerator};
+use crate::{Lexer, Parser, PerlGenerator, RustGenerator};
 use serde::Serialize;
 
 #[wasm_bindgen]
@@ -79,8 +79,15 @@ impl Debashc {
     }
 
     /// Convert shell script to Rust
-    pub fn to_rust(&mut self, _input: &str) -> Result<String, JsValue> {
-        Err(JsValue::from_str("Rust generator not available"))
+    pub fn to_rust(&mut self, input: &str) -> Result<String, JsValue> {
+        let mut parser = Parser::new(input);
+        match parser.parse() {
+            Ok(commands) => {
+                let mut generator = RustGenerator::new();
+                Ok(generator.generate(&commands))
+            }
+            Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
+        }
     }
 
     /// Convert shell script to Python

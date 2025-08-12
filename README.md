@@ -2,6 +2,8 @@
 
 A comprehensive Rust library and command-line tool for parsing and converting shell/bash scripts to other programming languages. This project provides a robust foundation for analyzing shell scripts, converting them to Perl, Rust, Python, and more, or building shell script analysis tools.
 
+**🌐 [Try the Live Demo](https://dansted.org/Debashc4/) - Convert shell scripts to Perl, Rust, and other languages in your browser!**
+
 ## Features
 
 - **Complete Lexer**: Tokenizes shell/bash scripts with support for all major shell constructs
@@ -90,6 +92,8 @@ println!("Perl code: {}", perl_code);
 ## Web Interface
 
 Debashc includes a beautiful web interface powered by WebAssembly. You can run shell script conversions directly in your browser!
+
+**🌐 [Live Demo](https://dansted.org/Debashc4/) - Try it now!**
 
 ### Building and Running the Web Demo
 

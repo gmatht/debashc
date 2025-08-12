@@ -11,14 +11,6 @@ path = "src/main.rs"
 name = "debug_lexer"
 path = "debug_lexer.rs"
 
-[[bin]]
-name = "sh2perl"
-path = "src/sh2perl.rs"
-
-[[bin]]
-name = "sh2rust"
-path = "src/sh2rust.rs"
-
 [lib]
 crate-type = ["rlib", "cdylib"]
 
