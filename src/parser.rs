@@ -3,8 +3,7 @@ use crate::lexer::{Lexer, Token, LexerError};
 use thiserror::Error;
 use std::collections::HashMap;
 
-// Use the debug macros from the root of the crate
-use crate::{debug_println, debug_eprintln};
+// Debug macros temporarily commented out due to import issues
 
 #[derive(Error, Debug)]
 pub enum ParserError {
@@ -77,7 +76,7 @@ impl Parser {
 
             // Check if this command is followed by a pipeline
             if let Some(Token::Pipe) = self.lexer.peek() {
-                debug_eprintln!("DEBUG: Found pipe after command, parsing pipeline");
+                // debug_eprintln!("DEBUG: Found pipe after command, parsing pipeline");
                 // Parse the pipeline starting from the current command
                 command = self.parse_pipeline_from_command(command)?;
             }
@@ -336,7 +335,7 @@ impl Parser {
         // Special handling for Bash double-bracket test: capture everything until closing ']]'
         if is_double_bracket {
             let expr = self.capture_double_bracket_expression()?;
-            debug_eprintln!("DEBUG: Creating TestExpression with expression: '{}'", expr);
+            // debug_eprintln!("DEBUG: Creating TestExpression with expression: '{}'", expr);
             return Ok(Command::TestExpression(TestExpression {
                 expression: expr,
                 modifiers: self.get_current_shopt_state(),
@@ -2186,68 +2185,68 @@ impl Parser {
             
             // Now check for operators
             if let Some(Token::Caret) = self.lexer.peek() {
-                debug_println!("DEBUG: parse_parameter_expansion: Found first Caret");
+                // debug_println!("DEBUG: parse_parameter_expansion: Found first Caret");
                 self.lexer.next(); // consume first ^
                 if let Some(Token::Caret) = self.lexer.peek() {
                     // This is ^^ (uppercase all)
-                    debug_println!("DEBUG: parse_parameter_expansion: Found second Caret, this is ^^");
+                    // debug_println!("DEBUG: parse_parameter_expansion: Found second Caret, this is ^^");
                     self.lexer.next(); // consume second ^
                     
                     // Expect closing brace
                     if let Some(Token::BraceClose) = self.lexer.peek() {
-                        debug_println!("DEBUG: parse_parameter_expansion: Found BraceClose, returning UppercaseAll");
+                        // debug_println!("DEBUG: parse_parameter_expansion: Found BraceClose, returning UppercaseAll");
                         self.lexer.next(); // consume }
                         return Ok(Word::ParameterExpansion(ParameterExpansion {
                             variable: var_name,
                             operator: ParameterExpansionOperator::UppercaseAll,
                         }));
                     } else {
-                        debug_println!("DEBUG: parse_parameter_expansion: Expected BraceClose but got: {:?}", self.lexer.peek());
+                        // debug_println!("DEBUG: parse_parameter_expansion: Expected BraceClose but got: {:?}", self.lexer.peek());
                     }
                 } else {
                     // This is ^ (uppercase first)
-                    debug_println!("DEBUG: parse_parameter_expansion: Only one Caret, this is ^");
+                    // debug_println!("DEBUG: parse_parameter_expansion: Only one Caret, this is ^");
                     // Expect closing brace
                     if let Some(Token::BraceClose) = self.lexer.peek() {
-                        debug_println!("DEBUG: parse_parameter_expansion: Found BraceClose, returning UppercaseFirst");
+                        // debug_println!("DEBUG: parse_parameter_expansion: Found BraceClose, returning UppercaseFirst");
                         self.lexer.next(); // consume }
                         return Ok(Word::ParameterExpansion(ParameterExpansion {
                             variable: var_name,
                             operator: ParameterExpansionOperator::UppercaseFirst,
                         }));
                     } else {
-                        debug_println!("DEBUG: parse_parameter_expansion: Expected BraceClose but got: {:?}", self.lexer.peek());
+                        // debug_println!("DEBUG: parse_parameter_expansion: Expected BraceClose but got: {:?}", self.lexer.peek());
                     }
                 }
             } else if let Some(Token::Comma) = self.lexer.peek() {
-                debug_println!("DEBUG: parse_parameter_expansion: Found first Comma");
+                // debug_println!("DEBUG: parse_parameter_expansion: Found first Comma");
                 self.lexer.next(); // consume first ,
                 if let Some(Token::Comma) = self.lexer.peek() {
                     // This is ,, (lowercase all)
-                    debug_println!("DEBUG: parse_parameter_expansion: Found second Comma, this is ,,");
+                    // debug_println!("DEBUG: parse_parameter_expansion: Found second Comma, this is ,,");
                     self.lexer.next(); // consume second ,
                     
                     // Expect closing brace
                     if let Some(Token::BraceClose) = self.lexer.peek() {
-                        debug_println!("DEBUG: parse_parameter_expansion: Found BraceClose, returning LowercaseAll");
+                        // debug_println!("DEBUG: parse_parameter_expansion: Found BraceClose, returning LowercaseAll");
                         self.lexer.next(); // consume }
                         return Ok(Word::ParameterExpansion(ParameterExpansion {
                             variable: var_name,
                             operator: ParameterExpansionOperator::LowercaseAll,
                         }));
                     } else {
-                        debug_println!("DEBUG: parse_parameter_expansion: Expected BraceClose but got: {:?}", self.lexer.peek());
+                        // debug_println!("DEBUG: parse_parameter_expansion: Expected BraceClose but got: {:?}", self.lexer.peek());
                     }
                 }
             } else {
-                debug_println!("DEBUG: parse_parameter_expansion: No operator found, got: {:?}", self.lexer.peek());
+                // debug_println!("DEBUG: parse_parameter_expansion: No operator found, got: {:?}", self.lexer.peek());
             }
         } else {
-            debug_println!("DEBUG: parse_parameter_expansion: No Identifier found, got: {:?}", self.lexer.peek());
+            // debug_println!("DEBUG: parse_parameter_expansion: No Identifier found, got: {:?}", self.lexer.peek());
         }
         
         // If we get here, it's not a simple parameter expansion
-        debug_println!("DEBUG: parse_parameter_expansion: Returning error");
+        // debug_println!("DEBUG: parse_parameter_expansion: Returning error");
         Err(ParserError::InvalidSyntax("Not a valid parameter expansion".to_string()))
     }
 

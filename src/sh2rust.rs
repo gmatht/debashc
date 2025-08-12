@@ -73,7 +73,7 @@ fn parse_and_generate_rust(input: &str) -> Result<String, Box<dyn std::error::Er
     let commands = parser.parse()?;
     
     let mut generator = RustGenerator::new();
-    let code = generator.generate(&commands)?;
+    let code = generator.generate(&commands);
     
     Ok(code)
 }

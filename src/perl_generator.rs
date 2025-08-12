@@ -2469,39 +2469,11 @@ impl PerlGenerator {
     }
 
     fn parse_numeric_brace_range(&self, s: &str) -> Option<(i64, i64)> {
-        // Matches forms like {0..5} or {10..3}
-        if !(s.starts_with('{') && s.ends_with('}')) {
-            return None;
-        }
-        let inner = &s[1..s.len() - 1];
-        let parts: Vec<&str> = inner.split("..").collect();
-        if parts.len() != 2 {
-            return None;
-        }
-        let start = parts[0].parse::<i64>().ok()?;
-        let end = parts[1].parse::<i64>().ok()?;
-        Some((start, end))
+        SharedUtils::parse_numeric_brace_range(s)
     }
 
     fn parse_seq_command(&self, s: &str) -> Option<(i64, i64)> {
-        // Accept backtick form `seq A B` or $(seq A B) or plain seq A B
-        let trimmed = s.trim();
-        // Strip backticks or $( )
-        let inner = if trimmed.starts_with('`') && trimmed.ends_with('`') {
-            &trimmed[1..trimmed.len()-1]
-        } else if trimmed.starts_with("$(") && trimmed.ends_with(')') {
-            &trimmed[2..trimmed.len()-1]
-        } else {
-            trimmed
-        };
-
-        let parts: Vec<&str> = inner.split_whitespace().collect();
-        if parts.len() == 3 && parts[0] == "seq" {
-            let start = parts[1].parse::<i64>().ok()?;
-            let end = parts[2].parse::<i64>().ok()?;
-            return Some((start, end));
-        }
-        None
+        SharedUtils::parse_seq_command(s)
     }
 
     fn expand_brace_expression(&self, expr: &str) -> String {
@@ -2610,18 +2582,11 @@ impl PerlGenerator {
     }
 
     fn indent(&self) -> String {
-        "    ".repeat(self.indent_level)
+        SharedUtils::indent(self.indent_level)
     }
     
     fn escape_perl_string(&self, s: &str) -> String {
-        // First, unescape any \" sequences to " to avoid double-escaping
-        let unescaped = s.replace("\\\"", "\"");
-        // Then escape quotes and other characters for Perl
-        unescaped.replace("\\", "\\\\")
-                 .replace("\"", "\\\"")
-                 .replace("\n", "\\n")
-                 .replace("\r", "\\r")
-                 .replace("\t", "\\t")
+        SharedUtils::escape_string_for_language(s, "perl")
     }
 
     fn escape_perl_regex(&self, s: &str) -> String {
@@ -2670,31 +2635,7 @@ impl PerlGenerator {
     }
 
     fn convert_arithmetic_to_perl(&self, expr: &str) -> String {
-        // Convert shell arithmetic expressions to Perl
-        let mut result = expr.to_string();
-        
-        // Replace shell arithmetic operators with Perl equivalents
-        result = result.replace("++", "++");
-        result = result.replace("--", "--");
-        result = result.replace("+=", "+=");
-        result = result.replace("-=", "-=");
-        result = result.replace("*=", "*=");
-        result = result.replace("/=", "/=");
-        result = result.replace("%=", "%=");
-        result = result.replace("**=", "**=");
-        
-        // Handle variable references (ensure $ prefix for single identifiers)
-        let parts: Vec<&str> = result.split_whitespace().collect();
-        let converted_parts: Vec<String> = parts.iter().map(|part| {
-            if part.chars().all(|c| c.is_alphanumeric() || c == '_') && !part.chars().next().unwrap().is_digit(10) {
-                // This looks like a variable name, add $ prefix
-                format!("${}", part)
-            } else {
-                part.to_string()
-            }
-        }).collect();
-        
-        converted_parts.join(" ")
+        SharedUtils::convert_arithmetic_operators(expr, "perl")
     }
 
     fn convert_string_interpolation_to_perl_for_printf(&self, interp: &StringInterpolation) -> String {
@@ -3872,53 +3813,6 @@ impl PerlGenerator {
     }
 
     fn convert_glob_to_regex(&self, pattern: &str) -> String {
-        // Convert shell glob patterns to Perl regex
-        let mut result = String::new();
-        let mut chars = pattern.chars().peekable();
-        
-        while let Some(ch) = chars.next() {
-            match ch {
-                '*' => result.push_str(".*"),
-                '?' => result.push_str("."),
-                '[' => {
-                    result.push('[');
-                    // Handle character classes
-                    while let Some(&next_ch) = chars.peek() {
-                        match next_ch {
-                            ']' => {
-                                result.push(']');
-                                chars.next();
-                                break;
-                            }
-                            '\\' => {
-                                chars.next(); // consume backslash
-                                if let Some(escaped) = chars.next() {
-                                    result.push('\\');
-                                    result.push(escaped);
-                                }
-                            }
-                            _ => {
-                                result.push(chars.next().unwrap());
-                            }
-                        }
-                    }
-                }
-                '\\' => {
-                    // Handle escaped characters
-                    if let Some(escaped) = chars.next() {
-                        result.push('\\');
-                        result.push(escaped);
-                    }
-                }
-                '.' | '^' | '$' | '(' | ')' | '|' | '+' | '{' | '}' => {
-                    // Escape regex metacharacters
-                    result.push('\\');
-                    result.push(ch);
-                }
-                _ => result.push(ch),
-            }
-        }
-        
-        result
+        SharedUtils::convert_glob_to_regex(pattern)
     }
 } 

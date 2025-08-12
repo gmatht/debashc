@@ -95,6 +95,10 @@ impl RustGenerator {
         if needs_collections {
             output.push_str("use std::collections;\n");
         }
+        // Add regex support for pattern matching
+        if needs_fs || needs_command {
+            output.push_str("use regex;\n");
+        }
         if output.ends_with('\n') {
             output.push('\n');
         }
@@ -136,7 +140,7 @@ impl RustGenerator {
         }
     }
 
-    fn generate_simple_command(&self, cmd: &SimpleCommand) -> String {
+    fn generate_simple_command(&mut self, cmd: &SimpleCommand) -> String {
         let mut output = String::new();
         
         // Handle environment variables and array assignments
@@ -207,133 +211,183 @@ impl RustGenerator {
             // Builtin false: early return with error to reflect non-zero status
             output.push_str("return std::process::ExitCode::FAILURE;\n");
         } else if cmd.name == "echo" {
-            // Special handling for echo
+            // Special handling for echo with brace expansion support
             if cmd.args.is_empty() {
                 output.push_str("println!();\n");
-            } else {
-                if cmd.args.len() == 1 && self.word_to_string(&cmd.args[0]) == "$#" {
+            } else if cmd.args.len() == 1 {
+                // Handle single argument
+                let arg = &cmd.args[0];
+                if self.word_to_string(arg) == "$#" {
                     output.push_str("let argc = std::env::args().count().saturating_sub(1);\n");
                     output.push_str("println!(\"{}\", argc);\n");
-                } else if cmd.args.len() == 1 && (self.word_to_string(&cmd.args[0]) == "$@" || self.word_to_string(&cmd.args[0]) == "${@}") {
+                } else if self.word_to_string(arg) == "$@" || self.word_to_string(arg) == "${@}" {
                     output.push_str("let joined = std::env::args().skip(1).collect::<Vec<_>>().join(\" \" );\n");
                     output.push_str("println!(\"{}\", joined);\n");
-                } else {
-                    // Check if we have any complex words that need special handling
-                    let has_complex_words = cmd.args.iter().any(|arg| {
-                        matches!(arg, Word::Variable(_) | Word::MapAccess(_, _) | Word::MapLength(_) | 
-                                       Word::MapKeys(_) | Word::ParameterExpansion(_) | Word::Arithmetic(_) |
-                                       Word::StringInterpolation(_))
-                    });
-                    
-                    if !has_complex_words && cmd.args.len() == 1 {
-                        // Simple case: single literal string
-                        match &cmd.args[0] {
-                            Word::Variable(var) => {
-                                output.push_str(&format!("println!(\"{{}}\", {});\n", var));
-                            }
-                            _ => {
-                                let arg_str = &cmd.args[0];
-                                let clean_str = if arg_str.starts_with('"') && arg_str.ends_with('"') {
-                                    &arg_str[1..arg_str.len()-1]
+                } else if let Word::BraceExpansion(expansion) = arg {
+                    // Handle brace expansion
+                    if expansion.items.len() == 1 {
+                        match &expansion.items[0] {
+                            BraceItem::Range(range) => {
+                                if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
+                                    let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
+                                    let values: Vec<String> = if step > 0 {
+                                        (start..=end).step_by(step as usize).map(|i| {
+                                            // Preserve leading zeros by formatting with the same width as the original
+                                            if range.start.starts_with('0') && range.start.len() > 1 {
+                                                format!("{:0width$}", i, width = range.start.len())
+                                            } else {
+                                                i.to_string()
+                                            }
+                                        }).collect()
+                                    } else {
+                                        (end..=start).rev().step_by((-step) as usize).map(|i| {
+                                            if range.start.starts_with('0') && range.start.len() > 1 {
+                                                format!("{:0width$}", i, width = range.start.len())
+                                            } else {
+                                                i.to_string()
+                                            }
+                                        }).collect()
+                                    };
+                                    output.push_str(&format!("println!(\"{}\");\n", values.join(" ")));
                                 } else {
-                                    &arg_str
-                                };
-                                let escaped = self.escape_rust_string(clean_str);
-                                output.push_str(&format!("println!(\"{}\");\n", escaped));
+                                    output.push_str(&format!("println!(\"{{{}}}..{{{}}}\");\n", range.start, range.end));
+                                }
+                            }
+                            BraceItem::Literal(s) => {
+                                // Single literal item
+                                if s.contains("..") {
+                                    // Handle ranges like "a..c" or "00..04..2"
+                                    let parts: Vec<&str> = s.split("..").collect();
+                                    if parts.len() == 2 {
+                                        if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), parts[1].chars().next()) {
+                                            if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                                                let start = start_char as u8;
+                                                let end = end_char as u8;
+                                                if start <= end {
+                                                    let values: Vec<String> = (start..=end)
+                                                        .map(|c| char::from(c).to_string())
+                                                        .collect();
+                                                    output.push_str(&format!("println!(\"{}\");\n", values.join(" ")));
+                                                } else {
+                                                    output.push_str(&format!("println!(\"{{{}}}\");\n", s));
+                                                }
+                                            } else {
+                                                output.push_str(&format!("println!(\"{{{}}}\");\n", s));
+                                            }
+                                        } else {
+                                            output.push_str(&format!("println!(\"{{{}}}\");\n", s));
+                                        }
+                                    } else if parts.len() == 3 {
+                                        // Range with step like "00..04..2"
+                                        if let (Ok(start), Ok(end), Ok(step)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>(), parts[2].parse::<i64>()) {
+                                            let values: Vec<String> = (start..=end).step_by(step as usize).map(|i| i.to_string()).collect();
+                                            output.push_str(&format!("println!(\"{}\");\n", values.join(" ")));
+                                        } else {
+                                            output.push_str(&format!("println!(\"{{{}}}\");\n", s));
+                                        }
+                                    } else {
+                                        output.push_str(&format!("println!(\"{{{}}}\");\n", s));
+                                    }
+                                } else {
+                                    output.push_str(&format!("println!(\"{{{}}}\");\n", s));
+                                }
+                            }
+                            BraceItem::Sequence(seq) => {
+                                // Convert {a,b,c} to a b c
+                                output.push_str(&format!("println!(\"{}\");\n", seq.join(" ")));
                             }
                         }
-                    } else if !has_complex_words {
-                        // Multiple literal strings - join them with space
-                        let escaped = cmd.args.iter()
-                            .map(|arg| {
-                                match arg {
-                                    Word::Variable(var) => format!("{{{}}}", var),
-                                    _ => {
-                                        let arg_str = arg;
-                                        let clean_str = if arg_str.to_string().starts_with('"') && arg_str.to_string().ends_with('"') {
-                                            &arg_str.to_string()[1..arg_str.to_string().len()-1]
-                                        } else {
-                                            &arg_str.to_string()
-                                        };
-                                        self.escape_rust_string(clean_str)
-                                    }
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                        output.push_str(&format!("println!(\"{}\");\n", escaped));
                     } else {
-                        // Check if we can inline the complex case without __echo_parts
-                        let can_inline = cmd.args.len() <= 3 && cmd.args.iter().all(|arg| {
-                            matches!(arg, 
-                                Word::Variable(_) | 
-                                Word::Literal(_) |
-                                Word::Arithmetic(_) |
-                                Word::ParameterExpansion(_)
-                            )
-                        });
-                        
-                        if can_inline {
-                            // Inline simple complex cases directly into println!
-                            let mut format_parts = Vec::new();
-                            let mut args = Vec::new();
-                            
-                            for arg in &cmd.args {
-                                match arg {
-                                    Word::Variable(var) => {
-                                        format_parts.push("{}");
-                                        args.push(format!("{}", var));
-                                    }
-                                    Word::Literal(lit) => {
-                                        let clean_str = if lit.starts_with('"') && lit.ends_with('"') {
-                                            &lit[1..lit.len()-1]
+                        // Multiple items - expand each one
+                        let mut expanded_items = Vec::new();
+                        for item in &expansion.items {
+                            match item {
+                                BraceItem::Literal(s) => expanded_items.push(s.clone()),
+                                BraceItem::Range(range) => {
+                                    if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
+                                        let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
+                                        let values: Vec<String> = if step > 0 {
+                                            (start..=end).step_by(step as usize).map(|i| i.to_string()).collect()
                                         } else {
-                                            lit
+                                            (end..=start).rev().step_by((-step) as usize).map(|i| i.to_string()).collect()
                                         };
-                                        let escaped = self.escape_rust_string(clean_str);
-                                        format_parts.push(&escaped);
-                                    }
-                                    Word::Arithmetic(expr) => {
-                                        format_parts.push("{}");
-                                        args.push(format!("({})", expr.expression));
-                                    }
-                                    Word::ParameterExpansion(pe) => {
-                                        format_parts.push("{}");
-                                        let pe_str = match &pe.operator {
-                                            ParameterExpansionOperator::UppercaseAll => format!("{}.to_uppercase()", pe.variable),
-                                            ParameterExpansionOperator::LowercaseAll => format!("{}.to_lowercase()", pe.variable),
-                                            ParameterExpansionOperator::UppercaseFirst => format!("{}.chars().next().unwrap_or(' ').to_uppercase().collect::<String>() + &{}[1..]", pe.variable, pe.variable),
-                                            _ => format!("${{{}}}", pe.variable),
-                                        };
-                                        args.push(pe_str);
-                                    }
-                                    _ => {
-                                        // Fallback to __echo_parts for unexpected cases
-                                        can_inline = false;
-                                        break;
+                                        expanded_items.extend(values);
+                                    } else {
+                                        expanded_items.push(format!("{{{}}}..{{{}}}", range.start, range.end));
                                     }
                                 }
+                                BraceItem::Sequence(seq) => {
+                                    expanded_items.extend(seq.iter().cloned());
+                                }
                             }
-                            
-                            if can_inline && args.is_empty() {
-                                // All literals - no format args needed
-                                output.push_str(&format!("println!(\"{}\");\n", format_parts.join(" ")));
-                            } else if can_inline {
-                                // Mixed literals and variables - use format args
-                                let format_str = format_parts.join(" ");
-                                output.push_str(&format!("println!(\"{}\", {});\n", format_str, args.join(", ")));
-                            } else {
-                                // Fallback to __echo_parts for complex cases
-                                self.generate_echo_with_parts(output, &cmd.args);
+                        }
+                        // For multiple brace expansions like {a,b,c}{1,2,3}, we need to generate all combinations
+                        if expansion.items.len() == 2 {
+                            let mut combinations = Vec::new();
+                            for item1 in &expanded_items {
+                                for item2 in &expanded_items {
+                                    combinations.push(format!("{}{}", item1, item2));
+                                }
                             }
+                            output.push_str(&format!("println!(\"{}\");\n", combinations.join(" ")));
                         } else {
-                            // Complex case that needs __echo_parts
-                            self.generate_echo_with_parts(output, &cmd.args);
+                            output.push_str(&format!("println!(\"{}\");\n", expanded_items.join(" ")));
                         }
                     }
-                    // Ensure success status
-                    //output.push_str("/* success */\n");
+                } else if let Word::StringInterpolation(interp) = arg {
+                    // Handle string interpolation like "$#"
+                    if interp.parts.len() == 1 {
+                        if let StringPart::Variable(var) = &interp.parts[0] {
+                            if var == "#" {
+                                output.push_str("println!(\"{}\", std::env::args().count().saturating_sub(1));\n");
+                            } else if var == "@" {
+                                output.push_str("println!(\"{}\", std::env::args().skip(1).collect::<Vec<_>>().join(\" \"));\n");
+                            } else if var.starts_with('#') && var.ends_with("[@]") {
+                                // This is #arr[@] - convert to array length and print
+                                let array_name = &var[1..var.len()-3]; // Remove # prefix and [@] suffix
+                                output.push_str(&format!("println!(\"{{}}\", {}.len());\n", array_name));
+                            } else if var.starts_with('#') && var.ends_with("[*]") {
+                                // This is #arr[*] - convert to array length and print
+                                let array_name = &var[1..var.len()-3]; // Remove # prefix and [*] suffix
+                                output.push_str(&format!("println!(\"{{}}\", {}.len());\n", array_name));
+                            } else if var.starts_with('!') && var.ends_with("[@]") {
+                                // This is !map[@] - convert to map keys and print
+                                let map_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
+                                output.push_str(&format!("println!(\"{{}}\", {}.keys().collect::<Vec<_>>().join(\" \"));\n", map_name));
+                            } else if var.starts_with('!') && var.ends_with("[*]") {
+                                // This is !map[*] - convert to map keys and print
+                                let map_name = &var[1..var.len()-3]; // Remove ! prefix and [*] suffix
+                                output.push_str(&format!("println!(\"{{}}\", {}.keys().collect::<Vec<_>>().join(\" \"));\n", map_name));
+                            } else {
+                                output.push_str(&format!("println!(\"{{}}\", {});\n", var));
+                            }
+                        } else if let StringPart::MapLength(map_name) = &interp.parts[0] {
+                            // This is ${#arr[@]} - convert to array length and print
+                            output.push_str(&format!("println!(\"{{}}\", {}.len());\n", map_name));
+                        } else if let StringPart::MapKeys(map_name) = &interp.parts[0] {
+                            // This is ${!map[@]} - convert to map keys and print
+                            output.push_str(&format!("println!(\"{{}}\", {}.keys().collect::<Vec<_>>().join(\" \"));\n", map_name));
+                        } else if let StringPart::ParameterExpansion(pe) = &interp.parts[0] {
+                            // This is a single parameter expansion - generate without quotes
+                            let content = self.generate_parameter_expansion_rust(pe);
+                            output.push_str(&format!("println!(\"{{}}\", {});\n", content));
+                        } else {
+                            let content = self.convert_string_interpolation_to_rust(interp);
+                            output.push_str(&format!("println!(\"{}\");\n", content));
+                        }
+                    } else {
+                        let content = self.convert_string_interpolation_to_rust(interp);
+                        output.push_str(&format!("println!(\"{}\");\n", content));
+                    }
+                } else {
+                    // Handle other argument types
+                    let content = self.word_to_string(arg);
+                    output.push_str(&format!("println!(\"{}\");\n", content));
                 }
+            } else {
+                // Multiple arguments - use the new brace expansion combiner
+                let expanded_args = self.expand_brace_expansions_in_args(&cmd.args);
+                output.push_str(&format!("println!(\"{}\");\n", expanded_args.join(" ")));
             }
         } else if cmd.name == "[[" {
             // Builtin [[ test: succeed (no-op)
@@ -353,59 +407,224 @@ impl RustGenerator {
             output.push_str("    return std::process::ExitCode::FAILURE;\n");
             output.push_str("}\n");
         } else if cmd.name == "ls" {
-            // Special handling for ls
-                            let args = if cmd.args.is_empty() { "." } else { &cmd.args[0] };
-            output.push_str(&format!("match fs::read_dir(\"{}\") {{\n", args));
-            output.push_str(&self.indent());
-            output.push_str("    Ok(entries) => {\n");
-            output.push_str(&self.indent());
-            output.push_str("        for entry in entries {\n");
-            output.push_str(&self.indent());
-            output.push_str("            if let Ok(entry) = entry {\n");
-            output.push_str(&self.indent());
-            output.push_str("                let file_name = entry.file_name();\n");
-            output.push_str(&self.indent());
-            output.push_str("                if let Some(name) = file_name.to_str() {\n");
-            output.push_str(&self.indent());
-            output.push_str("                    if name != \".\" && name != \"..\" {\n");
-            output.push_str(&self.indent());
-            output.push_str("                        println!(\"{}\", name);\n");
-            output.push_str(&self.indent());
-            output.push_str("                    }\n");
-            output.push_str(&self.indent());
-            output.push_str("                }\n");
-            output.push_str(&self.indent());
-            output.push_str("            }\n");
-            output.push_str(&self.indent());
-            output.push_str("        }\n");
-            output.push_str(&self.indent());
-            output.push_str("    }\n");
-            output.push_str(&self.indent());
-            output.push_str("    Err(_) => return std::process::ExitCode::FAILURE,\n");
-            output.push_str("}\n");
-        } else if cmd.name == "grep" {
-            // Special handling for grep
-            if cmd.args.len() >= 2 {
-                let pattern = &cmd.args[0];
-                let file = &cmd.args[1];
-                output.push_str(&format!("match fs::read_to_string(\"{}\") {{\n", file));
+            // Special handling for ls with brace expansion support
+            if cmd.args.is_empty() {
+                // Default to current directory
+                output.push_str("if let Ok(entries) = fs::read_dir(\".\") {\n");
                 output.push_str(&self.indent());
-                output.push_str("    Ok(content) => {\n");
+                output.push_str("    for entry in entries {\n");
                 output.push_str(&self.indent());
-                output.push_str("        for line in content.lines() {\n");
+                output.push_str("        if let Ok(entry) = entry {\n");
                 output.push_str(&self.indent());
-                output.push_str(&format!("            if line.contains(\"{}\") {{\n", pattern));
+                output.push_str("            if let Some(name) = entry.file_name().to_str() {\n");
                 output.push_str(&self.indent());
-                output.push_str("                println!(\"{}\", line);\n");
+                output.push_str("                if name != \".\" && name != \"..\" {\n");
+                output.push_str(&self.indent());
+                output.push_str("                    println!(\"{}\", name);\n");
+                output.push_str(&self.indent());
+                output.push_str("                }\n");
                 output.push_str(&self.indent());
                 output.push_str("            }\n");
                 output.push_str(&self.indent());
                 output.push_str("        }\n");
                 output.push_str(&self.indent());
                 output.push_str("    }\n");
-                output.push_str(&self.indent());
-                output.push_str("    Err(_) => return std::process::ExitCode::FAILURE,\n");
                 output.push_str("}\n");
+            } else {
+                // Handle arguments with potential brace expansion
+                let mut expanded_args = Vec::new();
+                for arg in &cmd.args {
+                    if self.word_to_string(arg).starts_with('-') {
+                        // Skip flags
+                        continue;
+                    }
+                    // Expand brace expansion in the argument
+                    let expanded = self.expand_brace_expansions_in_args(&[arg.clone()]);
+                    expanded_args.extend(expanded);
+                }
+                
+                if expanded_args.is_empty() {
+                    // No non-flag arguments, default to current directory
+                    output.push_str("if let Ok(entries) = fs::read_dir(\".\") {\n");
+                    output.push_str(&self.indent());
+                    output.push_str("    for entry in entries {\n");
+                    output.push_str(&self.indent());
+                    output.push_str("        if let Ok(entry) = entry {\n");
+                    output.push_str(&self.indent());
+                    output.push_str("            if let Some(name) = entry.file_name().to_str() {\n");
+                    output.push_str(&self.indent());
+                    output.push_str("                if name != \".\" && name != \"..\" {\n");
+                    output.push_str(&self.indent());
+                    output.push_str("                    println!(\"{}\", name);\n");
+                    output.push_str(&self.indent());
+                    output.push_str("                }\n");
+                    output.push_str(&self.indent());
+                    output.push_str("            }\n");
+                    output.push_str(&self.indent());
+                    output.push_str("        }\n");
+                    output.push_str(&self.indent());
+                    output.push_str("    }\n");
+                    output.push_str("}\n");
+                } else {
+                    // Handle each expanded argument
+                    for arg in expanded_args {
+                        if arg.contains('*') {
+                            // Handle glob patterns like file_*.txt
+                            let pattern = arg.replace('*', ".*");
+                            output.push_str(&format!("// List files matching pattern: {}\n", arg));
+                            output.push_str("if let Ok(entries) = fs::read_dir(\".\") {\n");
+                            output.push_str(&self.indent());
+                            output.push_str("    for entry in entries {\n");
+                            output.push_str(&self.indent());
+                            output.push_str("        if let Ok(entry) = entry {\n");
+                            output.push_str(&self.indent());
+                            output.push_str("            if let Some(name) = entry.file_name().to_str() {\n");
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("                if name.matches(\"{}\") {{\n", pattern));
+                            output.push_str(&self.indent());
+                            output.push_str("                    println!(\"{}\", name);\n");
+                            output.push_str(&self.indent());
+                            output.push_str("                }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("            }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("        }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("    }\n");
+                            output.push_str("}\n");
+                        } else {
+                            // Regular directory/file
+                            output.push_str(&format!("if let Ok(entries) = fs::read_dir(\"{}\") {{\n", arg));
+                            output.push_str(&self.indent());
+                            output.push_str("    for entry in entries {\n");
+                            output.push_str(&self.indent());
+                            output.push_str("        if let Ok(entry) = entry {\n");
+                            output.push_str(&self.indent());
+                            output.push_str("            if let Some(name) = entry.file_name().to_str() {\n");
+                            output.push_str(&self.indent());
+                            output.push_str("                if name != \".\" && name != \"..\" {\n");
+                            output.push_str(&self.indent());
+                            output.push_str("                    println!(\"{}\", name);\n");
+                            output.push_str(&self.indent());
+                            output.push_str("                }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("            }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("        }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("    }\n");
+                            output.push_str("}\n");
+                        }
+                    }
+                }
+            }
+        } else if cmd.name == "grep" {
+            // Special handling for grep with enhanced options
+            if cmd.args.len() >= 1 {
+                // Find the pattern (first non-flag argument)
+                let mut pattern = None;
+                let mut file = None;
+                let mut flags = Vec::new();
+                
+                for arg in &cmd.args {
+                    let arg_str = self.word_to_string(arg);
+                    if arg_str.starts_with('-') {
+                        flags.push(arg_str);
+                    } else if pattern.is_none() {
+                        pattern = Some(arg_str);
+                    } else if file.is_none() {
+                        file = Some(arg_str);
+                    }
+                }
+                
+                if let Some(pattern) = pattern {
+                    let file = file.map_or("STDIN", |w| w);
+                    
+                    // Check for -o flag (only matching part)
+                    let only_matching = flags.iter().any(|flag| flag == "-o");
+                    
+                    if only_matching {
+                        if file == "STDIN" {
+                            output.push_str("let stdin = io::stdin();\n");
+                            output.push_str("let mut buffer = String::new();\n");
+                            output.push_str("while stdin.read_line(&mut buffer).unwrap() > 0 {\n");
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("    if let Ok(re) = regex::Regex::new(\"{}\") {{\n", pattern));
+                            output.push_str(&self.indent());
+                            output.push_str("        if let Some(captures) = re.captures(&buffer) {\n");
+                            output.push_str(&self.indent());
+                            output.push_str("            if let Some(m) = captures.get(1) {\n");
+                            output.push_str(&self.indent());
+                            output.push_str("                println!(\"{}\", m.as_str());\n");
+                            output.push_str(&self.indent());
+                            output.push_str("            }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("        }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("    }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("    buffer.clear();\n");
+                            output.push_str("}\n");
+                        } else {
+                            output.push_str(&format!("if let Ok(content) = fs::read_to_string(\"{}\") {{\n", file));
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("    if let Ok(re) = regex::Regex::new(\"{}\") {{\n", pattern));
+                            output.push_str(&self.indent());
+                            output.push_str("        for line in content.lines() {\n");
+                            output.push_str(&self.indent());
+                            output.push_str("            if let Some(captures) = re.captures(line) {\n");
+                            output.push_str(&self.indent());
+                            output.push_str("                if let Some(m) = captures.get(1) {\n");
+                            output.push_str(&self.indent());
+                            output.push_str("                    println!(\"{}\", m.as_str());\n");
+                            output.push_str(&self.indent());
+                            output.push_str("                }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("            }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("        }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("    }\n");
+                            output.push_str("}\n");
+                        }
+                    } else {
+                        if file == "STDIN" {
+                            output.push_str("let stdin = io::stdin();\n");
+                            output.push_str("let mut buffer = String::new();\n");
+                            output.push_str("while stdin.read_line(&mut buffer).unwrap() > 0 {\n");
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("    if let Ok(re) = regex::Regex::new(\"{}\") {{\n", pattern));
+                            output.push_str(&self.indent());
+                            output.push_str("        if re.is_match(&buffer) {\n");
+                            output.push_str(&self.indent());
+                            output.push_str("            print!(\"{}\", buffer);\n");
+                            output.push_str(&self.indent());
+                            output.push_str("        }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("    }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("    buffer.clear();\n");
+                            output.push_str("}\n");
+                        } else {
+                            output.push_str(&format!("if let Ok(content) = fs::read_to_string(\"{}\") {{\n", file));
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("    if let Ok(re) = regex::Regex::new(\"{}\") {{\n", pattern));
+                            output.push_str(&self.indent());
+                            output.push_str("        for line in content.lines() {\n");
+                            output.push_str(&self.indent());
+                            output.push_str("            if re.is_match(line) {\n");
+                            output.push_str(&self.indent());
+                            output.push_str("                println!(\"{}\", line);\n");
+                            output.push_str(&self.indent());
+                            output.push_str("            }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("        }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("    }\n");
+                            output.push_str("}\n");
+                        }
+                    }
+                }
             }
         } else if cmd.name == "cat" {
             // Special handling for cat including heredocs
@@ -440,12 +659,44 @@ impl RustGenerator {
                 output.push_str("}\n");
             }
         } else if cmd.name == "rm" {
-            // Special handling for rm
-            for arg in &cmd.args {
-                output.push_str(&format!("if let Err(_) = fs::remove_file(\"{}\") {{\n", arg.to_string()));
-                output.push_str(&self.indent());
-                output.push_str("    return std::process::ExitCode::FAILURE;\n");
-                output.push_str("}\n");
+            // Special handling for rm with brace expansion support
+            if !cmd.args.is_empty() {
+                // Expand brace expansion in arguments
+                let expanded_args = self.expand_brace_expansions_in_args(&cmd.args);
+                
+                // Remove each file
+                for arg in expanded_args {
+                    if arg.contains('*') {
+                        // Handle glob patterns like file_*.txt
+                        output.push_str(&format!("// Remove files matching pattern: {}\n", arg));
+                        output.push_str("if let Ok(entries) = fs::read_dir(\".\") {\n");
+                        output.push_str(&self.indent());
+                        output.push_str("    for entry in entries {\n");
+                        output.push_str(&self.indent());
+                        output.push_str("        if let Ok(entry) = entry {\n");
+                        output.push_str(&self.indent());
+                        output.push_str("            if let Some(name) = entry.file_name().to_str() {\n");
+                        output.push_str(&self.indent());
+                        output.push_str(&format!("                if name.matches(\"{}\") {{\n", arg.replace('*', ".*")));
+                        output.push_str(&self.indent());
+                        output.push_str("                    let _ = fs::remove_file(entry.path());\n");
+                        output.push_str(&self.indent());
+                        output.push_str("                }\n");
+                        output.push_str(&self.indent());
+                        output.push_str("            }\n");
+                        output.push_str(&self.indent());
+                        output.push_str("        }\n");
+                        output.push_str(&self.indent());
+                        output.push_str("    }\n");
+                        output.push_str("}\n");
+                    } else {
+                        // Regular file
+                        output.push_str(&format!("if let Err(_) = fs::remove_file(\"{}\") {{\n", arg));
+                        output.push_str(&self.indent());
+                        output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                        output.push_str("}\n");
+                    }
+                }
             }
         } else if cmd.name == "mv" {
             // Special handling for mv
@@ -477,6 +728,108 @@ impl RustGenerator {
                 output.push_str("    return std::process::ExitCode::FAILURE;\n");
                 output.push_str("}\n");
                 output.push_str(&format!("let {v} = {v}.trim().to_string();\n", v = var_name));
+            }
+        } else if cmd.name == "printf" {
+            // Handle printf command with format strings and arguments
+            if cmd.args.is_empty() {
+                output.push_str("println!();\n");
+            } else {
+                let format_str = &cmd.args[0];
+                let args = &cmd.args[1..];
+                
+                if args.is_empty() {
+                    // Single format string argument
+                    let format_str_rust = self.word_to_rust_format_string(format_str);
+                    output.push_str(&format!("print!(\"{}\");\n", format_str_rust));
+                } else {
+                    // Format string with arguments
+                    let format_str_rust = self.word_to_rust_format_string(format_str);
+                    let mut format_args = Vec::new();
+                    let mut format_placeholders = Vec::new();
+                    
+                    for arg in args {
+                        match arg {
+                            Word::Variable(var) => {
+                                format_placeholders.push("{}".to_string());
+                                format_args.push(format!("{}", var));
+                            }
+                            Word::StringInterpolation(interp) => {
+                                // Handle string interpolation in printf arguments
+                                let content = self.convert_string_interpolation_to_rust(interp);
+                                format_placeholders.push("{}".to_string());
+                                format_args.push(content);
+                            }
+                            Word::Arithmetic(expr) => {
+                                format_placeholders.push("{}".to_string());
+                                format_args.push(format!("({})", expr.expression));
+                            }
+                            Word::ParameterExpansion(pe) => {
+                                let pe_str = self.generate_parameter_expansion_rust(pe);
+                                format_placeholders.push("{}".to_string());
+                                format_args.push(pe_str);
+                            }
+                            _ => {
+                                let arg_str = self.word_to_string(arg);
+                                format_placeholders.push("{}".to_string());
+                                format_args.push(format!("\"{}\"", self.escape_rust_string(&arg_str)));
+                            }
+                        }
+                    }
+                    
+                    // Build the final format string
+                    let final_format = format_placeholders.join("");
+                    if format_args.is_empty() {
+                        output.push_str(&format!("print!(\"{}\");\n", format_str_rust));
+                    } else {
+                        output.push_str(&format!("print!(\"{}{}\", {});\n", 
+                            format_str_rust, final_format, format_args.join(", ")));
+                    }
+                }
+            }
+        } else if cmd.name == "touch" {
+            // Special handling for touch with brace expansion support
+            if !cmd.args.is_empty() {
+                // Expand brace expansion in arguments
+                let expanded_files = self.expand_brace_expansions_in_args(&cmd.args);
+                
+                // Now create all the files
+                for file in expanded_files {
+                    output.push_str(&format!("if let Err(_) = fs::write(\"{}\", \"\") {{\n", file));
+                    output.push_str(&self.indent());
+                    output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                    output.push_str("}\n");
+                }
+            }
+        } else if cmd.name == "mapfile" {
+            // Handle mapfile command for reading lines into an array
+            if cmd.args.len() >= 2 && self.word_to_string(&cmd.args[0]) == "-t" {
+                let array_name = &cmd.args[1];
+                output.push_str(&format!("let mut {}: Vec<String> = Vec::new();\n", array_name));
+                output.push_str("let stdin = io::stdin();\n");
+                output.push_str("let mut buffer = String::new();\n");
+                output.push_str("while stdin.read_line(&mut buffer).unwrap() > 0 {\n");
+                output.push_str(&self.indent());
+                output.push_str(&format!("    {}.push(buffer.trim().to_string());\n", array_name));
+                output.push_str(&self.indent());
+                output.push_str("    buffer.clear();\n");
+                output.push_str("}\n");
+            }
+        } else if cmd.name == "comm" {
+            // Handle comm command for comparing sorted files
+            if cmd.args.len() >= 3 {
+                let flag = &cmd.args[0];
+                let file1 = &cmd.args[1];
+                let file2 = &cmd.args[2];
+                output.push_str(&format!("// comm {} {} {}\n", flag, file1, file2));
+                output.push_str("let _ = Command::new(\"comm\")\n");
+                output.push_str(&self.indent());
+                output.push_str(&format!("    .arg(\"{}\")\n", flag));
+                output.push_str(&self.indent());
+                output.push_str(&format!("    .arg(\"{}\")\n", file1));
+                output.push_str(&self.indent());
+                output.push_str(&format!("    .arg(\"{}\")\n", file2));
+                output.push_str(&self.indent());
+                output.push_str("    .status();\n");
             }
         } else {
             // Generic command
@@ -642,8 +995,10 @@ impl RustGenerator {
                 for arg in &cmd.args {
                     if let Word::Literal(opt) = arg {
                         if opt == "-A" {
-                            // Declare associative array - for now just comment it
-                            output.push_str("// declare -A: associative array declaration\n");
+                            // Declare associative array
+                            if let Some(array_name) = cmd.args.get(1) {
+                                output.push_str(&format!("let mut {}: std::collections::HashMap<String, String> = std::collections::HashMap::new();\n", array_name));
+                            }
                         } else {
                             output.push_str(&format!("// declare {}\n", opt));
                         }
@@ -685,7 +1040,7 @@ impl RustGenerator {
                 
                 // Convert to Rust regex matching
                 output.push_str(&format!("// Regex test: {} =~ {}\n", var, pattern));
-                output.push_str("true // TODO: implement regex matching\n");
+                output.push_str(&format!("regex::Regex::new(\"{}\").unwrap().is_match({})\n", pattern, var));
             } else {
                 output.push_str(&format!("// Invalid regex test: {}\n", expr));
                 output.push_str("false");
@@ -697,23 +1052,168 @@ impl RustGenerator {
                 let var = parts[0].trim();
                 let pattern = parts[1].trim();
                 
-                if modifiers.nocasematch {
-                    // Case-insensitive matching
-                    output.push_str(&format!("// Case-insensitive pattern test: {} == {}\n", var, pattern));
-                    output.push_str("true // TODO: implement case-insensitive pattern matching\n");
+                if modifiers.extglob {
+                    // Handle extglob patterns
+                    let regex_pattern = self.convert_extglob_to_rust_regex(pattern);
+                    if modifiers.nocasematch {
+                        output.push_str(&format!("// Case-insensitive extglob pattern test: {} == {}\n", var, pattern));
+                        output.push_str(&format!("regex::Regex::new(\"{}\").unwrap().is_match(&{}.to_lowercase())\n", regex_pattern, var));
+                    } else {
+                        output.push_str(&format!("// Extglob pattern test: {} == {}\n", var, pattern));
+                        output.push_str(&format!("regex::Regex::new(\"{}\").unwrap().is_match({})\n", regex_pattern, var));
+                    }
                 } else {
-                    // Case-sensitive matching
-                    output.push_str(&format!("// Pattern test: {} == {}\n", var, pattern));
-                    output.push_str("true // TODO: implement pattern matching\n");
+                    // Regular glob pattern matching - convert glob to regex
+                    let regex_pattern = self.convert_glob_to_regex(pattern);
+                    if modifiers.nocasematch {
+                        // Case-insensitive matching
+                        output.push_str(&format!("// Case-insensitive pattern test: {} == {}\n", var, pattern));
+                        output.push_str(&format!("regex::Regex::new(\"{}\").unwrap().is_match(&{}.to_lowercase())\n", regex_pattern, var));
+                    } else {
+                        // Case-sensitive matching
+                        output.push_str(&format!("// Pattern test: {} == {}\n", var, pattern));
+                        output.push_str(&format!("regex::Regex::new(\"{}\").unwrap().is_match({})\n", regex_pattern, var));
+                    }
                 }
             } else {
                 output.push_str(&format!("// Invalid pattern test: {}\n", expr));
                 output.push_str("false");
             }
+        } else if expr.contains(" != ") {
+            // Pattern matching: [[ $var != pattern ]]
+            let parts: Vec<&str> = expr.split(" != ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let pattern = parts[1].trim();
+                
+                if modifiers.extglob {
+                    // Handle extglob patterns
+                    let regex_pattern = self.convert_extglob_to_rust_regex(pattern);
+                    if modifiers.nocasematch {
+                        output.push_str(&format!("// Case-insensitive extglob pattern test: {} != {}\n", var, pattern));
+                        output.push_str(&format!("!regex::Regex::new(\"{}\").unwrap().is_match(&{}.to_lowercase())\n", regex_pattern, var));
+                    } else {
+                        output.push_str(&format!("// Extglob pattern test: {} != {}\n", var, pattern));
+                        output.push_str(&format!("!regex::Regex::new(\"{}\").unwrap().is_match({})\n", regex_pattern, var));
+                    }
+                } else {
+                    // Regular pattern matching
+                    let regex_pattern = self.convert_glob_to_regex(pattern);
+                    if modifiers.nocasematch {
+                        // Case-insensitive matching
+                        output.push_str(&format!("// Case-insensitive pattern test: {} != {}\n", var, pattern));
+                        output.push_str(&format!("!regex::Regex::new(\"{}\").unwrap().is_match(&{}.to_lowercase())\n", regex_pattern, var));
+                    } else {
+                        // Case-sensitive matching
+                        output.push_str(&format!("// Pattern test: {} != {}\n", var, pattern));
+                        output.push_str(&format!("!regex::Regex::new(\"{}\").unwrap().is_match({})\n", regex_pattern, var));
+                    }
+                }
+            } else {
+                output.push_str(&format!("// Invalid pattern test: {}\n", expr));
+                output.push_str("false");
+            }
+        } else if expr.contains(" -eq ") {
+            // Numeric equality: [[ $var -eq value ]]
+            let parts: Vec<&str> = expr.split(" -eq ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                output.push_str(&format!("{} == {}\n", var, value));
+            } else {
+                output.push_str("false");
+            }
+        } else if expr.contains(" -ne ") {
+            // Numeric inequality: [[ $var -ne value ]]
+            let parts: Vec<&str> = expr.split(" -ne ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                output.push_str(&format!("{} != {}\n", var, value));
+            } else {
+                output.push_str("false");
+            }
+        } else if expr.contains(" -lt ") {
+            // Less than: [[ $var -lt value ]]
+            let parts: Vec<&str> = expr.split(" -lt ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                output.push_str(&format!("{} < {}\n", var, value));
+            } else {
+                output.push_str("false");
+            }
+        } else if expr.contains(" -le ") {
+            // Less than or equal: [[ $var -le value ]]
+            let parts: Vec<&str> = expr.split(" -le ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                output.push_str(&format!("{} <= {}\n", var, value));
+            } else {
+                output.push_str("false");
+            }
+        } else if expr.contains(" -gt ") {
+            // Greater than: [[ $var -gt value ]]
+            let parts: Vec<&str> = expr.split(" -gt ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                output.push_str(&format!("{} > {}\n", var, value));
+            } else {
+                output.push_str("false");
+            }
+        } else if expr.contains(" -ge ") {
+            // Greater than or equal: [[ $var -ge value ]]
+            let parts: Vec<&str> = expr.split(" -ge ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                output.push_str(&format!("{} >= {}\n", var, value));
+            } else {
+                output.push_str("false");
+            }
+        } else if expr.contains(" -z ") {
+            // String is empty: [[ -z $var ]]
+            let var_str = expr.replace("-z", "").trim().to_string();
+            output.push_str(&format!("{}.is_empty()\n", var_str));
+        } else if expr.contains(" -n ") {
+            // String is not empty: [[ -n $var ]]
+            let var_str = expr.replace("-n", "").trim().to_string();
+            output.push_str(&format!("!{}.is_empty()\n", var_str));
+        } else if expr.contains(" -f ") {
+            // File exists and is regular: [[ -f $var ]]
+            let var_str = expr.replace("-f", "").trim().to_string();
+            output.push_str(&format!("fs::metadata(\"{}\").map(|m| m.is_file()).unwrap_or(false)\n", var_str));
+        } else if expr.contains(" -d ") {
+            // Directory exists: [[ -d $var ]]
+            let var_str = expr.replace("-d", "").trim().to_string();
+            output.push_str(&format!("fs::metadata(\"{}\").map(|m| m.is_dir()).unwrap_or(false)\n", var_str));
+        } else if expr.contains(" -e ") {
+            // File exists: [[ -e $var ]]
+            let var_str = expr.replace("-e", "").trim().to_string();
+            output.push_str(&format!("fs::metadata(\"{}\").is_ok()\n", var_str));
+        } else if expr.contains(" -r ") {
+            // File is readable: [[ -r $var ]]
+            let var_str = expr.replace("-r", "").trim().to_string();
+            output.push_str(&format!("fs::metadata(\"{}\").map(|m| m.permissions().readonly()).unwrap_or(false)\n", var_str));
+        } else if expr.contains(" -w ") {
+            // File is writable: [[ -w $var ]]
+            let var_str = expr.replace("-w", "").trim().to_string();
+            output.push_str(&format!("fs::metadata(\"{}\").map(|m| !m.permissions().readonly()).unwrap_or(false)\n", var_str));
+        } else if expr.contains(" -x ") {
+            // File is executable: [[ -x $var ]]
+            let var_str = expr.replace("-x", "").trim().to_string();
+            output.push_str(&format!("fs::metadata(\"{}\").map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false)\n", var_str));
         } else {
-            // Generic test expression
-            output.push_str(&format!("// Test expression: {}\n", expr));
-            output.push_str("true");
+            // Unknown test expression
+            output.push_str(&format!("false // Unknown test: {}\n", expr));
         }
         
         output
@@ -722,9 +1222,280 @@ impl RustGenerator {
     fn generate_pipeline(&mut self, pipeline: &Pipeline) -> String {
         let mut output = String::new();
         
-        // Simplified: execute sequentially; no external piping
-        for cmd in &pipeline.commands {
-            output.push_str(&self.generate_command(cmd));
+        // Check if we have complex commands that need special handling
+        let has_complex_commands = pipeline.commands.iter().any(|cmd| {
+            matches!(cmd, Command::For(_)) || 
+            (matches!(cmd, Command::Simple(simple)) && simple.name == "find")
+        });
+        
+        if pipeline.commands.len() == 1 {
+            output.push_str(&self.generate_command(&pipeline.commands[0]));
+        } else if has_complex_commands {
+            // Handle pipelines with for loops and other complex commands
+            // Use unique variable names for each pipeline to avoid redeclaration warnings
+            static mut PIPELINE_COUNTER: usize = 0;
+            let pipeline_id = unsafe {
+                PIPELINE_COUNTER += 1;
+                PIPELINE_COUNTER
+            };
+            
+            output.push_str(&format!("let mut output_{}: String = String::new();\n", pipeline_id));
+            
+            // Check if the first command is a for loop
+            if let Command::For(for_loop) = &pipeline.commands[0] {
+                // Generate the for loop that builds the output string for the pipeline
+                let variable = &for_loop.variable;
+                let items = &for_loop.items;
+                
+                // Convert items to Rust array syntax
+                let items_str = if items.len() == 1 {
+                    match &items[0] {
+                        Word::StringInterpolation(interp) => {
+                            if interp.parts.len() == 1 {
+                                if let StringPart::MapAccess(map_name, key) = &interp.parts[0] {
+                                    if key == "@" {
+                                        format!("&{}", map_name)
+                                    } else {
+                                        format!("&{}", map_name)
+                                    }
+                                } else if let StringPart::MapKeys(map_name) = &interp.parts[0] {
+                                    // This is ${!map[@]} - convert to keys(%map)
+                                    format!("{}.keys()", map_name)
+                                } else if let StringPart::Variable(var) = &interp.parts[0] {
+                                    if var.starts_with("!") && var.ends_with("[@]") {
+                                        // This is !map[@] - convert to keys(%map)
+                                        let map_name = &var[1..var.len()-3];
+                                        format!("{}.keys()", map_name)
+                                    } else if var.ends_with("[@]") {
+                                        let array_name = &var[..var.len()-3];
+                                        format!("&{}", array_name)
+                                    } else {
+                                        format!("&{}", var)
+                                    }
+                                } else {
+                                    format!("&{}", items[0])
+                                }
+                            } else {
+                                format!("&{}", items[0])
+                            }
+                        }
+                        Word::MapAccess(map_name, key) => {
+                            if key == "@" {
+                                format!("&{}", map_name)
+                            } else {
+                                format!("&{}", map_name)
+                            }
+                        }
+                        _ => format!("&{}", items[0])
+                    }
+                } else {
+                    format!("&[{}]", items.iter().map(|s| format!("\"{}\"", self.word_to_string(s))).collect::<Vec<_>>().join(", ")))
+                };
+                
+                // Generate the for loop that builds the output string for the pipeline
+                output.push_str(&format!("for {} in {} {{\n", variable, items_str));
+                // Instead of printing directly, build the output string
+                for cmd in &for_loop.body.commands {
+                    if let Command::Simple(simple_cmd) = cmd {
+                        if simple_cmd.name == "echo" {
+                            // Convert echo to building output string
+                            let mut echo_parts = Vec::new();
+                            for arg in &simple_cmd.args {
+                                match arg {
+                                    Word::StringInterpolation(interp) => {
+                                        // Handle string interpolation by converting to Rust string concatenation
+                                        let parts: Vec<String> = interp.parts.iter().map(|part| {
+                                            match part {
+                                                StringPart::Literal(lit) => format!("\"{}\"", self.escape_rust_string(lit)),
+                                                StringPart::Variable(var) => format!("{}", var),
+                                                StringPart::MapAccess(map_name, key) => {
+                                                    if key.starts_with('$') {
+                                                        // Key is a variable like $k
+                                                        format!("{}.get({}).unwrap_or(&String::new())", map_name, format!("${}", &key[1..]))
+                                                    } else {
+                                                        // Key is a literal
+                                                        format!("{}.get(\"{}\").unwrap_or(&String::new())", map_name, key)
+                                                    }
+                                                }
+                                                StringPart::MapKeys(map_name) => {
+                                                    // ${!map[@]} -> keys(%map)
+                                                    format!("{}.keys()", map_name)
+                                                }
+                                                _ => format!("{:?}", part)
+                                            }
+                                        }).collect();
+                                        echo_parts.push(format!("{}", parts.join(" + ")));
+                                    }
+                                    _ => {
+                                        // For non-interpolated words, just convert normally
+                                        echo_parts.push(self.word_to_string(arg));
+                                    }
+                                }
+                            }
+                            let echo_str = echo_parts.join(" + ");
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("output_{} += &({} + \"\\n\");\n", pipeline_id, echo_str));
+                        } else {
+                            // For other commands, generate normally but capture output
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("// Execute command: {}\n", simple_cmd.name));
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("let cmd_output = Command::new(\"{}\")\n", simple_cmd.name));
+                            output.push_str(&self.indent());
+                            output.push_str("    .output();\n");
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("if let Ok(output) = cmd_output {{\n"));
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("    output_{} += &String::from_utf8_lossy(&output.stdout);\n", pipeline_id));
+                            output.push_str(&self.indent());
+                            output.push_str("}\n");
+                        }
+                    } else {
+                        // For non-simple commands, generate normally but capture output
+                        output.push_str(&self.indent());
+                        output.push_str("// Execute complex command\n");
+                        output.push_str(&self.indent());
+                        output.push_str(&format!("let cmd_output = Command::new(\"sh\")\n"));
+                        output.push_str(&self.indent());
+                        output.push_str("    .arg(\"-c\")\n");
+                        output.push_str(&self.indent());
+                        output.push_str(&format!("    .arg(\"{}\")\n", self.command_to_string(cmd)));
+                        output.push_str(&self.indent());
+                        output.push_str("    .output();\n");
+                        output.push_str(&self.indent());
+                        output.push_str(&format!("if let Ok(output) = cmd_output {{\n"));
+                        output.push_str(&self.indent());
+                        output.push_str(&format!("    output_{} += &String::from_utf8_lossy(&output.stdout);\n", pipeline_id));
+                        output.push_str(&self.indent());
+                        output.push_str("}\n");
+                    }
+                }
+                output.push_str("}\n");
+            } else {
+                // First command - check if it's a find command and handle specially
+                if let Command::Simple(cmd) = &pipeline.commands[0] {
+                    if cmd.name == "find" {
+                        // Handle find command with Windows compatibility
+                        let mut find_args = Vec::new();
+                        for arg in &cmd.args {
+                            match arg {
+                                Word::Literal(s) => {
+                                    if s == "." {
+                                        find_args.push(".".to_string());
+                                    } else if s == "-name" {
+                                        find_args.push("-name".to_string());
+                                    } else {
+                                        // Convert glob pattern to regex for find
+                                        let pattern = self.convert_glob_to_regex(s);
+                                        find_args.push(pattern);
+                                    }
+                                }
+                                Word::StringInterpolation(interp) => {
+                                    if interp.parts.len() == 1 {
+                                        if let StringPart::Literal(s) = &interp.parts[0] {
+                                            // Convert glob pattern to regex for find
+                                            let pattern = self.convert_glob_to_regex(s);
+                                            find_args.push(pattern);
+                                        } else {
+                                            find_args.push(self.convert_string_interpolation_to_rust(interp));
+                                        }
+                                    } else {
+                                        find_args.push(self.convert_string_interpolation_to_rust(interp));
+                                    }
+                                }
+                                _ => find_args.push(self.word_to_string(arg))
+                            }
+                        }
+                        
+                        // Use Rust's walkdir instead of system find for cross-platform compatibility
+                        if find_args.len() >= 3 && find_args[1] == "-name" {
+                            let pattern = &find_args[2];
+                            let dir = &find_args[0];
+                            output.push_str(&format!("// Find files matching pattern: {} in directory: {}\n", pattern, dir));
+                            output.push_str("if let Ok(entries) = fs::read_dir(dir) {\n");
+                            output.push_str(&self.indent());
+                            output.push_str("    for entry in entries {\n");
+                            output.push_str(&self.indent());
+                            output.push_str("        if let Ok(entry) = entry {\n");
+                            output.push_str(&self.indent());
+                            output.push_str("            if let Some(name) = entry.file_name().to_str() {\n");
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("                if regex::Regex::new(\"{}\").unwrap().is_match(name) {{\n", pattern));
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("                    output_{} += &format!(\"{{}}\\n\", entry.path().display());\n", pipeline_id));
+                            output.push_str(&self.indent());
+                            output.push_str("                }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("            }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("        }\n");
+                            output.push_str(&self.indent());
+                            output.push_str("    }\n");
+                            output.push_str("}\n");
+                        } else {
+                            // Fallback to system find command
+                            let cmd_str = self.command_to_string(&pipeline.commands[0]);
+                            output.push_str(&format!("let cmd_output = Command::new(\"find\")\n"));
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("    .arg(\"{}\")\n", cmd_str));
+                            output.push_str(&self.indent());
+                            output.push_str("    .output();\n");
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("if let Ok(output) = cmd_output {{\n"));
+                            output.push_str(&self.indent());
+                            output.push_str(&format!("    output_{} += &String::from_utf8_lossy(&output.stdout);\n", pipeline_id));
+                            output.push_str(&self.indent());
+                            output.push_str("}\n");
+                        }
+                    }
+                }
+            }
+            
+            // Now process the output through the remaining pipeline commands
+            for cmd in &pipeline.commands[1..] {
+                output.push_str(&format!("// Process output through: {}\n", self.command_to_string(cmd)));
+                output.push_str(&format!("let cmd_output = Command::new(\"sh\")\n"));
+                output.push_str(&self.indent());
+                output.push_str("    .arg(\"-c\")\n");
+                output.push_str(&self.indent());
+                output.push_str(&format!("    .arg(\"{}\")\n", self.command_to_string(cmd)));
+                output.push_str(&self.indent());
+                output.push_str("    .stdin(std::process::Stdio::piped())\n");
+                output.push_str(&self.indent());
+                output.push_str("    .output();\n");
+                output.push_str(&self.indent());
+                output.push_str(&format!("if let Ok(mut child) = Command::new(\"sh\")\n"));
+                output.push_str(&self.indent());
+                output.push_str("    .arg(\"-c\")\n");
+                output.push_str(&self.indent());
+                output.push_str(&format!("    .arg(\"{}\")\n", self.command_to_string(cmd)));
+                output.push_str(&self.indent());
+                output.push_str("    .stdin(std::process::Stdio::piped())\n");
+                output.push_str(&self.indent());
+                output.push_str("    .spawn() {\n");
+                output.push_str(&self.indent());
+                output.push_str("    if let Some(stdin) = child.stdin.take() {\n");
+                output.push_str(&self.indent());
+                output.push_str(&format!("        let _ = stdin.write_all(output_{}.as_bytes());\n", pipeline_id));
+                output.push_str(&self.indent());
+                output.push_str("    }\n");
+                output.push_str(&self.indent());
+                output.push_str(&format!("    if let Ok(output) = child.wait_with_output() {{\n"));
+                output.push_str(&self.indent());
+                output.push_str(&format!("        output_{} = String::from_utf8_lossy(&output.stdout).to_string();\n", pipeline_id));
+                output.push_str(&self.indent());
+                output.push_str("    }\n");
+                output.push_str(&self.indent());
+                output.push_str("}\n");
+            }
+            
+            // Print the final output
+            output.push_str(&format!("print!(\"{{}}\", output_{});\n", pipeline_id));
+        } else {
+            // Simplified: execute sequentially; no external piping
+            for cmd in &pipeline.commands {
+                output.push_str(&self.generate_command(cmd));
+            }
         }
 
         output
@@ -1080,7 +1851,7 @@ impl RustGenerator {
     }
 
     fn indent(&self) -> String {
-        "    ".repeat(self.indent_level)
+        SharedUtils::indent(self.indent_level)
     }
     
     fn indent_block(&self, s: &str) -> String {
@@ -1108,8 +1879,10 @@ impl RustGenerator {
                 // Special case for $@ - convert to Rust equivalent
                 if var == "@" {
                     "std::env::args().skip(1).collect::<Vec<_>>()".to_string()
+                } else if var == "#" {
+                    "std::env::args().skip(1).count()".to_string()
                 } else {
-                    format!("${}", var)
+                    var.clone()
                 }
             },
             Word::Array(name, elements) => {
@@ -1143,8 +1916,15 @@ impl RustGenerator {
                     // Special case: array iteration
                     format!("{}", map_name)
                 } else {
-                    // Regular array access - convert to Rust Vec access
-                    format!("{}.get({}).unwrap_or(&String::new())", map_name, key)
+                    // Handle shell variable syntax in the key
+                    if key.starts_with('$') {
+                        // Extract variable name from shell syntax like $foo
+                        let var_name = &key[1..];
+                        format!("{}.get({}).unwrap_or(&String::new())", map_name, var_name)
+                    } else {
+                        // String literal key - quote it
+                        format!("{}.get(\"{}\").unwrap_or(&String::new())", map_name, key)
+                    }
                 }
             },
             Word::MapKeys(map_name) => {
@@ -1196,8 +1976,10 @@ impl RustGenerator {
                             // Special case for $@ - convert to Rust equivalent
                             if var == "@" {
                                 result.push_str("std::env::args().skip(1).collect::<Vec<_>>()");
+                            } else if var == "#" {
+                                result.push_str("std::env::args().skip(1).count()");
                             } else {
-                                result.push_str(&format!("${}", var));
+                                result.push_str(var);
                             }
                         },
                         StringPart::ParameterExpansion(pe) => {
@@ -1217,16 +1999,23 @@ impl RustGenerator {
                                 ParameterExpansionOperator::Dirname => result.push_str(&format!("${{{}}}%/*", pe.variable)),
                             }
                         },
-                        StringPart::MapAccess(map_name, key) => {
-                            // Convert Bash array access to Rust equivalent
-                            if key == "@" {
-                                // Special case: array iteration
-                                result.push_str(&format!("{}", map_name));
-                            } else {
-                                // Regular array access - convert to Rust Vec access
-                                result.push_str(&format!("{}.get({}).unwrap_or(&String::new())", map_name, key));
-                            }
-                        },
+                                                    StringPart::MapAccess(map_name, key) => {
+                                // Convert Bash array access to Rust equivalent
+                                if key == "@" {
+                                    // Special case: array iteration
+                                    result.push_str(&format!("{}", map_name));
+                                } else {
+                                    // Handle shell variable syntax in the key
+                                    if key.starts_with('$') {
+                                        // Extract variable name from shell syntax like $foo
+                                        let var_name = &key[1..];
+                                        result.push_str(&format!("{}.get({}).unwrap_or(&String::new())", map_name, var_name));
+                                    } else {
+                                        // String literal key - quote it
+                                        result.push_str(&format!("{}.get(\"{}\").unwrap_or(&String::new())", map_name, key));
+                                    }
+                                }
+                            },
                         StringPart::MapKeys(map_name) => {
                             // Convert Bash array keys to Rust equivalent
                             result.push_str(&format!("{}", map_name));
@@ -1329,51 +2118,111 @@ impl RustGenerator {
     }
     
     fn expand_brace_expression(&self, s: &str) -> Option<Vec<String>> {
-        // Handle simple numeric ranges like {1..5}
-        if let Some(range) = s.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
-            if let Some((start, end)) = range.split_once("..") {
-                if let (Ok(start_num), Ok(end_num)) = (start.parse::<i32>(), end.parse::<i32>()) {
-                    let mut result = Vec::new();
-                    for i in start_num..=end_num {
-                        result.push(i.to_string());
-                    }
-                    return Some(result);
-                }
-            }
-            // Handle alphabetic ranges like {a..c}
-            if let Some((start, end)) = range.split_once("..") {
-                if start.len() == 1 && end.len() == 1 {
-                    if let (Some(start_char), Some(end_char)) = (start.chars().next(), end.chars().next()) {
-                        if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
-                            let mut result = Vec::new();
-                            for c in start_char..=end_char {
-                                result.push(c.to_string());
+        SharedUtils::expand_brace_expression(s)
+    }
+
+    fn expand_brace_expansions_in_args(&self, args: &[Word]) -> Vec<String> {
+        let mut result = Vec::new();
+        
+        for arg in args {
+            match arg {
+                Word::BraceExpansion(expansion) => {
+                    // Handle brace expansion
+                    if expansion.items.len() == 1 {
+                        match &expansion.items[0] {
+                            BraceItem::Literal(s) => {
+                                // Check if this is a range like "a..c" or "00..04..2"
+                                if s.contains("..") {
+                                    let parts: Vec<&str> = s.split("..").collect();
+                                    if parts.len() == 2 {
+                                        if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), parts[1].chars().next()) {
+                                            if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                                                let start = start_char as u8;
+                                                let end = end_char as u8;
+                                                if start <= end {
+                                                    let values: Vec<String> = (start..=end)
+                                                        .map(|c| char::from(c).to_string())
+                                                        .collect();
+                                                    result.extend(values);
+                                                    continue;
+                                                }
+                                            }
+                                        }
+                                    } else if parts.len() == 3 {
+                                        // Range with step like "00..04..2"
+                                        if let (Ok(start), Ok(end), Ok(step)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>(), parts[2].parse::<i64>()) {
+                                            let values: Vec<String> = (start..=end).step_by(step as usize).map(|i| i.to_string()).collect();
+                                            result.extend(values);
+                                            continue;
+                                        }
+                                    }
+                                }
+                                result.push(s.clone());
                             }
-                            return Some(result);
+                            BraceItem::Range(range) => {
+                                if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
+                                    let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
+                                    let values: Vec<String> = if step > 0 {
+                                        (start..=end).step_by(step as usize).map(|i| {
+                                            // Preserve leading zeros by formatting with the same width as the original
+                                            if range.start.starts_with('0') && range.start.len() > 1 {
+                                                format!("{:0width$}", i, width = range.start.len())
+                                            } else {
+                                                i.to_string()
+                                            }
+                                        }).collect()
+                                    } else {
+                                        (end..=start).rev().step_by((-step) as usize).map(|i| {
+                                            if range.start.starts_with('0') && range.start.len() > 1 {
+                                                format!("{:0width$}", i, width = range.start.len())
+                                            } else {
+                                                i.to_string()
+                                            }
+                                        }).collect()
+                                    };
+                                    result.extend(values);
+                                } else {
+                                    result.push(format!("{{{}}}..{{{}}}", range.start, range.end));
+                                }
+                            }
+                            BraceItem::Sequence(seq) => {
+                                result.extend(seq.iter().cloned());
+                            }
+                        }
+                    } else {
+                        // Multiple items - expand each one
+                        for item in &expansion.items {
+                            match item {
+                                BraceItem::Literal(s) => result.push(s.clone()),
+                                BraceItem::Range(range) => {
+                                    if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
+                                        let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
+                                        let values: Vec<String> = if step > 0 {
+                                            (start..=end).step_by(step as usize).map(|i| i.to_string()).collect()
+                                        } else {
+                                            (end..=start).rev().step_by((-step) as usize).map(|i| i.to_string()).collect()
+                                        };
+                                        result.extend(values);
+                                    } else {
+                                        result.push(format!("{{{}}}..{{{}}}", range.start, range.end));
+                                    }
+                                }
+                                BraceItem::Sequence(seq) => {
+                                    result.extend(seq.iter().cloned());
+                                }
+                            }
                         }
                     }
                 }
-            }
-            // Handle step ranges like {00..04..2}
-            if let Some((range_part, step_part)) = range.split_once("..") {
-                if let Some((start, end)) = range_part.split_once("..") {
-                    if let (Ok(start_num), Ok(end_num), Ok(step)) = (
-                        start.parse::<i32>(), 
-                        end.parse::<i32>(), 
-                        step_part.parse::<i32>()
-                    ) {
-                        let mut result = Vec::new();
-                        let mut i = start_num;
-                        while i <= end_num {
-                            result.push(format!("{:02}", i)); // Zero-pad to 2 digits
-                            i += step;
-                        }
-                        return Some(result);
-                    }
+                _ => {
+                    // Regular argument
+                    let arg_str = self.word_to_string(arg);
+                    result.push(arg_str);
                 }
             }
         }
-        None
+        
+        result
     }
 
     fn generate_echo_with_parts(&mut self, output: &mut String, args: &[Word]) {
@@ -1387,7 +2236,15 @@ impl RustGenerator {
                     if key == "@" {
                         output.push_str(&format!("    {}.join(\" \"),\n", map_name));
                     } else {
-                        output.push_str(&format!("    {}.get({}).unwrap_or(&String::new()),\n", map_name, key));
+                        // Handle shell variable syntax in the key
+                        let rust_key = if key.starts_with('$') {
+                            // Extract variable name from shell syntax like $foo
+                            &key[1..]
+                        } else {
+                            // String literal key - quote it
+                            &format!("\"{}\"", key)
+                        };
+                        output.push_str(&format!("    {}.get({}).unwrap_or(&String::new()),\n", map_name, rust_key));
                     }
                 }
                 Word::MapLength(map_name) => {
@@ -1418,8 +2275,10 @@ impl RustGenerator {
                             StringPart::Variable(var) => {
                                 if var == "@" {
                                     interp_parts.push("std::env::args().skip(1).collect::<Vec<_>>()".to_string());
+                                } else if var == "#" {
+                                    interp_parts.push("std::env::args().skip(1).count()".to_string());
                                 } else {
-                                    interp_parts.push(format!("${}", var));
+                                    interp_parts.push(var.clone());
                                 }
                             }
                             StringPart::MapAccess(map_name, key) => {
@@ -1460,7 +2319,40 @@ impl RustGenerator {
                     if interp_parts.len() == 1 {
                         output.push_str(&format!("    {}.to_string(),\n", interp_parts[0]));
                     } else {
-                        output.push_str(&format!("    ({}).to_string(),\n", interp_parts.join(" + ")));
+                        // Use format! macro for proper string concatenation
+                        let format_parts: Vec<String> = interp_parts.iter().map(|part| {
+                            if part.starts_with('"') && part.ends_with('"') {
+                                // It's a string literal, keep the quotes for the format string
+                                part.clone()
+                            } else {
+                                // It's a variable or expression, use as-is
+                                part.clone()
+                            }
+                        }).collect();
+                        
+                        // Build the format string by replacing quoted strings with {} placeholders
+                        let mut format_string = String::new();
+                        let mut format_args = Vec::new();
+                        
+                        for part in &format_parts {
+                            if part.starts_with('"') && part.ends_with('"') {
+                                // String literal - add to format string and remove quotes
+                                format_string.push_str(&part[1..part.len()-1]);
+                            } else {
+                                // Variable or expression - add placeholder and keep the part
+                                format_string.push_str("{}");
+                                format_args.push(part.clone());
+                            }
+                        }
+                        
+                        if format_args.is_empty() {
+                            // No variables, just output the literal string
+                            output.push_str(&format!("    \"{}\",\n", format_string));
+                        } else {
+                            // Has variables, use format! macro
+                            output.push_str(&format!("    format!(\"{}\", {}),\n", 
+                                format_string, format_args.join(", ")));
+                        }
                     }
                 }
                 _ => {
@@ -1478,19 +2370,230 @@ impl RustGenerator {
         output.push_str("];\n");
         output.push_str("println!(\"{}\", __echo_parts.join(\" \"));\n");
     }
+
+    fn word_to_rust_format_string(&self, word: &Word) -> String {
+        match word {
+            Word::Literal(s) => {
+                // Handle string interpolation in literal strings
+                let mut result = String::new();
+                let mut chars = s.chars().peekable();
+                while let Some(ch) = chars.next() {
+                    if ch == '{' {
+                        if let Some(next_ch) = chars.peek() {
+                            if next_ch == &'{' {
+                                result.push('{');
+                                chars.next(); // Consume the second '{'
+                            } else {
+                                result.push_str("{{");
+                            }
+                        } else {
+                            result.push_str("{{");
+                        }
+                    } else if ch == '}' {
+                        if let Some(next_ch) = chars.peek() {
+                            if next_ch == &'}' {
+                                result.push('}');
+                                chars.next(); // Consume the second '}'
+                            } else {
+                                result.push_str("}}");
+                            }
+                        } else {
+                            result.push_str("}}");
+                        }
+                    } else {
+                        result.push(ch);
+                    }
+                }
+                result
+            }
+            Word::Variable(var) => {
+                // Handle string interpolation in variables
+                if var == "@" {
+                    "std::env::args().skip(1).collect::<Vec<_>>()".to_string()
+                } else if var == "#" {
+                    "std::env::args().skip(1).count()".to_string()
+                } else {
+                    var.clone()
+                }
+            }
+            Word::StringInterpolation(interp) => {
+                let mut result = String::new();
+                for part in &interp.parts {
+                    match part {
+                        StringPart::Literal(s) => result.push_str(s),
+                        StringPart::Variable(var) => {
+                            // Handle string interpolation in variables
+                            if var == "@" {
+                                result.push_str("std::env::args().skip(1).collect::<Vec<_>>()");
+                            } else if var == "#" {
+                                result.push_str("std::env::args().skip(1).count()");
+                            } else {
+                                result.push_str(var);
+                            }
+                        },
+                        StringPart::ParameterExpansion(pe) => {
+                            let pe_str = self.generate_parameter_expansion_rust(pe);
+                            result.push_str(&pe_str);
+                        }
+                        _ => {
+                            // For any other unhandled cases, convert to string representation
+                            result.push_str(&format!("\"{:?}\"", part));
+                        }
+                    }
+                }
+                result
+            }
+            Word::Arithmetic(expr) => {
+                format!("({})", expr.expression)
+            }
+            Word::MapAccess(map_name, key) => {
+                if key == "@" {
+                    format!("{}", map_name)
+                } else {
+                    // Handle shell variable syntax in the key
+                    if key.starts_with('$') {
+                        let var_name = &key[1..];
+                        format!("{}.get({}).unwrap_or(&String::new())", map_name, var_name)
+                    } else {
+                        // String literal key - quote it
+                        format!("{}.get(\"{}\").unwrap_or(&String::new())", map_name, key)
+                    }
+                }
+            }
+            Word::MapKeys(map_name) => {
+                format!("{}", map_name)
+            }
+            Word::MapLength(map_name) => {
+                format!("{}.len()", map_name)
+            }
+            _ => word.to_string(), // Fallback for other Word types
+        }
+    }
+
+    fn convert_string_interpolation_to_rust(&self, interp: &StringInterpolation) -> String {
+        let mut result = String::new();
+        for part in &interp.parts {
+            match part {
+                StringPart::Literal(s) => result.push_str(s),
+                StringPart::Variable(var) => {
+                    // Handle string interpolation in variables
+                    if var == "@" {
+                        result.push_str("std::env::args().skip(1).collect::<Vec<_>>()");
+                    } else if var == "#" {
+                        result.push_str("std::env::args().skip(1).count()");
+                    } else {
+                        result.push_str(var);
+                    }
+                }
+                StringPart::ParameterExpansion(pe) => {
+                    let pe_str = self.generate_parameter_expansion_rust(pe);
+                    result.push_str(&pe_str);
+                }
+                _ => {
+                    // For any other unhandled cases, convert to string representation
+                    result.push_str(&format!("\"{:?}\"", part));
+                }
+            }
+        }
+        result
+    }
+
+    fn generate_parameter_expansion_rust(&self, pe: &ParameterExpansion) -> String {
+        match &pe.operator {
+            ParameterExpansionOperator::UppercaseAll => format!("{}.to_uppercase()", pe.variable),
+            ParameterExpansionOperator::LowercaseAll => format!("{}.to_lowercase()", pe.variable),
+            ParameterExpansionOperator::UppercaseFirst => format!("{}.chars().next().unwrap_or(' ').to_uppercase().collect::<String>() + &{}[1..]", pe.variable, pe.variable),
+            ParameterExpansionOperator::RemoveLongestPrefix(pattern) => format!("${{{}}}##{}", pe.variable, pattern),
+            ParameterExpansionOperator::RemoveShortestPrefix(pattern) => format!("${{{}}}#{}", pe.variable, pattern),
+            ParameterExpansionOperator::RemoveLongestSuffix(pattern) => format!("${{{}}}%%{}", pe.variable, pattern),
+            ParameterExpansionOperator::RemoveShortestSuffix(pattern) => format!("${{{}}}%{}", pe.variable, pattern),
+            ParameterExpansionOperator::SubstituteAll(pattern, replacement) => format!("${{{}}}//{}/{}", pe.variable, pattern, replacement),
+            ParameterExpansionOperator::DefaultValue(default) => format!("${{{}}}:-{}", pe.variable, default),
+            ParameterExpansionOperator::AssignDefault(default) => format!("${{{}}}:={}", pe.variable, default),
+            ParameterExpansionOperator::ErrorIfUnset(error) => format!("${{{}}}:?{}", pe.variable, error),
+            ParameterExpansionOperator::Basename => format!("${{{}}}##*/", pe.variable),
+            ParameterExpansionOperator::Dirname => format!("${{{}}}%/*", pe.variable),
+        }
+    }
+
+    fn convert_glob_to_regex(&self, pattern: &str) -> String {
+        SharedUtils::convert_glob_to_regex(pattern)
+    }
+
+    fn convert_extglob_to_rust_regex(&self, pattern: &str) -> String {
+        SharedUtils::convert_extglob_to_regex(pattern)
+    }
+
+    fn command_to_string(&self, command: &Command) -> String {
+        match command {
+            Command::Simple(cmd) => {
+                let mut result = cmd.name.clone();
+                if !cmd.args.is_empty() {
+                    result.push_str(" ");
+                    result.push_str(&cmd.args.iter().map(|arg| self.word_to_string(arg)).collect::<Vec<_>>().join(" "));
+                }
+                result
+            }
+            Command::Pipeline(pipeline) => {
+                pipeline.commands.iter().map(|cmd| self.command_to_string(cmd)).collect::<Vec<_>>().join(" | ")
+            }
+            Command::If(if_stmt) => {
+                format!("if {}; then {}; fi", 
+                    self.command_to_string(&if_stmt.condition),
+                    self.command_to_string(&if_stmt.then_branch))
+            }
+            Command::While(while_loop) => {
+                format!("while {}; do {}; done", 
+                    self.command_to_string(&while_loop.condition),
+                    self.command_to_string(&while_loop.body))
+            }
+            Command::For(for_loop) => {
+                let items = if for_loop.items.is_empty() {
+                    "\"$@\"".to_string()
+                } else {
+                    for_loop.items.iter().map(|item| self.word_to_string(item)).collect::<Vec<_>>().join(" ")
+                };
+                format!("for {} in {}; do {}; done", 
+                    for_loop.variable, items, self.command_to_string(&for_loop.body))
+            }
+            Command::Function(func) => {
+                format!("function {}() {{ {} }}", func.name, self.command_to_string(&func.body))
+            }
+            Command::Subshell(cmd) => {
+                format!("({})", self.command_to_string(cmd))
+            }
+            Command::Background(cmd) => {
+                format!("{} &", self.command_to_string(cmd))
+            }
+            Command::Block(block) => {
+                format!("{{ {} }}", self.command_to_string(&Command::Block(block.clone())))
+            }
+            Command::BuiltinCommand(cmd) => {
+                let mut result = cmd.name.clone();
+                if !cmd.args.is_empty() {
+                    result.push_str(" ");
+                    result.push_str(&cmd.args.iter().map(|arg| self.word_to_string(arg)).collect::<Vec<_>>().join(" "));
+                }
+                result
+            }
+            Command::TestExpression(test_expr) => {
+                format!("[[ {} ]]", test_expr.expression)
+            }
+            Command::ShoptCommand(cmd) => {
+                if cmd.enable {
+                    format!("shopt -s {}", cmd.option)
+                } else {
+                    format!("shopt -u {}", cmd.option)
+                }
+            }
+            Command::BlankLine => "".to_string(),
+        }
+    }
 }
 
 impl RustGenerator {
     fn extract_var_name(arg: &str) -> Option<String> {
-        if let Some(stripped) = arg.strip_prefix("$") {
-            if stripped.starts_with('{') && stripped.ends_with('}') && stripped.len() >= 3 {
-                return Some(stripped[1..stripped.len()-1].to_string());
-            }
-            if !stripped.is_empty() {
-                return Some(stripped.to_string());
-            }
-        }
-        None
+        SharedUtils::extract_var_name(arg)
     }
 }
 
