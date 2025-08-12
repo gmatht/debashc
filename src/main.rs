@@ -1,6 +1,7 @@
 mod lexer;
 mod parser;
 mod ast;
+mod shared_utils;
 mod perl_generator;
 mod rust_generator;
 mod python_generator;

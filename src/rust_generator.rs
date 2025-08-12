@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::shared_utils::SharedUtils;
 
 pub struct RustGenerator {
     indent_level: usize,
@@ -345,7 +346,7 @@ impl RustGenerator {
                             } else if var.starts_with('#') && var.ends_with("[@]") {
                                 // This is #arr[@] - convert to array length and print
                                 let array_name = &var[1..var.len()-3]; // Remove # prefix and [@] suffix
-                                output.push_str(&format!("println!(\"{{}}\", {}.len());\n", array_name));
+                              output.push_str(&format!("println!(\"{{}}\", {}.len());\n", array_name));
                             } else if var.starts_with('#') && var.ends_with("[*]") {
                                 // This is #arr[*] - convert to array length and print
                                 let array_name = &var[1..var.len()-3]; // Remove # prefix and [*] suffix
@@ -538,7 +539,7 @@ impl RustGenerator {
                 }
                 
                 if let Some(pattern) = pattern {
-                    let file = file.map_or("STDIN", |w| w);
+                    let file: String = file.map_or("STDIN".to_string(), |w| w.as_str().to_string());
                     
                     // Check for -o flag (only matching part)
                     let only_matching = flags.iter().any(|flag| flag == "-o");
@@ -1225,7 +1226,13 @@ impl RustGenerator {
         // Check if we have complex commands that need special handling
         let has_complex_commands = pipeline.commands.iter().any(|cmd| {
             matches!(cmd, Command::For(_)) || 
-            (matches!(cmd, Command::Simple(simple)) && simple.name == "find")
+            (matches!(cmd, Command::Simple(_)) && {
+                if let Command::Simple(simple) = cmd {
+                    self.word_to_string(&simple.name) == "find"
+                } else {
+                    false
+                }
+            })
         });
         
         if pipeline.commands.len() == 1 {
@@ -1289,7 +1296,7 @@ impl RustGenerator {
                         _ => format!("&{}", items[0])
                     }
                 } else {
-                    format!("&[{}]", items.iter().map(|s| format!("\"{}\"", self.word_to_string(s))).collect::<Vec<_>>().join(", ")))
+                    format!("&[{}]", items.iter().map(|s| format!("\"{}\"", self.word_to_string(s))).collect::<Vec<_>>().join(", "))
                 };
                 
                 // Generate the for loop that builds the output string for the pipeline
@@ -1851,7 +1858,7 @@ impl RustGenerator {
     }
 
     fn indent(&self) -> String {
-        SharedUtils::indent(self.indent_level)
+        "    ".repeat(self.indent_level)
     }
     
     fn indent_block(&self, s: &str) -> String {
@@ -2118,7 +2125,13 @@ impl RustGenerator {
     }
     
     fn expand_brace_expression(&self, s: &str) -> Option<Vec<String>> {
-        SharedUtils::expand_brace_expression(s)
+        // Simple implementation for brace expansion
+        if !(s.starts_with('{') && s.ends_with('}')) {
+            return None;
+        }
+        let inner = &s[1..s.len() - 1];
+        let parts: Vec<&str> = inner.split(',').collect();
+        Some(parts.iter().map(|s| s.to_string()).collect())
     }
 
     fn expand_brace_expansions_in_args(&self, args: &[Word]) -> Vec<String> {
@@ -2517,17 +2530,28 @@ impl RustGenerator {
     }
 
     fn convert_glob_to_regex(&self, pattern: &str) -> String {
-        SharedUtils::convert_glob_to_regex(pattern)
+        // Simple glob to regex conversion
+        let mut result = String::new();
+        for ch in pattern.chars() {
+            match ch {
+                '.' => result.push_str("\\."),
+                '*' => result.push_str(".*"),
+                '?' => result.push_str("."),
+                _ => result.push(ch),
+            }
+        }
+        result
     }
 
     fn convert_extglob_to_rust_regex(&self, pattern: &str) -> String {
-        SharedUtils::convert_extglob_to_regex(pattern)
+        // Simple extended glob to regex conversion
+        self.convert_glob_to_regex(pattern)
     }
 
-    fn command_to_string(&self, command: &Command) -> String {
+    fn command_to_string(&mut self, command: &Command) -> String {
         match command {
             Command::Simple(cmd) => {
-                let mut result = cmd.name.clone();
+                let mut result = self.word_to_string(&cmd.name);
                 if !cmd.args.is_empty() {
                     result.push_str(" ");
                     result.push_str(&cmd.args.iter().map(|arg| self.word_to_string(arg)).collect::<Vec<_>>().join(" "));
@@ -2545,7 +2569,7 @@ impl RustGenerator {
             Command::While(while_loop) => {
                 format!("while {}; do {}; done", 
                     self.command_to_string(&while_loop.condition),
-                    self.command_to_string(&while_loop.body))
+                    self.generate_block(&while_loop.body))
             }
             Command::For(for_loop) => {
                 let items = if for_loop.items.is_empty() {
@@ -2554,10 +2578,10 @@ impl RustGenerator {
                     for_loop.items.iter().map(|item| self.word_to_string(item)).collect::<Vec<_>>().join(" ")
                 };
                 format!("for {} in {}; do {}; done", 
-                    for_loop.variable, items, self.command_to_string(&for_loop.body))
+                    for_loop.variable, items, self.generate_block(&for_loop.body))
             }
             Command::Function(func) => {
-                format!("function {}() {{ {} }}", func.name, self.command_to_string(&func.body))
+                format!("function {}() {{ {} }}", func.name, self.generate_block(&func.body))
             }
             Command::Subshell(cmd) => {
                 format!("({})", self.command_to_string(cmd))
@@ -2566,7 +2590,7 @@ impl RustGenerator {
                 format!("{} &", self.command_to_string(cmd))
             }
             Command::Block(block) => {
-                format!("{{ {} }}", self.command_to_string(&Command::Block(block.clone())))
+                format!("{{ {} }}", self.generate_block(block))
             }
             Command::BuiltinCommand(cmd) => {
                 let mut result = cmd.name.clone();
