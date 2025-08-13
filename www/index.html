@@ -25,14 +25,14 @@
         
         .main-content {
             flex: 1;
-            padding: 20px;
+            padding: 00px;
             overflow-y: auto;
         }
         
         .header {
             text-align: center;
-            margin-bottom: 30px;
-            padding-bottom: 20px;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
             border-bottom: 2px solid #007acc;
         }
         
@@ -93,16 +93,33 @@
             box-shadow: 0 2px 4px rgba(0, 122, 204, 0.3);
         }
         
+        /* Generator table styling */
+        .generator-table {
+            margin-top: -6px;
+            margin-left: 0px;
+            margin-right: 0px;
+	    padding:0px;
+            border-collapse: collapse;
+            display: inline-block;
+            vertical-align: top;
+        }
+        
+        .generator-table td {
+            padding: 1px;
+            text-align: center;
+        }
+        
         /* Tiny generator styling */
         .tiny-generator {
             background-color: #dc3545;
             color: white;
             border: none;
-            padding: 4px 8px;
+            padding: 2px 4px;
             border-radius: 3px;
             cursor: pointer;
             font-size: 10px;
-            margin: 1px;
+            width: auto;
+            min-width: 60px;
             transition: all 0.2s ease;
         }
         
@@ -112,7 +129,7 @@
         }
         
         /* Auto-update toggle button styling */
-        .auto-update-toggle {
+        .auto-update6toggle {
             background-color: #28a745 !important;
             color: white !important;
             border: none !important;
@@ -329,12 +346,18 @@
                 <button id="rust-btn" class="main-generator">To Rust</button>
                 
                 <!-- Additional Generators -->
-                <button id="python-btn" class="tiny-generator">To Python</button>
-                <button id="lua-btn" class="tiny-generator">To Lua</button>
-                <button id="c-btn" class="tiny-generator">To C</button>
-                <button id="js-btn" class="tiny-generator">To JS</button>
-                <button id="batch-btn" class="tiny-generator">To Batch</button>
-                <button id="powershell-btn" class="tiny-generator">To PS</button>
+                <table class="generator-table">
+                    <tr>
+                        <td><button id="python-btn" class="tiny-generator">To Python</button></td>
+                        <td><button id="lua-btn" class="tiny-generator">To Lua</button></td>
+                        <td><button id="c-btn" class="tiny-generator">To C</button></td>
+                    </tr>
+                    <tr>
+                        <td><button id="js-btn" class="tiny-generator">To JS</button></td>
+                        <td><button id="batch-btn" class="tiny-generator">To Batch</button></td>
+                        <td><button id="powershell-btn" class="tiny-generator">To PS</button></td>
+                    </tr>
+                </table>
             </div>
             
             <div class="output-section">
@@ -427,7 +450,7 @@
             toggleButton.id = 'auto-update-toggle';
             toggleButton.textContent = 'Auto-update: ON';
             toggleButton.className = 'auto-update-toggle';
-            toggleButton.style.cssText = 'background-color: #28a745; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; margin-left: 10px;';
+            toggleButton.style.cssText = 'background-color: #28a745; color: white;';
             
             toggleButton.addEventListener('click', () => {
                 isAutoUpdateEnabled = !isAutoUpdateEnabled;
