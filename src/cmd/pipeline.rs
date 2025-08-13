@@ -25,29 +25,15 @@ impl<T: PipelineHandler> PipelineHandler for T {
     }
     
     fn pipeline_counter(&mut self) -> &mut usize {
-        // Placeholder implementation using thread-local storage
-        thread_local! {
-            static COUNTER: std::cell::RefCell<usize> = std::cell::RefCell::new(0);
-        }
-        
-        COUNTER.with(|counter| {
-            unsafe {
-                &mut *counter.as_ptr()
-            }
-        })
+        // Placeholder implementation - this should be overridden by concrete implementations
+        // that store the counter in the struct itself
+        panic!("pipeline_counter() must be implemented by concrete types")
     }
     
     fn needs_file_find(&mut self) -> &mut bool {
-        // Placeholder implementation using thread-local storage
-        thread_local! {
-            static NEEDS_FILE_FIND: std::cell::RefCell<bool> = std::cell::RefCell::new(false);
-        }
-        
-        NEEDS_FILE_FIND.with(|needs| {
-            unsafe {
-                &mut *needs.as_ptr()
-            }
-        })
+        // Placeholder implementation - this should be overridden by concrete implementations
+        // that store the flag in the struct itself
+        panic!("needs_file_find() must be implemented by concrete types")
     }
     
     fn word_to_perl(&mut self, word: &Word) -> String {

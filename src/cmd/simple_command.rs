@@ -328,23 +328,9 @@ impl<T: SimpleCommandHandler> SimpleCommandHandler for T {
     }
     
     fn declared_locals(&mut self) -> &mut std::collections::HashSet<String> {
-        // Use a thread-local storage approach instead of static
-        thread_local! {
-            static LOCALS: std::cell::RefCell<std::collections::HashSet<String>> = 
-                std::cell::RefCell::new(std::collections::HashSet::new());
-        }
-        
-        LOCALS.with(|locals| {
-            if locals.borrow().is_empty() {
-                // Initialize with some default values if needed
-                locals.borrow_mut().insert("default_var".to_string());
-            }
-            // This is a bit of a hack - we're returning a reference to the RefCell's contents
-            // In a real implementation, you'd want to store this in the struct itself
-            unsafe {
-                &mut *locals.as_ptr()
-            }
-        })
+        // Placeholder implementation - this should be overridden by concrete implementations
+        // that store the locals in the struct itself
+        panic!("declared_locals() must be implemented by concrete types")
     }
     
     fn subshell_depth(&self) -> usize {
@@ -352,15 +338,9 @@ impl<T: SimpleCommandHandler> SimpleCommandHandler for T {
     }
     
     fn needs_file_find(&mut self) -> &mut bool {
-        thread_local! {
-            static NEEDS_FILE_FIND: std::cell::RefCell<bool> = std::cell::RefCell::new(false);
-        }
-        
-        NEEDS_FILE_FIND.with(|needs| {
-            unsafe {
-                &mut *needs.as_ptr()
-            }
-        })
+        // Placeholder implementation - this should be overridden by concrete implementations
+        // that store the flag in the struct itself
+        panic!("needs_file_find() must be implemented by concrete types")
     }
     
     // Placeholder implementations for command handlers

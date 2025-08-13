@@ -316,6 +316,8 @@ impl PerlGenerator {
                 } else {
                     output.push_str(&format!("${} = {};\n", var, val));
                 }
+                // Also set the environment variable so it can be accessed via $ENV{VAR}
+                output.push_str(&format!("$ENV{{{}}} = ${};\n", var, var));
                 if self.subshell_depth == 0 {
                     self.declared_locals.insert(var.clone());
                 }
@@ -1419,9 +1421,6 @@ impl PerlGenerator {
                             }
                         }
                     } else if cmd.name == "perl" {
-                        // Debug: print what perl command we're processing
-                        eprintln!("DEBUG: Processing perl command: {:?}", cmd);
-                        
                         // Special handling for Perl commands - execute Perl code directly instead of using system()
                         if cmd.args.is_empty() {
                             // Just "perl" - do nothing
@@ -1430,30 +1429,63 @@ impl PerlGenerator {
                             // Check for -e flag (execute Perl code)
                             if cmd.args.len() >= 2 {
                                 if let Word::Literal(first_arg) = &cmd.args[0] {
-                                                                            if first_arg == "-e" {
-                                        if let Word::StringInterpolation(interp) = &cmd.args[1] {
-                                            // Handle string interpolation in perl -e command
-                                            // Convert the string interpolation to executable Perl code
-                                            let perl_code = self.convert_string_interpolation_to_perl(interp);
-                                            
-                                            // If the Perl code uses $arg, declare it first
-                                            if perl_code.contains("$arg") {
-                                                output.push_str("my $arg;\n");
-                                            }
-                                            
-                                            // Handle any additional arguments as @ARGV
-                                            if cmd.args.len() > 2 {
-                                                let args: Vec<String> = cmd.args.iter().skip(2)
-                                                    .map(|arg| self.perl_string_literal(arg))
-                                                    .collect();
-                                                if !args.is_empty() {
-                                                    output.push_str(&format!("my @ARGV = ({});\n", args.join(", ")));
+                                                                                                                    if first_arg == "-e" {
+                                            if let Word::StringInterpolation(interp) = &cmd.args[1] {
+                                                // Handle string interpolation in perl -e command
+                                                // Handle string interpolation directly by converting it to proper Perl code
+                                                let executable_code = match interp {
+                                                    crate::ast::StringInterpolation { parts } => {
+                                                        let mut result = String::new();
+                                                        for part in parts {
+                                                            match part {
+                                                                crate::ast::StringPart::Literal(lit) => {
+                                                                    // Check if this literal contains {SHELL_VAR} and replace it
+                                                                    if lit.contains("{SHELL_VAR}") {
+                                                                        let processed = lit.replace("{SHELL_VAR}", "SHELL_VAR}");
+                                                                        // Also unescape backslashes in this literal
+                                                                        let unescaped = processed.replace("\\\"", "\"").replace("\\n", "\n");
+                                                                        result.push_str(&unescaped);
+                                                                    } else {
+                                                                        // Unescape backslashes in the literal
+                                                                        let unescaped = lit.replace("\\\"", "\"").replace("\\n", "\n");
+                                                                        result.push_str(&unescaped);
+                                                                    }
+                                                                }
+                                                                crate::ast::StringPart::Variable(var) => {
+                                                                    if var == "ENV" {
+                                                                        // Handle $ENV{VAR} specially
+                                                                        result.push_str("$ENV{");
+                                                                    } else {
+                                                                        result.push_str(&format!("${}", var));
+                                                                    }
+                                                                }
+                                                                _ => {
+                                                                    result.push_str(&format!("{:?}", part));
+                                                                }
+                                                            }
+                                                        }
+                                                        result
+                                                    }
+                                                };
+                                                
+                                                // If the Perl code uses $arg, declare it first
+                                                if executable_code.contains("$arg") {
+                                                    output.push_str("my $arg;\n");
                                                 }
-                                            }
-                                            
-                                            // Execute the converted Perl code directly
-                                            output.push_str(&format!("{};\n", perl_code));
-                                        } else if let Word::Literal(perl_code) = &cmd.args[1] {
+                                                
+                                                // Handle any additional arguments as @ARGV
+                                                if cmd.args.len() > 2 {
+                                                    let args: Vec<String> = cmd.args.iter().skip(2)
+                                                        .map(|arg| self.perl_string_literal(arg))
+                                                        .collect();
+                                                    if !args.is_empty() {
+                                                        output.push_str(&format!("my @ARGV = ({});\n", args.join(", ")));
+                                                    }
+                                                }
+                                                
+                                                // Execute the converted Perl code directly
+                                                output.push_str(&format!("{};\n", executable_code));
+                                            } else if let Word::Literal(perl_code) = &cmd.args[1] {
                                             // Debug: print what we're processing
                                             eprintln!("DEBUG: Processing Word::Literal: {}", perl_code);
                                             

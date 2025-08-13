@@ -3,11 +3,15 @@ use crate::shared_utils::SharedUtils;
 
 pub struct RustGenerator {
     indent_level: usize,
+    pipeline_counter: usize,
 }
 
 impl RustGenerator {
     pub fn new() -> Self {
-        Self { indent_level: 0 }
+        Self { 
+            indent_level: 0,
+            pipeline_counter: 0,
+        }
     }
 
     pub fn generate(&mut self, commands: &[Command]) -> String {
@@ -1439,11 +1443,8 @@ impl RustGenerator {
         } else if has_complex_commands {
             // Handle pipelines with for loops and other complex commands
             // Use unique variable names for each pipeline to avoid redeclaration warnings
-            static mut PIPELINE_COUNTER: usize = 0;
-            let pipeline_id = unsafe {
-                PIPELINE_COUNTER += 1;
-                PIPELINE_COUNTER
-            };
+            self.pipeline_counter += 1;
+            let pipeline_id = self.pipeline_counter;
             
             output.push_str(&format!("let mut output_{}: String = String::new();\n", pipeline_id));
             
