@@ -1847,6 +1847,9 @@ fn test_all_examples_next_fail(generators: &[String]) {
                         println!("SUMMARY: {} out of {} tests passed before first failure", passed_tests, total_tests);
                         println!("{}", "=".repeat(80));
                         
+                        // Show how to run the test again
+                        println!("\nTo run test again: ./fail {}", current_test);
+                        
                         std::process::exit(1);
                     }
                 }
@@ -1882,6 +1885,9 @@ fn test_all_examples_next_fail(generators: &[String]) {
                         }
                         println!();
                     }
+                    
+                    // Show how to run the test again
+                    println!("To run test again: ./fail {}", current_test);
                     
                     std::process::exit(1);
                 }
