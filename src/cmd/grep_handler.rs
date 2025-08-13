@@ -156,4 +156,254 @@ impl GrepHandler {
         output.push_str(&format!("}}\n"));
         output.push_str(&format!("$output_{} = join(\"\\n\", @xargs_files_{});\n", pipeline_id, pipeline_id));
     }
+
+    /// Generate Perl code for main grep command functionality
+    pub fn generate_main_grep_perl(
+        cmd: &SimpleCommand,
+        output: &mut String,
+        has_here_string: bool,
+        word_to_perl: &mut dyn FnMut(&Word) -> String,
+        get_unique_file_handle: &mut dyn FnMut() -> String,
+    ) {
+        // Parse grep options using the existing parse_grep_args method
+        let options = Self::parse_grep_args(cmd, word_to_perl);
+        
+        let pattern = options.pattern.unwrap_or_else(|| "".to_string());
+        let file = options.file.map_or("STDIN".to_string(), |w| w.to_string());
+        
+        // Handle different grep modes based on options
+        if options.list_files_only || options.list_files_without_matches {
+            // Handle file listing mode (-l, -L)
+            if &file == "STDIN" {
+                // For stdin, we need to read filenames and check each one
+                output.push_str("my @file_list;\n");
+                output.push_str("while (my $filename = <STDIN>) {\n");
+                output.push_str("    chomp($filename);\n");
+                output.push_str("    if ($filename ne '' && -f $filename) {\n");
+                output.push_str("        my $found = 0;\n");
+                output.push_str("        if (open(my $fh, '<', $filename)) {\n");
+                output.push_str("            while (my $line = <$fh>) {\n");
+                
+                if options.literal_mode {
+                    output.push_str(&format!("                if (index($line, \"{}\") != -1) {{\n", pattern));
+                } else {
+                    let regex_flags = if options.ignore_case { "i" } else { "" };
+                    output.push_str(&format!("                if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                }
+                
+                output.push_str("                    $found = 1;\n");
+                output.push_str("                    last;\n");
+                output.push_str("                }\n");
+                output.push_str("            }\n");
+                output.push_str("            close($fh);\n");
+                output.push_str("        }\n");
+                output.push_str("        if ($found) {\n");
+                if options.list_files_only {
+                    output.push_str("            push @file_list, $filename;\n");
+                }
+                output.push_str("        } else {\n");
+                if options.list_files_without_matches {
+                    output.push_str("            push @file_list, $filename;\n");
+                }
+                output.push_str("        }\n");
+                output.push_str("    }\n");
+                output.push_str("}\n");
+                output.push_str("print join(\"\\n\", @file_list);\n");
+            } else {
+                // For a single file, just check if it contains the pattern
+                let fh = get_unique_file_handle();
+                output.push_str(&format!("my $found = 0;\n"));
+                output.push_str(&format!("if (open(my {}, '<', '{}')) {{\n", fh, file));
+                output.push_str(&format!("    while (my $line = <{}>) {{\n", fh));
+                
+                if options.literal_mode {
+                    output.push_str(&format!("        if (index($line, \"{}\") != -1) {{\n", pattern));
+                } else {
+                    let regex_flags = if options.ignore_case { "i" } else { "" };
+                    output.push_str(&format!("        if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                }
+                
+                output.push_str("            $found = 1;\n");
+                output.push_str("            last;\n");
+                output.push_str("        }\n");
+                output.push_str("    }\n");
+                output.push_str(&format!("    close({});\n", fh));
+                output.push_str("}\n");
+                if options.list_files_only {
+                    output.push_str(&format!("if ($found) {{ print \"{}\" }}\n", file));
+                } else if options.list_files_without_matches {
+                    output.push_str(&format!("if (!$found) {{ print \"{}\" }}\n", file));
+                }
+            }
+        } else if options.quiet_mode {
+            // Quiet mode - just check if pattern exists
+            if &file == "STDIN" {
+                output.push_str("my $found = 0;\n");
+                if has_here_string {
+                    output.push_str("my @here_lines = split(/\\n/, $here_string_content);\n");
+                    output.push_str("foreach my $line (@here_lines) {\n");
+                    
+                    if options.literal_mode {
+                        output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
+                    } else {
+                        let regex_flags = if options.ignore_case { "i" } else { "" };
+                        output.push_str(&format!("    if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                    }
+                    
+                    output.push_str("        $found = 1;\n");
+                    output.push_str("        last;\n");
+                    output.push_str("    }\n");
+                    output.push_str("}\n");
+                } else {
+                    output.push_str("while (my $line = <STDIN>) {\n");
+                    
+                    if options.literal_mode {
+                        output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
+                    } else {
+                        let regex_flags = if options.ignore_case { "i" } else { "" };
+                        output.push_str(&format!("    if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                    }
+                    
+                    output.push_str("        $found = 1;\n");
+                    output.push_str("        last;\n");
+                    output.push_str("    }\n");
+                    output.push_str("}\n");
+                }
+                output.push_str("exit($found ? 0 : 1);\n");
+            } else {
+                let fh = get_unique_file_handle();
+                output.push_str(&format!("my $found = 0;\n"));
+                output.push_str(&format!("if (open(my {}, '<', '{}')) {{\n", fh, file));
+                output.push_str(&format!("    while (my $line = <{}>) {{\n", fh));
+                
+                if options.literal_mode {
+                    output.push_str(&format!("        if (index($line, \"{}\") != -1) {{\n", pattern));
+                } else {
+                    let regex_flags = if options.ignore_case { "i" } else { "" };
+                    output.push_str(&format!("        if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                }
+                
+                output.push_str("            $found = 1;\n");
+                output.push_str("            last;\n");
+                output.push_str("        }\n");
+                output.push_str("    }\n");
+                output.push_str(&format!("    close({});\n", fh));
+                output.push_str("}\n");
+                output.push_str("exit($found ? 0 : 1);\n");
+            }
+        } else if options.only_matching {
+            // Only matching mode (-o)
+            if &file == "STDIN" {
+                if has_here_string {
+                    output.push_str("my @here_lines = split(/\\n/, $here_string_content);\n");
+                    output.push_str("foreach my $line (@here_lines) {\n");
+                    
+                    if options.literal_mode {
+                        output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
+                    } else {
+                        let regex_flags = if options.ignore_case { "i" } else { "" };
+                        output.push_str(&format!("    if ($line =~ /({})/{}) {{\n", pattern, regex_flags));
+                    }
+                    
+                    output.push_str("        print \"$1\\n\";\n");
+                    output.push_str("    }\n");
+                    output.push_str("}\n");
+                } else {
+                    output.push_str("while (my $line = <STDIN>) {\n");
+                    
+                    if options.literal_mode {
+                        output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
+                    } else {
+                        let regex_flags = if options.ignore_case { "i" } else { "" };
+                        output.push_str(&format!("    if ($line =~ /({})/{}) {{\n", pattern, regex_flags));
+                    }
+                    
+                    output.push_str("        print \"$1\\n\";\n");
+                    output.push_str("    }\n");
+                    output.push_str("}\n");
+                }
+            } else {
+                let fh = get_unique_file_handle();
+                output.push_str(&format!("if (open(my {}, '<', '{}')) {{\n", fh, file));
+                output.push_str(&format!("    while (my $line = <{}>) {{\n", fh));
+                
+                if options.literal_mode {
+                    output.push_str(&format!("        if (index($line, \"{}\") != -1) {{\n", pattern));
+                } else {
+                    let regex_flags = if options.ignore_case { "i" } else { "" };
+                    output.push_str(&format!("        if ($line =~ /({})/{}) {{\n", pattern, regex_flags));
+                }
+                
+                output.push_str("            print \"$1\\n\";\n");
+                output.push_str("        }\n");
+                output.push_str("    }\n");
+                output.push_str(&format!("    close({});\n", fh));
+                output.push_str("}\n");
+            }
+        } else {
+            // Normal mode
+            if &file == "STDIN" {
+                if has_here_string {
+                    output.push_str("my @here_lines = split(/\\n/, $here_string_content);\n");
+                    output.push_str("foreach my $line (@here_lines) {\n");
+                    
+                    if options.literal_mode {
+                        output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
+                    } else {
+                        let regex_flags = if options.ignore_case { "i" } else { "" };
+                        output.push_str(&format!("    if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                    }
+                    
+                    if options.show_byte_offset {
+                        output.push_str(&format!("        my $offset = index($line, \"{}\");\n", pattern));
+                        output.push_str("        print \"$offset:$line\";\n");
+                    } else {
+                        output.push_str("        print \"$line\";\n");
+                    }
+                    output.push_str("    }\n");
+                    output.push_str("}\n");
+                } else {
+                    output.push_str("while (my $line = <STDIN>) {\n");
+                    
+                    if options.literal_mode {
+                        output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
+                    } else {
+                        let regex_flags = if options.ignore_case { "i" } else { "" };
+                        output.push_str(&format!("    if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                    }
+                    
+                    if options.show_byte_offset {
+                        output.push_str(&format!("        my $offset = index($line, \"{}\");\n", pattern));
+                        output.push_str("        print \"$offset:$line\";\n");
+                    } else {
+                        output.push_str("        print \"$line\";\n");
+                    }
+                    output.push_str("    }\n");
+                    output.push_str("}\n");
+                }
+            } else {
+                let fh = get_unique_file_handle();
+                output.push_str(&format!("if (open(my {}, '<', '{}')) {{\n", fh, file));
+                output.push_str(&format!("    while (my $line = <{}>) {{\n", fh));
+                
+                if options.literal_mode {
+                    output.push_str(&format!("        if (index($line, \"{}\") != -1) {{\n", pattern));
+                } else {
+                    let regex_flags = if options.ignore_case { "i" } else { "" };
+                    output.push_str(&format!("        if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                }
+                
+                if options.show_byte_offset {
+                    output.push_str(&format!("            my $offset = index($line, \"{}\");\n", pattern));
+                    output.push_str("            print \"$offset:$line\";\n");
+                } else {
+                    output.push_str("            print \"$line\";\n");
+                }
+                output.push_str("        }\n");
+                output.push_str("    }\n");
+                output.push_str(&format!("    close({});\n", fh));
+                output.push_str("}\n");
+            }
+        }
+    }
 }
