@@ -2515,3 +2515,165 @@ fn test_generators_true_false_with_quotes_not_using_system() {
     assert!(c_output.contains("system(\"false\")"), 
             "C generator should use system(\"false\") for false commands as fallback");
 }
+
+#[test]
+fn test_no_unsafe_blocks_in_codebase() {
+    // This test ensures that no unsafe blocks exist in the codebase
+    // Unsafe blocks can introduce memory safety issues and should be avoided
+    
+    // Check all Rust source files for unsafe blocks
+    let src_dir = "src";
+    let mut unsafe_files = Vec::new();
+    
+    if let Ok(entries) = fs::read_dir(src_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    // Look for actual unsafe blocks, not just the word "unsafe" in comments
+                    let lines: Vec<&str> = content.lines().collect();
+                    for (line_num, line) in lines.iter().enumerate() {
+                        let trimmed = line.trim();
+                        // Skip comments and strings
+                        if !trimmed.starts_with("//") && !trimmed.starts_with("/*") && !trimmed.starts_with("*") {
+                            // Skip lines that are just checking for unsafe patterns (our test logic)
+                            if !trimmed.contains("trimmed.contains(\"unsafe") && !trimmed.contains("unsafe_files.push") {
+                                if trimmed.contains("unsafe") {
+                                    // Check if it's an actual unsafe block or function
+                                    if trimmed.contains("unsafe {") || 
+                                       trimmed.contains("unsafe fn") || 
+                                       trimmed.contains("unsafe trait") ||
+                                       trimmed.contains("unsafe impl") ||
+                                       trimmed.contains("unsafe extern") {
+                                        unsafe_files.push((path.clone(), line_num + 1, line.to_string()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Check test files as well
+    let tests_dir = "tests";
+    if let Ok(entries) = fs::read_dir(tests_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    // Look for actual unsafe blocks, not just the word "unsafe" in comments
+                    let lines: Vec<&str> = content.lines().collect();
+                    for (line_num, line) in lines.iter().enumerate() {
+                        let trimmed = line.trim();
+                        // Skip comments and strings
+                        if !trimmed.starts_with("//") && !trimmed.starts_with("/*") && !trimmed.starts_with("*") {
+                            // Skip lines that are just checking for unsafe patterns (our test logic)
+                            if !trimmed.contains("trimmed.contains(\"unsafe") && !trimmed.contains("unsafe_files.push") {
+                                if trimmed.contains("unsafe") {
+                                    // Check if it's an actual unsafe block or function
+                                    if trimmed.contains("unsafe {") || 
+                                       trimmed.contains("unsafe fn") || 
+                                       trimmed.contains("unsafe trait") ||
+                                       trimmed.contains("unsafe impl") ||
+                                       trimmed.contains("unsafe extern") {
+                                        unsafe_files.push((path.clone(), line_num + 1, line.to_string()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Check examples directory for any Rust files
+    let examples_dir = "examples";
+    if let Ok(entries) = fs::read_dir(examples_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    // Look for actual unsafe blocks, not just the word "unsafe" in comments
+                    let lines: Vec<&str> = content.lines().collect();
+                    for (line_num, line) in lines.iter().enumerate() {
+                        let trimmed = line.trim();
+                        // Skip comments and strings
+                        if !trimmed.starts_with("//") && !trimmed.starts_with("/*") && !trimmed.starts_with("*") {
+                            // Skip lines that are just checking for unsafe patterns (our test logic)
+                            if !trimmed.contains("trimmed.contains(\"unsafe") && !trimmed.contains("unsafe_files.push") {
+                                if trimmed.contains("unsafe") {
+                                    // Check if it's an actual unsafe block or function
+                                    if trimmed.contains("unsafe {") || 
+                                       trimmed.contains("unsafe fn") || 
+                                       trimmed.contains("unsafe trait") ||
+                                       trimmed.contains("unsafe impl") ||
+                                       trimmed.contains("unsafe extern") {
+                                        unsafe_files.push((path.clone(), line_num + 1, line.to_string()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Assert that no unsafe blocks were found
+    if !unsafe_files.is_empty() {
+        println!("Found unsafe blocks in the following files:");
+        for (file_path, line_num, line_content) in &unsafe_files {
+            println!("  {}:{} - {}", file_path.display(), line_num, line_content.trim());
+        }
+        panic!("The codebase should not contain any unsafe blocks for security and safety reasons.");
+    }
+    
+    // Additional check: ensure no unsafe function calls
+    let mut unsafe_function_files = Vec::new();
+    
+    // Check src directory for unsafe function calls
+    if let Ok(entries) = fs::read_dir(src_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    // Look for common unsafe function patterns
+                    let unsafe_patterns = [
+                        "std::ptr::",
+                        "std::mem::transmute",
+                        "std::mem::transmute_copy",
+                        "std::mem::forget",
+                        "std::mem::zeroed",
+                        "std::mem::uninitialized",
+                        "std::slice::from_raw_parts",
+                        "std::slice::from_raw_parts_mut",
+                        "std::raw::",
+                        "transmute",
+                        "from_raw_parts",
+                        "from_raw_parts_mut",
+                    ];
+                    
+                    for pattern in &unsafe_patterns {
+                        if content.contains(pattern) {
+                            unsafe_function_files.push((path.clone(), pattern.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Assert that no unsafe function calls were found
+    assert!(
+        unsafe_function_files.is_empty(),
+        "Found potential unsafe function calls in the following files: {:?}. \
+         The codebase should not use unsafe functions for security and safety reasons.",
+        unsafe_function_files
+    );
+    
+    // Log success message
+    println!("✓ No unsafe blocks or unsafe function calls found in the codebase");
+}
