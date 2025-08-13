@@ -3126,29 +3126,19 @@ impl PerlGenerator {
                                     "".to_string()
                                 };
                                 
+                                // Parse grep options to determine if ignore case is needed
+                                let mut ignore_case = false;
+                                if cmd.args.len() > 1 {
+                                    if let Word::Literal(flag) = &cmd.args[1] {
+                                        if flag == "-i" {
+                                            ignore_case = true;
+                                        }
+                                    }
+                                }
+                                
                                 // Use the new grep handler for xargs grep
-                                // GrepHandler::generate_xargs_grep_perl(&pattern, &mut output, pipeline_id, false);
-                                // For now, use the original implementation
-                                output.push_str(&format!("my @xargs_files_{};\n", pipeline_id));
-                                output.push_str(&format!("for my $file (split(/\\n/, $output_{})) {{\n", pipeline_id));
-                                output.push_str(&format!("    if ($file ne '') {{\n"));
-                                output.push_str(&format!("        # Use Perl's built-in file reading instead of system grep for cross-platform compatibility\n"));
-                                output.push_str(&format!("        my $found = 0;\n"));
-                                output.push_str(&format!("        if (open(my $fh, '<', $file)) {{\n"));
-                                output.push_str(&format!("            while (my $line = <$fh>) {{\n"));
-                                output.push_str(&format!("                if ($line =~ /{}/) {{\n", pattern));
-                                output.push_str(&format!("                    $found = 1;\n"));
-                                output.push_str(&format!("                    last;\n"));
-                                output.push_str(&format!("                }}\n"));
-                                output.push_str(&format!("            }}\n"));
-                                output.push_str(&format!("            close($fh);\n"));
-                                output.push_str(&format!("        }}\n"));
-                                output.push_str(&format!("        if ($found) {{\n"));
-                                output.push_str(&format!("            push @xargs_files_{}, $file;\n", pipeline_id));
-                                output.push_str(&format!("        }}\n"));
-                                output.push_str(&format!("    }}\n"));
-                                output.push_str(&format!("}}\n"));
-                                output.push_str(&format!("$output_{} = join(\"\\n\", @xargs_files_{});\n", pipeline_id, pipeline_id));
+                                use crate::cmd::GrepHandler;
+                                GrepHandler::generate_xargs_grep_perl(&pattern, &mut output, pipeline_id, ignore_case);
                             } else {
                                 // Generic xargs handling - fallback to system command
                                 let cmd_str = self.command_to_string(command);

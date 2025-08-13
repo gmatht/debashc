@@ -12,6 +12,7 @@ mod english_generator;
 mod french_generator;
 mod batch_generator;
 mod powershell_generator;
+mod cmd;
 
 use lexer::*;
 use parser::*;
