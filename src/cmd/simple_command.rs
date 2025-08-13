@@ -372,7 +372,243 @@ impl<T: SimpleCommandHandler> SimpleCommandHandler for T {
     fn handle_cd(&mut self, _cmd: &SimpleCommand, _output: &mut String) {}
     fn handle_rm(&mut self, _cmd: &SimpleCommand, _output: &mut String) {}
     fn handle_ls(&mut self, _cmd: &SimpleCommand, _output: &mut String) {}
-    fn handle_grep(&mut self, _cmd: &SimpleCommand, _output: &mut String, _has_here_string: bool) {}
+    fn handle_grep(&mut self, cmd: &SimpleCommand, output: &mut String, _has_here_string: bool) {
+        // Handle grep command with proper flag parsing
+        let mut pattern = None;
+        let mut recursive = false;
+        let mut literal_mode = false;
+        let mut ignore_case = false;
+        let mut list_files_only = false;
+        let mut list_files_without_matches = false;
+        let mut include_pattern = None;
+        let mut search_path = ".".to_string();
+        let mut context_after = 0;
+        let mut context_before = 0;
+        
+        // Parse grep arguments to handle flags properly
+        let mut i = 0;
+        while i < cmd.args.len() {
+            let arg = &cmd.args[i];
+            if let Word::Literal(s) = arg {
+                if s.starts_with('-') {
+                    // Handle flags
+                    if s == "-r" {
+                        recursive = true;
+                    } else if s == "-F" {
+                        literal_mode = true;
+                    } else if s == "-i" {
+                        ignore_case = true;
+                    } else if s == "-l" {
+                        list_files_only = true;
+                    } else if s == "-L" {
+                        list_files_without_matches = true;
+                    } else if s == "-A" && i + 1 < cmd.args.len() {
+                        // After context
+                        if let Word::Literal(num) = &cmd.args[i + 1] {
+                            context_after = num.parse().unwrap_or(0);
+                            i += 1; // Skip the number argument
+                        }
+                    } else if s == "-B" && i + 1 < cmd.args.len() {
+                        // Before context
+                        if let Word::Literal(num) = &cmd.args[i + 1] {
+                            context_before = num.parse().unwrap_or(0);
+                            i += 1; // Skip the number argument
+                        }
+                    } else if s == "-C" && i + 1 < cmd.args.len() {
+                        // Context (both before and after)
+                        if let Word::Literal(num) = &cmd.args[i + 1] {
+                            context_before = num.parse().unwrap_or(0);
+                            context_after = num.parse().unwrap_or(0);
+                            i += 1; // Skip the number argument
+                        }
+                    } else if s == "--include" && i + 1 < cmd.args.len() {
+                        // --include flag with pattern
+                        if let Word::Literal(pattern_str) = &cmd.args[i + 1] {
+                            include_pattern = Some(pattern_str.clone());
+                            i += 1; // Skip the pattern argument
+                        }
+                    }
+                } else if pattern.is_none() {
+                    pattern = Some(s.clone());
+                } else if recursive && search_path == "." {
+                    // Second non-flag argument is the search path for recursive grep
+                    search_path = s.clone();
+                }
+            } else if pattern.is_none() {
+                pattern = Some(self.word_to_perl(arg));
+                            } else if recursive && search_path == "." {
+                    // Second non-flag argument is the search path for recursive grep
+                    search_path = self.word_to_perl(arg);
+                }
+            i += 1;
+        }
+        
+        let pattern = pattern.unwrap_or_else(|| "".to_string());
+        
+        if recursive {
+            // Recursive grep mode - search through files in directory
+            output.push_str("use File::Find;\n");
+            output.push_str("my @grep_results;\n");
+            output.push_str(&format!("find({{wanted => sub {{\n"));
+            output.push_str("    my $file_path = $File::Find::name;\n");
+            
+            if let Some(ref include_pat) = include_pattern {
+                // Convert glob pattern to regex
+                let regex_pattern = include_pat.replace("*", ".*").replace("?", ".");
+                output.push_str(&format!("    if ($file_path =~ /{}/) {{\n", regex_pattern));
+            }
+            
+            output.push_str("        if (-f $file_path) {\n");
+            output.push_str("            open(my $fh, '<', $file_path) or return;\n");
+            output.push_str("            my @lines = <$fh>;\n");
+            output.push_str("            close($fh);\n");
+            output.push_str("            my $found = 0;\n");
+            output.push_str("            for my $i (0..$#lines) {\n");
+            output.push_str("                my $line = $lines[$i];\n");
+            
+            if literal_mode {
+                output.push_str(&format!("                if (index($line, \"{}\") != -1) {{\n", pattern));
+            } else {
+                let regex_flags = if ignore_case { "i" } else { "" };
+                output.push_str(&format!("                if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+            }
+            
+            if list_files_only {
+                output.push_str("                    print \"$file_path\\n\";\n");
+                output.push_str("                    last;\n");
+            } else if list_files_without_matches {
+                output.push_str("                    return;\n");
+            } else {
+                // Handle context lines
+                if context_before > 0 || context_after > 0 {
+                    output.push_str("                    # Print context lines\n");
+                    if context_before > 0 {
+                        output.push_str(&format!("                    for my $j (1..{}) {{\n", context_before));
+                        output.push_str("                        if ($i - $j >= 0) {\n");
+                        output.push_str("                            print \"$file_path:$lines[$i - $j]\";\n");
+                        output.push_str("                        }\n");
+                        output.push_str("                    }\n");
+                    }
+                    output.push_str("                    print \"$file_path:$line\";\n");
+                    if context_after > 0 {
+                        output.push_str(&format!("                    for my $j (1..{}) {{\n", context_after));
+                        output.push_str("                        if ($i + $j <= $#lines) {\n");
+                        output.push_str("                            print \"$file_path:$lines[$i + $j]\";\n");
+                        output.push_str("                        }\n");
+                        output.push_str("                    }\n");
+                    }
+                } else {
+                    output.push_str("                    print \"$file_path:$line\";\n");
+                }
+            }
+            
+            output.push_str("                }\n");
+            output.push_str("            }\n");
+            
+            if list_files_without_matches {
+                output.push_str("            print \"$file_path\\n\";\n");
+            }
+            
+            output.push_str("        }\n");
+            
+            if include_pattern.is_some() {
+                output.push_str("    }\n");
+            }
+            
+            output.push_str(&format!("}}, no_chdir => 1}}, '{}');\n", search_path));
+        } else {
+            // Non-recursive grep - read from stdin or file
+            if list_files_only {
+                // -l flag: only print filenames with matches
+                output.push_str("my $found = 0;\n");
+                output.push_str("while (my $line = <STDIN>) {\n");
+                
+                if literal_mode {
+                    output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
+                } else {
+                    let regex_flags = if ignore_case { "i" } else { "" };
+                    output.push_str(&format!("    if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                }
+                
+                output.push_str("        $found = 1;\n");
+                output.push_str("        last;\n");
+                output.push_str("    }\n");
+                output.push_str("}\n");
+                output.push_str("if ($found) {\n");
+                output.push_str("    print \"(standard input)\\n\";\n");
+                output.push_str("}\n");
+            } else if list_files_without_matches {
+                // -L flag: only print filenames without matches
+                output.push_str("my $found = 0;\n");
+                output.push_str("while (my $line = <STDIN>) {\n");
+                
+                if literal_mode {
+                    output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
+                } else {
+                    let regex_flags = if ignore_case { "i" } else { "" };
+                    output.push_str(&format!("    if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                }
+                
+                output.push_str("        $found = 1;\n");
+                output.push_str("        last;\n");
+                output.push_str("    }\n");
+                output.push_str("}\n");
+                output.push_str("if (!$found) {\n");
+                output.push_str("    print \"(standard input)\\n\";\n");
+                output.push_str("}\n");
+            } else {
+                // Normal grep - print matching lines with context
+                if context_before > 0 || context_after > 0 {
+                    // Handle context lines
+                    output.push_str("my @lines = <STDIN>;\n");
+                    output.push_str("my @result_lines;\n");
+                    output.push_str("for my $i (0..$#lines) {\n");
+                    output.push_str("    my $line = $lines[$i];\n");
+                    
+                    if literal_mode {
+                        output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
+                    } else {
+                        let regex_flags = if ignore_case { "i" } else { "" };
+                        output.push_str(&format!("    if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                    }
+                    
+                    output.push_str("        # Add context lines\n");
+                    if context_before > 0 {
+                        output.push_str(&format!("        for my $j (1..{}) {{\n", context_before));
+                        output.push_str("            if ($i - $j >= 0) {\n");
+                        output.push_str("                push @result_lines, $lines[$i - $j];\n");
+                        output.push_str("            }\n");
+                        output.push_str("        }\n");
+                    }
+                    output.push_str("        push @result_lines, $line;\n");
+                    if context_after > 0 {
+                        output.push_str(&format!("        for my $j (1..{}) {{\n", context_after));
+                        output.push_str("            if ($i + $j <= $#lines) {\n");
+                        output.push_str("                push @result_lines, $lines[$i + $j];\n");
+                        output.push_str("            }\n");
+                        output.push_str("        }\n");
+                    }
+                    output.push_str("    }\n");
+                    output.push_str("}\n");
+                    output.push_str("print join(\"\", @result_lines);\n");
+                } else {
+                    // Normal grep without context
+                    output.push_str("while (my $line = <STDIN>) {\n");
+                    
+                    if literal_mode {
+                        output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
+                    } else {
+                        let regex_flags = if ignore_case { "i" } else { "" };
+                        output.push_str(&format!("    if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                    }
+                    
+                    output.push_str("        print $line;\n");
+                    output.push_str("    }\n");
+                    output.push_str("}\n");
+                }
+            }
+        }
+    }
     fn handle_cat(&mut self, _cmd: &SimpleCommand, _output: &mut String) {}
     fn handle_mkdir(&mut self, _cmd: &SimpleCommand, _output: &mut String) {}
     fn handle_mv(&mut self, _cmd: &SimpleCommand, _output: &mut String) {}
