@@ -348,14 +348,12 @@ cargo test parser
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the GPLv3 License - see the LICENSE file for details.
 
 ## Roadmap
 
-- [ ] Support for more shell features (case statements, arrays)
-- [ ] Better error reporting with line numbers
-- [ ] AST pretty printing
+- [ ] Support for more shell features (case statements etc.)
+- [ ] Support for more builtins (build in awk, sed etc.)
 - [ ] Shell script to other language converters
-- [ ] Static analysis tools
-- [ ] Performance optimizations
+- [ ] Test more examples
 
