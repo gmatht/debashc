@@ -1,4 +1,6 @@
-# Debashc - Shell Script Converter
+# Debashc - De Bash Compiler
+
+NOTE: Currently the tests for Perl Generation pass. I have put a bit of work into making Rust tests pass, but the other geneators are total slop. It may be best to just delete all the non-Perl generator and tweak the Perl generator to support other languages.
 
 A comprehensive Rust library and command-line tool for parsing and converting shell/bash scripts to other programming languages. This project provides a robust foundation for analyzing shell scripts, converting them to Perl, Rust, Python, and more, or building shell script analysis tools.
 
@@ -348,7 +350,7 @@ cargo test parser
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the GPLv3 License - see the LICENSE file for details.
 
 ## Roadmap
 
