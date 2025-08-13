@@ -1,5 +1,6 @@
 # PowerShell script to build and run WASM project
 # This script builds the WASM target and opens it in Edge or default browser
+#
 
 param(
     [string]$Browser = "edge",  # Can be "edge", "default", or "chrome"
@@ -49,13 +50,72 @@ function Install-WasmPack {
     }
 }
 
+# Function to check if examples need updating
+function Test-ExamplesUpdateNeeded {
+    $examplesDir = "examples"
+    $examplesJs = "www/examples.js"
+    
+    # Check if examples.js exists
+    if (-not (Test-Path $examplesJs)) {
+        Write-Host "examples.js doesn't exist, update needed" -ForegroundColor Yellow
+        return $true
+    }
+    
+    # Check if any example files are newer than examples.js
+    $examplesJsTime = (Get-Item $examplesJs).LastWriteTime
+    $newestExample = (Get-ChildItem $examplesDir -Recurse | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime
+    
+    if ($newestExample -gt $examplesJsTime) {
+        Write-Host "Example files are newer than examples.js, update needed" -ForegroundColor Yellow
+        return $true
+    }
+    
+    Write-Host "Examples are up to date, no update needed" -ForegroundColor Green
+    return $false
+}
+
+# Function to check if WASM rebuild is needed
+function Test-WasmRebuildNeeded {
+    $wasmDir = "www/pkg"
+    $wasmFiles = @("$wasmDir/debashl_bg.wasm", "$wasmDir/debashl.js", "$wasmDir/debashl.d.ts")
+    $srcDir = "src"
+    $cargoToml = "Cargo.toml"
+    
+    # Check if WASM directory exists
+    if (-not (Test-Path $wasmDir)) {
+        Write-Host "WASM directory doesn't exist, rebuild needed" -ForegroundColor Yellow
+        return $true
+    }
+    
+    # Check if all expected WASM files exist
+    foreach ($file in $wasmFiles) {
+        if (-not (Test-Path $file)) {
+            Write-Host "Missing WASM file: $file, rebuild needed" -ForegroundColor Yellow
+            return $true
+        }
+    }
+    
+    # Check if any source files are newer than WASM files
+    $newestWasm = (Get-ChildItem $wasmDir -Recurse | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime
+    $newestSrc = (Get-ChildItem $srcDir -Recurse | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime
+    $cargoTomlTime = (Get-Item $cargoToml).LastWriteTime
+    
+    if ($newestSrc -gt $newestWasm -or $cargoTomlTime -gt $newestWasm) {
+        Write-Host "Source files are newer than WASM files, rebuild needed" -ForegroundColor Yellow
+        return $true
+    }
+    
+    Write-Host "WASM files are up to date, no rebuild needed" -ForegroundColor Green
+    return $false
+}
+
 # Function to build WASM target
 function Build-Wasm {
     Write-Host "Building WASM target..." -ForegroundColor Yellow
     
     # Create www directory if it doesn't exist
     if (!(Test-Path "www")) {
-        New-Item -ItemType Directory -Path "www" | Out-Null
+        New-Item -ItemType Directory -Path "www" -Force | Out-Null
         Write-Host "Created www directory" -ForegroundColor Green
     }
     
@@ -171,10 +231,32 @@ else {
     Write-Host "wasm-pack is already installed" -ForegroundColor Green
 }
 
-# Build WASM target
-if (!(Build-Wasm)) {
-    Write-Host "WASM build failed. Exiting." -ForegroundColor Red
-    exit 1
+# Check if examples need updating
+if (Test-ExamplesUpdateNeeded) {
+    Write-Host "Converting examples to JavaScript..." -ForegroundColor Cyan
+    try {
+        cargo run --bin convert_examples
+        Write-Host "Examples converted successfully!" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "Failed to convert examples: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Continuing with existing examples..." -ForegroundColor Yellow
+    }
+}
+else {
+    Write-Host "Examples are up to date, skipping conversion" -ForegroundColor Green
+}
+
+# Check if WASM rebuild is needed
+if (Test-WasmRebuildNeeded) {
+    # Build WASM target
+    if (!(Build-Wasm)) {
+        Write-Host "WASM build failed. Exiting." -ForegroundColor Red
+        exit 1
+    }
+}
+else {
+    Write-Host "WASM is up to date, skipping build" -ForegroundColor Green
 }
 
 # Start HTTP server
