@@ -244,15 +244,41 @@ impl SharedUtils {
         match language {
             "perl" => {
                 // Ensure $ prefix for single identifiers
-                let parts: Vec<&str> = result.split_whitespace().collect();
-                let converted_parts: Vec<String> = parts.iter().map(|part| {
-                    if Self::is_variable_name(part) {
-                        format!("${}", part)
-                    } else {
-                        part.to_string()
+                // Split by operators, not just whitespace
+                let operators = ['+', '-', '*', '/', '%', '(', ')', ' ', '\t', '\n'];
+                let parts: Vec<&str> = result.split(|c| operators.contains(&c)).collect();
+                let mut final_result = String::new();
+                let mut last_pos = 0;
+                
+                for part in parts {
+                    let part = part.trim();
+                    if !part.is_empty() {
+                        // Find where this part appears in the original string
+                        if let Some(pos) = result[last_pos..].find(part) {
+                            // Add any operators that come before this part
+                            let actual_pos = last_pos + pos;
+                            if actual_pos > last_pos {
+                                final_result.push_str(&result[last_pos..actual_pos]);
+                            }
+                            
+                            // Add the part (with $ prefix if it's a variable)
+                            if Self::is_variable_name(part) {
+                                final_result.push_str(&format!("${}", part));
+                            } else {
+                                final_result.push_str(part);
+                            }
+                            
+                            last_pos = actual_pos + part.len();
+                        }
                     }
-                }).collect();
-                converted_parts.join(" ")
+                }
+                
+                // Add any remaining characters
+                if last_pos < result.len() {
+                    final_result.push_str(&result[last_pos..]);
+                }
+                
+                final_result
             }
             "rust" => {
                 // Rust variables don't need special prefix in expressions

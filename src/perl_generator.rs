@@ -2751,11 +2751,31 @@ impl PerlGenerator {
         // Track the for loop variable as declared
         self.declared_locals.insert(variable.clone());
         
+        // Find variables used in arithmetic expressions that need initialization
+        let mut vars_to_init = Vec::new();
+        self.collect_arithmetic_variables(body, &mut vars_to_init);
+        
         self.indent_level += 1;
         let body_code = self.generate_block(body);
         self.indent_level -= 1;
         
-        format!("my ${} = 0;\nfor ${} ({}) {{\n{}}}\n", variable, variable, items_str, body_code)
+        // Generate initialization for variables used in arithmetic expressions
+        let init_code = if vars_to_init.is_empty() {
+            String::new()
+        } else {
+            vars_to_init.iter()
+                .map(|var| format!("my ${} = 0;", var))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        
+        let loop_header = if init_code.is_empty() {
+            format!("my ${} = 0;\nfor ${} ({}) {{\n", variable, variable, items_str)
+        } else {
+            format!("{}\nmy ${} = 0;\nfor ${} ({}) {{\n", init_code, variable, variable, items_str)
+        };
+        
+        format!("{}{}}}\n", loop_header, body_code)
     }
 
     fn parse_numeric_brace_range(&self, s: &str) -> Option<(i64, i64)> {
@@ -4736,6 +4756,114 @@ impl PerlGenerator {
             array_name[1..].to_string()
         } else {
             array_name.to_string()
+        }
+    }
+
+    /// Collect variables used in arithmetic expressions within a block
+    fn collect_arithmetic_variables(&self, block: &Block, vars: &mut Vec<String>) {
+        for command in &block.commands {
+            self.collect_arithmetic_variables_from_command(command, vars);
+        }
+    }
+
+    /// Collect variables used in arithmetic expressions within a command
+    fn collect_arithmetic_variables_from_command(&self, command: &Command, vars: &mut Vec<String>) {
+        match command {
+            Command::Simple(simple_cmd) => {
+                // Check for arithmetic expressions in environment variables (assignments)
+                for (var, value) in &simple_cmd.env_vars {
+                    if let Word::Arithmetic(arithmetic) = value {
+                        self.collect_variables_from_arithmetic_expression(&arithmetic.expression, vars);
+                    }
+                }
+                
+                // Check for arithmetic expressions in arguments
+                for arg in &simple_cmd.args {
+                    self.collect_variables_from_word(arg, vars);
+                }
+            }
+            Command::BuiltinCommand(builtin_cmd) => {
+                // Check for arithmetic expressions in environment variables (assignments)
+                for (var, value) in &builtin_cmd.env_vars {
+                    if let Word::Arithmetic(arithmetic) = value {
+                        self.collect_variables_from_arithmetic_expression(&arithmetic.expression, vars);
+                    }
+                }
+                
+                // Check for arithmetic expressions in arguments
+                for arg in &builtin_cmd.args {
+                    self.collect_variables_from_word(arg, vars);
+                }
+            }
+            Command::For(for_loop) => {
+                // Recursively check the for loop body
+                self.collect_arithmetic_variables(&for_loop.body, vars);
+            }
+            Command::While(while_loop) => {
+                // Recursively check the while loop body
+                self.collect_arithmetic_variables(&while_loop.body, vars);
+            }
+            Command::If(if_stmt) => {
+                // Recursively check both branches
+                self.collect_arithmetic_variables_from_command(&if_stmt.then_branch, vars);
+                if let Some(else_branch) = &if_stmt.else_branch {
+                    self.collect_arithmetic_variables_from_command(else_branch, vars);
+                }
+            }
+            Command::Block(block) => {
+                // Recursively check the block
+                self.collect_arithmetic_variables(block, vars);
+            }
+            Command::Pipeline(pipeline) => {
+                // Check all commands in the pipeline
+                for cmd in &pipeline.commands {
+                    self.collect_arithmetic_variables_from_command(cmd, vars);
+                }
+            }
+            Command::Subshell(sub_cmd) => {
+                // Recursively check the subshell command
+                self.collect_arithmetic_variables_from_command(sub_cmd, vars);
+            }
+            Command::Background(bg_cmd) => {
+                // Recursively check the background command
+                self.collect_arithmetic_variables_from_command(bg_cmd, vars);
+            }
+            _ => {
+                // For other command types, we don't need to check for arithmetic variables
+            }
+        }
+    }
+
+    /// Collect variables used in arithmetic expressions within a word
+    fn collect_variables_from_word(&self, word: &Word, vars: &mut Vec<String>) {
+        match word {
+            Word::Arithmetic(arithmetic) => {
+                self.collect_variables_from_arithmetic_expression(&arithmetic.expression, vars);
+            }
+            Word::StringInterpolation(interp) => {
+                for part in &interp.parts {
+                    if let StringPart::Arithmetic(arith) = part {
+                        self.collect_variables_from_arithmetic_expression(&arith.expression, vars);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Collect variable names from an arithmetic expression
+    fn collect_variables_from_arithmetic_expression(&self, expr: &str, vars: &mut Vec<String>) {
+        // Split the expression by operators and check each part
+        let operators = ['+', '-', '*', '/', '%', '(', ')', ' ', '\t', '\n'];
+        let parts: Vec<&str> = expr.split(|c| operators.contains(&c)).collect();
+        
+        for part in parts {
+            let part = part.trim();
+            if !part.is_empty() && SharedUtils::is_variable_name(part) {
+                if !vars.contains(&part.to_string()) {
+                    vars.push(part.to_string());
+                }
+            }
         }
     }
 } 
