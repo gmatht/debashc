@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WASM Examples Index - Debashc</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            color: #666;
+            font-size: 18px;
+        }
+        
+        .examples-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .example-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .example-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        
+        .example-card h3 {
+            margin-top: 0;
+            color: #333;
+            border-bottom: 2px solid #007acc;
+            padding-bottom: 10px;
+        }
+        
+        .example-card p {
+            color: #666;
+            margin-bottom: 15px;
+            line-height: 1.5;
+        }
+        
+        .example-card a {
+            display: inline-block;
+            background-color: #007acc;
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+        }
+        
+        .example-card a:hover {
+            background-color: #005a9e;
+        }
+        
+        .featured {
+            border-left: 4px solid #28a745;
+        }
+        
+        .featured h3 {
+            border-bottom-color: #28a745;
+        }
+        
+        .featured a {
+            background-color: #28a745;
+        }
+        
+        .featured a:hover {
+            background-color: #218838;
+        }
+        
+        .back-link {
+            text-align: center;
+            margin-top: 30px;
+        }
+        
+        .back-link a {
+            color: #007acc;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        
+        .back-link a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>WASM Examples Index</h1>
+        <p>Choose from our comprehensive collection of shell script examples</p>
+    </div>
+    
+    <div class="examples-grid">
+        <div class="example-card featured">
+            <h3>Comprehensive Examples</h3>
+            <p>All shell script examples organized by category with interactive testing. Includes all the new split examples for ANSI-C quoting, parameter expansion, arrays, and more.</p>
+            <a href="comprehensive-examples.html">Open Comprehensive Examples</a>
+        </div>
+        
+        <div class="example-card featured">
+            <h3>New Split Examples Test</h3>
+            <p>Focused testing of the new split examples with inline shell code and immediate conversion results. Includes shell_calling_perl.sh and other advanced features.</p>
+            <a href="split-examples-test.html">Open Split Examples Test</a>
+        </div>
+        
+        <div class="example-card">
+            <h3>Main Interface</h3>
+            <p>The primary WASM interface with categorized examples and all language generators. Perfect for general use and testing.</p>
+            <a href="index.html">Open Main Interface</a>
+        </div>
+        
+        <div class="example-card">
+            <h3>Simple Test</h3>
+            <p>Basic WASM functionality test with a simple echo command. Good for verifying WASM module initialization.</p>
+            <a href="simple-test.html">Open Simple Test</a>
+        </div>
+        
+        <div class="example-card">
+            <h3>LS Command Test</h3>
+            <p>Test parsing of the specific command "ls * . sh" to verify argument handling and parsing capabilities.</p>
+            <a href="test-wasm-ls.html">Open LS Test</a>
+        </div>
+        
+        <div class="example-card">
+            <h3>Minimal Test</h3>
+            <p>Minimal WASM test page for basic functionality verification and debugging.</p>
+            <a href="minimal-test.html">Open Minimal Test</a>
+        </div>
+        
+        <div class="example-card">
+            <h3>Debug WASM</h3>
+            <p>Debug-focused WASM interface for troubleshooting and development purposes.</p>
+            <a href="debug-wasm.html">Open Debug Interface</a>
+        </div>
+    </div>
+    
+    <div class="back-link">
+        <a href="index.html">← Back to Main Interface</a>
+    </div>
+</body>
+</html>

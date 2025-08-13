@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comprehensive Shell Script Examples - WASM</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            color: #666;
+            font-size: 18px;
+        }
+        
+        .examples-container {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .examples-sidebar {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .examples-sidebar h3 {
+            margin-top: 0;
+            color: #333;
+            border-bottom: 2px solid #007acc;
+            padding-bottom: 10px;
+        }
+        
+        .category {
+            margin-bottom: 20px;
+        }
+        
+        .category h4 {
+            color: #495057;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid #dee2e6;
+            padding-bottom: 5px;
+            margin-bottom: 10px;
+        }
+        
+        .example-item {
+            margin-bottom: 8px;
+        }
+        
+        .example-item button {
+            background-color: #6c757d;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            width: 100%;
+            text-align: left;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .example-item button:hover {
+            background-color: #545b62;
+        }
+        
+        .example-item button.active {
+            background-color: #007acc;
+        }
+        
+        .test-panel {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .test-panel h3 {
+            margin-top: 0;
+            color: #333;
+            border-bottom: 2px solid #007acc;
+            padding-bottom: 10px;
+        }
+        
+        .input-section, .output-section {
+            margin-bottom: 20px;
+        }
+        
+        .input-section h4, .output-section h4 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        textarea {
+            width: 100%;
+            height: 200px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            resize: vertical;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 8px;
+            margin: 15px 0;
+            flex-wrap: wrap;
+            align-items: flex-start;
+        }
+        
+        button {
+            background-color: #007acc;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background-color: #005a9e;
+        }
+        
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .main-generator {
+            background-color: #28a745;
+            font-weight: bold;
+        }
+        
+        .main-generator:hover {
+            background-color: #218838;
+        }
+        
+        /* Rust button styling */
+        #rust-btn {
+            background-color: #fd7e14 !important; /* Orange */
+        }
+        
+        #rust-btn:hover {
+            background-color: #e8690b !important; /* Darker orange on hover */
+        }
+        
+        /* Other "To..." buttons styling */
+        #python-btn, #lua-btn, #c-btn, #js-btn, #english-btn, #french-btn, #bat-btn, #ps-btn {
+            background-color: #dc3545 !important; /* Red */
+            font-size: 11px !important;
+            padding: 6px 10px !important;
+            min-width: 60px !important;
+        }
+        
+        #python-btn:hover, #lua-btn:hover, #c-btn:hover, #js-btn:hover, #english-btn:hover, #french-btn:hover, #bat-btn:hover, #ps-btn:hover {
+            background-color: #c82333 !important; /* Darker red on hover */
+        }
+        
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        
+        .status.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .status.info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        .example-description {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 15px 0;
+            font-size: 14px;
+            color: #495057;
+        }
+        
+        @media (max-width: 768px) {
+            .examples-container {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Comprehensive Shell Script Examples</h1>
+        <p>Test all shell script examples with WASM-powered conversion to multiple languages</p>
+    </div>
+    
+    <div class="examples-container">
+        <div class="examples-sidebar">
+            <h3>Example Categories</h3>
+            
+            <div class="category">
+                <h4>Basic Examples</h4>
+                <div class="example-item">
+                    <button onclick="loadExample('simple.sh')">simple.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('simple_backup.sh')">simple_backup.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('args.sh')">args.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('misc.sh')">misc.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('local.sh')">local.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('subprocess.sh')">subprocess.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('cat_EOF.sh')">cat_EOF.sh</button>
+                </div>
+            </div>
+            
+            <div class="category">
+                <h4>Control Flow</h4>
+                <div class="example-item">
+                    <button onclick="loadExample('control_flow.sh')">control_flow.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('control_flow_if.sh')">control_flow_if.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('control_flow_loops.sh')">control_flow_loops.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('control_flow_function.sh')">control_flow_function.sh</button>
+                </div>
+            </div>
+            
+            <div class="category">
+                <h4>Text Processing</h4>
+                <div class="example-item">
+                    <button onclick="loadExample('pipeline.sh')">pipeline.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('test_quoted.sh')">test_quoted.sh</button>
+                </div>
+            </div>
+            
+            <div class="category">
+                <h4>ANSI-C Quoting</h4>
+                <div class="example-item">
+                    <button onclick="loadExample('ansi_quoting.sh')">ansi_quoting.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('ansi_quoting_basic.sh')">ansi_quoting_basic.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('ansi_quoting_escape.sh')">ansi_quoting_escape.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('ansi_quoting_unicode.sh')">ansi_quoting_unicode.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('ansi_quoting_practical.sh')">ansi_quoting_practical.sh</button>
+                </div>
+            </div>
+            
+            <div class="category">
+                <h4>Parameter Expansion</h4>
+                <div class="example-item">
+                    <button onclick="loadExample('parameter_expansion.sh')">parameter_expansion.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('parameter_expansion_case.sh')">parameter_expansion_case.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('parameter_expansion_advanced.sh')">parameter_expansion_advanced.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('parameter_expansion_more.sh')">parameter_expansion_more.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('parameter_expansion_defaults.sh')">parameter_expansion_defaults.sh</button>
+                </div>
+            </div>
+            
+            <div class="category">
+                <h4>Arrays</h4>
+                <div class="example-item">
+                    <button onclick="loadExample('arrays.sh')">arrays.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('arrays_indexed.sh')">arrays_indexed.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('arrays_associative.sh')">arrays_associative.sh</button>
+                </div>
+            </div>
+            
+            <div class="category">
+                <h4>Brace Expansion</h4>
+                <div class="example-item">
+                    <button onclick="loadExample('brace_expansion.sh')">brace_expansion.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('brace_expansion_basic.sh')">brace_expansion_basic.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('brace_expansion_advanced.sh')">brace_expansion_advanced.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('brace_expansion_practical.sh')">brace_expansion_practical.sh</button>
+                </div>
+            </div>
+            
+            <div class="category">
+                <h4>Pattern Matching</h4>
+                <div class="example-item">
+                    <button onclick="loadExample('pattern_matching.sh')">pattern_matching.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('pattern_matching_basic.sh')">pattern_matching_basic.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('pattern_matching_extglob.sh')">pattern_matching_extglob.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('pattern_matching_nocase.sh')">pattern_matching_nocase.sh</button>
+                </div>
+            </div>
+            
+            <div class="category">
+                <h4>Process Substitution</h4>
+                <div class="example-item">
+                    <button onclick="loadExample('process_substitution.sh')">process_substitution.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('process_substitution_here.sh')">process_substitution_here.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('process_substitution_comm.sh')">process_substitution_comm.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('process_substitution_mapfile.sh')">process_substitution_mapfile.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('process_substitution_advanced.sh')">process_substitution_advanced.sh</button>
+                </div>
+            </div>
+            
+            <div class="category">
+                <h4>Grep Examples</h4>
+                <div class="example-item">
+                    <button onclick="loadExample('grep_basic.sh')">grep_basic.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('grep_context.sh')">grep_context.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('grep_params.sh')">grep_params.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('grep_regex.sh')">grep_regex.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('grep_advanced.sh')">grep_advanced.sh</button>
+                </div>
+            </div>
+            
+            <div class="category">
+                <h4>Other</h4>
+                <div class="example-item">
+                    <button onclick="loadExample('file.txt')">file.txt</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('shell_calling_perl.sh')">shell_calling_perl.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExampleFallback('shell_calling_perl.sh')">shell_calling_perl.sh (fallback)</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('find_example.sh')">find_example.sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('cd..sh')">cd..sh</button>
+                </div>
+                <div class="example-item">
+                    <button onclick="loadExample('home.sh')">home.sh</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="test-panel">
+            <h3>Test Example</h3>
+            
+            <div class="example-description" id="example-description">
+                Select an example from the sidebar to get started
+            </div>
+            
+            <div class="input-section">
+                <h4>Shell Script Input</h4>
+                <textarea id="input" placeholder="Select an example from the sidebar..."></textarea>
+            </div>
+            
+            <div class="controls">
+                <button id="lex-btn">Tokenize</button>
+                <button id="parse-btn">Parse AST</button>
+                
+                <!-- Main Generators -->
+                <button id="perl-btn" class="main-generator">To Perl</button>
+                <button id="rust-btn" class="main-generator">To Rust</button>
+                
+                <!-- Experimental Generators -->
+                <button id="python-btn">To Python</button>
+                <button id="lua-btn">To Lua</button>
+                <button id="c-btn">To C</button>
+                <button id="js-btn">To JS</button>
+                <button id="english-btn">To English</button>
+                <button id="french-btn">To French</button>
+                <button id="bat-btn">To Batch</button>
+                <button id="ps-btn">To PowerShell</button>
+            </div>
+            
+            <div class="output-section">
+                <h4>Output</h4>
+                <textarea id="output" readonly placeholder="Output will appear here..."></textarea>
+                <div id="status" class="status" style="display: none;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import init, { Debashc, init_panic_hook } from './pkg/debashl.js';
+        import { examples, getExamplesByCategory } from './examples.js';
+
+        let debashc;
+        let currentOperation = 'parse';
+        let examplesData = {};
+        let currentExample = null;
+
+        async function initialize() {
+            try {
+                console.log('Starting WASM initialization...');
+                await init();
+                console.log('WASM init completed');
+                init_panic_hook();
+                console.log('Panic hook set up');
+                debashc = new Debashc();
+                console.log('Debashc instance created');
+                
+                // Load examples data from JavaScript module
+                examplesData = Object.entries(examples).map(([name, content]) => ({ name, content }));
+                console.log('Examples data loaded:', Object.keys(examples).length, 'examples');
+                console.log('Available examples:', Object.keys(examples));
+                
+                showStatus('Ready! Select an example from the sidebar to get started.', 'info');
+                setupEventListeners();
+            } catch (error) {
+                console.error('WASM initialization failed:', error);
+                showStatus('Failed to initialize WASM module: ' + error, 'error');
+            }
+        }
+
+        function setupEventListeners() {
+            document.getElementById('lex-btn').addEventListener('click', () => { currentOperation = 'lex'; executeOperation('lex'); });
+            document.getElementById('parse-btn').addEventListener('click', () => { currentOperation = 'parse'; executeOperation('parse'); });
+            document.getElementById('perl-btn').addEventListener('click', () => { currentOperation = 'perl'; executeOperation('perl'); });
+            document.getElementById('rust-btn').addEventListener('click', () => { currentOperation = 'rust'; executeOperation('rust'); });
+            document.getElementById('python-btn').addEventListener('click', () => executeOperation('python'));
+            document.getElementById('lua-btn').addEventListener('click', () => executeOperation('lua'));
+            document.getElementById('c-btn').addEventListener('click', () => executeOperation('c'));
+            document.getElementById('js-btn').addEventListener('click', () => executeOperation('js'));
+            document.getElementById('english-btn').addEventListener('click', () => { currentOperation = 'english'; executeOperation('english'); });
+            document.getElementById('french-btn').addEventListener('click', () => { currentOperation = 'french'; executeOperation('french'); });
+            document.getElementById('bat-btn').addEventListener('click', () => executeOperation('bat'));
+            document.getElementById('ps-btn').addEventListener('click', () => executeOperation('ps'));
+        }
+
+        function loadExample(exampleName) {
+            // Update active button
+            document.querySelectorAll('.example-item button').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            const example = examplesData.find(ex => ex.name === exampleName);
+            if (example) {
+                currentExample = exampleName;
+                document.getElementById('input').value = example.content;
+                
+                // Update description
+                const description = document.getElementById('example-description');
+                description.innerHTML = `
+                    <strong>${example.name}</strong><br>
+                    <em>${example.content.substring(0, 100)}${example.content.length > 100 ? '...' : ''}</em>
+                `;
+                
+                // Clear output and status
+                document.getElementById('output').value = '';
+                document.getElementById('status').style.display = 'none';
+                
+                // Auto-execute current operation
+                if (currentOperation) {
+                    executeOperation(currentOperation);
+                }
+            } else {
+                console.warn(`Example '${exampleName}' not found in examples data`);
+                showStatus(`Example '${exampleName}' not found. This might not be included in the examples data.`, 'error');
+            }
+        }
+
+        function loadExampleFallback(exampleName) {
+            // Update active button
+            document.querySelectorAll('.example-item button').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            let content = '';
+            let description = '';
+            
+            // Fallback content for examples that might not be in the data
+            switch (exampleName) {
+                case 'shell_calling_perl.sh':
+                    content = `#!/bin/bash
+
+# Example 1: Simple Perl one-liner to print text
+echo "=== Example 1: Simple Perl one-liner ==="
+perl -e 'print "Hello from Perl!\\n"'
+
+# Example 2: Perl script with command line arguments
+echo -e "\\n=== Example 2: Perl with arguments ==="
+perl -e 'foreach $arg (@ARGV) { print "Argument: $arg\\n" }' "first" "second" "third"
+
+# Example 3: Perl script processing shell variables
+echo -e "\\n=== Example 3: Perl processing shell variables ==="
+SHELL_VAR="Hello World"
+perl -e "print \\"Shell variable: $ENV{SHELL_VAR}\\n\\""
+
+# Example 4: Perl script reading from shell pipeline
+echo -e "\\n=== Example 4: Perl reading from pipeline ==="
+echo "apple\\nbanana\\ncherry" | perl -ne 'chomp; print "Fruit: $_\\n"'
+
+# Example 5: Complex Perl script with here document
+echo -e "\\n=== Example 5: Perl script with here document ==="
+perl << 'EOF'
+use strict;
+use warnings;
+
+my @numbers = (1, 2, 3, 4, 5);
+my $sum = 0;
+
+foreach my $num (@numbers) {
+    $sum += $num;
+    print "Added $num, sum is now $sum\\n";
+}
+
+print "Final sum: $sum\\n";
+EOF`;
+                    description = 'Shell script calling Perl with various examples including one-liners, arguments, variables, pipelines, and here documents';
+                    break;
+                default:
+                    showStatus(`No fallback content available for '${exampleName}'`, 'error');
+                    return;
+            }
+            
+            currentExample = exampleName;
+            document.getElementById('input').value = content;
+            
+            // Update description
+            const descElement = document.getElementById('example-description');
+            descElement.innerHTML = `
+                <strong>${exampleName}</strong> (fallback)<br>
+                <em>${description}</em>
+            `;
+            
+            // Clear output and status
+            document.getElementById('output').value = '';
+            document.getElementById('status').style.display = 'none';
+            
+            // Auto-execute current operation
+            if (currentOperation) {
+                executeOperation(currentOperation);
+            }
+        }
+
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+            status.style.display = 'block';
+        }
+
+        function setOutput(content) {
+            document.getElementById('output').value = content;
+        }
+
+        async function executeOperation(operation) {
+            const input = document.getElementById('input').value.trim();
+            if (!input) {
+                showStatus('Please select an example first.', 'error');
+                return;
+            }
+
+            if (!debashc) {
+                showStatus('WASM module not initialized.', 'error');
+                return;
+            }
+
+            try {
+                console.log('Executing operation:', operation, 'with input:', input);
+                showStatus('Processing...', 'info');
+                let result;
+                
+                switch (operation) {
+                    case 'lex':
+                        result = debashc.lex(input);
+                        break;
+                    case 'parse':
+                        result = debashc.parse(input);
+                        break;
+                    case 'perl':
+                        result = debashc.to_perl(input);
+                        break;
+                    case 'rust':
+                        result = debashc.to_rust(input);
+                        break;
+                    case 'python':
+                        result = debashc.to_python(input);
+                        break;
+                    case 'lua':
+                        result = debashc.to_lua(input);
+                        break;
+                    case 'c':
+                        result = debashc.to_c(input);
+                        break;
+                    case 'js':
+                        result = debashc.to_js(input);
+                        break;
+                    case 'english':
+                        result = debashc.to_english(input);
+                        break;
+                    case 'french':
+                        result = debashc.to_french(input);
+                        break;
+                    case 'bat':
+                        result = debashc.to_bat(input);
+                        break;
+                    case 'ps':
+                        result = debashc.to_ps(input);
+                        break;
+                    default:
+                        throw new Error('Unknown operation');
+                }
+
+                console.log('Operation successful, result:', result);
+                setOutput(result);
+                showStatus('Operation completed successfully!', 'success');
+            } catch (error) {
+                console.error('Exception caught:', error);
+                setOutput('Error: ' + error.message);
+                showStatus('Operation failed: ' + error.message, 'error');
+            }
+        }
+
+        // Initialize the application
+        initialize();
+    </script>
+</body>
+</html>

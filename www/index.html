@@ -7,127 +7,216 @@
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
+            margin: 0;
+            padding: 0;
             background-color: #f5f5f5;
+            display: flex;
+            height: 100vh;
+        }
+        
+        .sidebar {
+            width: 300px;
+            background: white;
+            border-right: 1px solid #dee2e6;
+            overflow-y: auto;
+            padding: 20px;
+            box-shadow: 2px 0 4px rgba(0,0,0,0.1);
+        }
+        
+        .main-content {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
         }
         
         .header {
             text-align: center;
             margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #007acc;
         }
         
         .header h1 {
             color: #333;
             margin-bottom: 10px;
+            font-size: 24px;
         }
         
         .header p {
             color: #666;
-            font-size: 18px;
+            font-size: 14px;
+            margin: 0;
         }
         
-        .examples-link {
-            text-align: center;
-            margin-bottom: 20px;
+        .category {
+            margin-bottom: 25px;
         }
         
-        .examples-link a {
-            display: inline-block;
-            background-color: #28a745;
+        .category h3 {
+            color: #495057;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid #dee2e6;
+            padding-bottom: 8px;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+        
+        .example-item {
+            margin-bottom: 8px;
+        }
+        
+        .example-btn {
+            background-color: #6c757d;
             color: white;
-            text-decoration: none;
-            padding: 12px 24px;
+            border: none;
+            padding: 10px 15px;
             border-radius: 6px;
-            font-weight: bold;
-            transition: background-color 0.3s;
+            cursor: pointer;
+            font-size: 13px;
+            width: 100%;
+            text-align: left;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            transition: all 0.2s ease;
         }
         
-        .examples-link a:hover {
-            background-color: #218838;
+        .example-btn:hover {
+            background-color: #545b62;
+            transform: translateX(2px);
         }
         
-        .container {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-bottom: 20px;
+        .example-btn.active {
+            background-color: #007acc;
+            box-shadow: 0 2px 4px rgba(0, 122, 204, 0.3);
         }
         
-        .input-section, .output-section {
+        .workspace {
             background: white;
-            padding: 20px;
             border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            padding: 25px;
+            height: calc(100vh - 80px);
+            display: flex;
+            flex-direction: column;
         }
         
-        .input-section h3, .output-section h3 {
+        .workspace h2 {
             margin-top: 0;
             color: #333;
             border-bottom: 2px solid #007acc;
-            padding-bottom: 10px;
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .input-section {
+            margin-bottom: 20px;
+            flex: 1;
+        }
+        
+        .input-section h3 {
+            margin-top: 0;
+            color: #333;
+            margin-bottom: 10px;
         }
         
         textarea {
             width: 100%;
-            height: 300px;
+            height: 200px;
             border: 1px solid #ddd;
-            border-radius: 4px;
-            padding: 10px;
+            border-radius: 6px;
+            padding: 15px;
             font-family: 'Courier New', monospace;
             font-size: 14px;
             resize: vertical;
+            border-color: #007acc;
         }
         
         .controls {
             display: flex;
-            gap: 10px;
-            margin: 15px 0;
+            gap: 8px;
+            margin: 20px 0;
             flex-wrap: wrap;
+            align-items: flex-start;
         }
         
         button {
             background-color: #007acc;
             color: white;
             border: none;
-            padding: 10px 20px;
-            border-radius: 4px;
+            padding: 12px 20px;
+            border-radius: 6px;
             cursor: pointer;
             font-size: 14px;
-            transition: background-color 0.3s;
+            transition: all 0.2s ease;
+            font-weight: 500;
         }
         
         button:hover {
             background-color: #005a9e;
+            transform: translateY(-1px);
         }
         
         button:disabled {
             background-color: #ccc;
             cursor: not-allowed;
+            transform: none;
         }
         
-        .example-btn {
+        .main-generator {
             background-color: #28a745;
+            font-weight: 600;
         }
         
-        .example-btn:hover {
+        .main-generator:hover {
             background-color: #218838;
         }
         
-        .clear-btn {
-            background-color: #dc3545;
+        /* Rust button styling */
+        #rust-btn {
+            background-color: #fd7e14 !important; /* Orange */
         }
         
-        .clear-btn:hover {
-            background-color: #c82333;
+        #rust-btn:hover {
+            background-color: #e8690b !important; /* Darker orange on hover */
+        }
+        
+        /* Other "To..." buttons styling */
+        #python-btn, #lua-btn, #c-btn, #js-btn, #english-btn, #french-btn, #bat-btn, #ps-btn {
+            background-color: #dc3545 !important; /* Red */
+            font-size: 11px !important;
+            padding: 6px 10px !important;
+            min-width: 60px !important;
+        }
+        
+        #python-btn:hover, #lua-btn:hover, #c-btn:hover, #js-btn:hover, #english-btn:hover, #french-btn:hover, #bat-btn:hover, #ps-btn:hover {
+            background-color: #c82333 !important; /* Darker red on hover */
+        }
+        
+        .output-section {
+            margin-top: 20px;
+        }
+        
+        .output-section h3 {
+            margin-top: 0;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        #output {
+            height: 150px;
+            background-color: #f8f9fa;
+            border-color: #dee2e6;
         }
         
         .status {
-            margin-top: 10px;
-            padding: 10px;
-            border-radius: 4px;
-            font-weight: bold;
+            margin-top: 15px;
+            padding: 12px;
+            border-radius: 6px;
+            font-weight: 500;
+            display: none;
         }
         
         .status.success {
@@ -148,126 +237,59 @@
             border: 1px solid #bee5eb;
         }
         
-        .examples {
-            margin-top: 20px;
-        }
-        
-        .examples h4 {
-            color: #333;
-            margin-bottom: 10px;
-        }
-        
-        .examples-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-            gap: 8px;
-            max-height: 300px;
-            overflow-y: auto;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            padding: 10px;
+        .example-description {
             background-color: #f8f9fa;
-        }
-        
-        .example-item {
-            margin-bottom: 0;
-        }
-        
-        .example-item button {
-            background-color: #6c757d;
-            font-size: 11px;
-            padding: 6px 8px;
-            width: 100%;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        
-        .example-item button:hover {
-            background-color: #545b62;
-        }
-        
-        /* Dropdown styles */
-        .dropdown {
-            position: relative;
-            display: inline-block;
-        }
-
-        .dropdown-btn {
-            background-color: #007acc;
-            color: white;
-            padding: 10px 20px;
-            border-radius: 4px;
-            cursor: pointer;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 15px 0;
             font-size: 14px;
-            transition: background-color 0.3s;
-        }
-
-        .dropdown-btn:hover {
-            background-color: #005a9e;
-        }
-
-        .dropdown-content {
-            display: none;
-            position: absolute;
-            background-color: #f9f9f9;
-            min-width: 160px;
-            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
-            z-index: 1;
-            border-radius: 4px;
-            margin-top: 5px;
-        }
-
-        .dropdown-content button {
-            width: 100%;
-            text-align: left;
-            padding: 10px 15px;
-            border-bottom: 1px solid #eee;
-            border-radius: 0;
-        }
-
-        .dropdown-content button:last-child {
-            border-bottom: none;
-        }
-
-        .dropdown-content button:hover {
-            background-color: #f1f1f1;
-        }
-
-        .dropdown:hover .dropdown-content {
-            display: block;
-        }
-        
-        .main-generator {
-            background-color: #28a745;
-            font-weight: bold;
-        }
-        
-        .main-generator:hover {
-            background-color: #218838;
+            color: #495057;
+            border-left: 4px solid #007acc;
         }
         
         @media (max-width: 768px) {
-            .container {
-                grid-template-columns: 1fr;
+            body {
+                flex-direction: column;
+            }
+            
+            .sidebar {
+                width: 100%;
+                height: auto;
+                max-height: 300px;
+            }
+            
+            .main-content {
+                padding: 15px;
             }
         }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>Debashc</h1>
-        <p>Convert shell scripts to Perl, Rust, and other languages with experimental generators</p>
+    <div class="sidebar">
+        <div class="header">
+            <h1>Debashc</h1>
+            <p>Shell to Language Compiler</p>
+        </div>
+        
+        <div id="examples-container">
+            <!-- Examples will be populated here -->
+        </div>
     </div>
     
-    <div class="examples-link">
-        <a href="examples-index.html">📚 View All Examples & New Split Examples</a>
-    </div>
-    
-    <div class="container">
-        <div class="input-section">
-            <h3>Shell Script Input</h3>
-            <textarea id="input" placeholder="Enter your shell script here..."></textarea>
+    <div class="main-content">
+        <div class="workspace">
+            <h2>Shell Script Compiler</h2>
+            
+            <div class="example-description" id="example-description">
+                Select an example from the sidebar to get started
+            </div>
+            
+            <div class="input-section">
+                <h3>Shell Script Input</h3>
+                <textarea id="input" placeholder="Select an example from the sidebar or type your shell script here..."></textarea>
+            </div>
+            
             <div class="controls">
                 <button id="lex-btn">Tokenize</button>
                 <button id="parse-btn">Parse AST</button>
@@ -276,42 +298,32 @@
                 <button id="perl-btn" class="main-generator">To Perl</button>
                 <button id="rust-btn" class="main-generator">To Rust</button>
                 
-                <!-- Experimental Generators Dropdown -->
-                <div class="dropdown">
-                    <button class="dropdown-btn">Experimental Generators ▼</button>
-                    <div class="dropdown-content">
-                        <button id="python-btn">To Python</button>
-                        <button id="lua-btn">To Lua</button>
-                        <button id="c-btn">To C</button>
-                        <button id="js-btn">To JS</button>
-                        <button id="english-btn">To English</button>
-                        <button id="french-btn">To French</button>
-                        <button id="bat-btn">To Batch</button>
-                        <button id="ps-btn">To PowerShell</button>
-                    </div>
-                </div>
-                
-                <button id="clear-btn" class="clear-btn">Clear</button>
+                <!-- Experimental Generators -->
+                <button id="python-btn">To Python</button>
+                <button id="lua-btn">To Lua</button>
+                <button id="c-btn">To C</button>
+                <button id="js-btn">To JS</button>
+                <button id="english-btn">To English</button>
+                <button id="french-btn">To French</button>
+                <button id="bat-btn">To Batch</button>
+                <button id="ps-btn">To PowerShell</button>
             </div>
-            <div class="examples">
-                <h4>Examples:</h4>
-                <div id="examples-list" class="examples-grid"></div>
+            
+            <div class="output-section">
+                <h3>Output</h3>
+                <textarea id="output" readonly placeholder="Output will appear here..."></textarea>
+                <div id="status" class="status"></div>
             </div>
-        </div>
-        
-        <div class="output-section">
-            <h3>Output</h3>
-            <textarea id="output" readonly placeholder="Output will appear here..."></textarea>
-            <div id="status" class="status" style="display: none;"></div>
         </div>
     </div>
 
     <script type="module">
-        import init, { Debashc, init_panic_hook, examples_json } from './pkg/debashl.js';
+        import init, { Debashc, init_panic_hook } from './pkg/debashl.js';
+        import { examples, getExamplesByCategory } from './examples.js';
 
         let debashc;
         let currentOperation = 'parse';
-        let inputIdleTimer = null;
+        let currentExample = null;
 
         async function initialize() {
             try {
@@ -322,8 +334,9 @@
                 console.log('Panic hook set up');
                 debashc = new Debashc();
                 console.log('Debashc instance created');
-                showStatus('Ready! Enter a shell script to get started.', 'info');
+                showStatus('Ready! Select an example from the sidebar to get started.', 'info');
                 populateExamples();
+                setupEventListeners();
             } catch (error) {
                 console.error('WASM initialization failed:', error);
                 showStatus('Failed to initialize WASM module: ' + error, 'error');
@@ -339,6 +352,73 @@
 
         function setOutput(content) {
             document.getElementById('output').value = content;
+        }
+
+        function populateExamples() {
+            try {
+                const container = document.getElementById('examples-container');
+                container.innerHTML = '';
+                
+                // Get examples grouped by category from the examples.js module
+                const categories = getExamplesByCategory();
+                
+                // Create category sections
+                Object.entries(categories).forEach(([category, exampleNames]) => {
+                    const categoryDiv = document.createElement('div');
+                    categoryDiv.className = 'category';
+                    
+                    const categoryTitle = document.createElement('h3');
+                    categoryTitle.textContent = category;
+                    categoryDiv.appendChild(categoryTitle);
+                    
+                    // Add examples for this category
+                    exampleNames.forEach(exampleName => {
+                        const exampleContent = examples[exampleName];
+                        if (exampleContent) {
+                            const div = document.createElement('div');
+                            div.className = 'example-item';
+                            const btn = document.createElement('button');
+                            btn.className = 'example-btn';
+                            btn.textContent = exampleName;
+                            btn.title = exampleContent.substring(0, 100) + (exampleContent.length > 100 ? '...' : '');
+                            btn.addEventListener('click', () => {
+                                loadExample(exampleName, exampleContent);
+                            });
+                            div.appendChild(btn);
+                            categoryDiv.appendChild(div);
+                        }
+                    });
+                    
+                    container.appendChild(categoryDiv);
+                });
+            } catch (e) {
+                console.error('Error populating examples:', e);
+            }
+        }
+
+        function loadExample(exampleName, exampleContent) {
+            // Update active button
+            document.querySelectorAll('.example-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            currentExample = exampleName;
+            document.getElementById('input').value = exampleContent;
+            
+            // Update description
+            const description = document.getElementById('example-description');
+            description.innerHTML = `
+                <strong>${exampleName}</strong><br>
+                <em>${exampleContent.substring(0, 100)}${exampleContent.length > 100 ? '...' : ''}</em>
+            `;
+            
+            // Clear output and status
+            document.getElementById('output').value = '';
+            document.getElementById('status').style.display = 'none';
+            
+            // Auto-execute current operation
+            if (currentOperation) {
+                executeOperation(currentOperation);
+            }
         }
 
         async function executeOperation(operation) {
@@ -409,101 +489,23 @@
             }
         }
 
-        function clearAll() {
-            document.getElementById('input').value = '';
-            document.getElementById('output').value = '';
-            document.getElementById('status').style.display = 'none';
-        }
-
-        // Event listeners
-        const inputEl = document.getElementById('input');
-        inputEl.addEventListener('input', () => {
-            if (inputIdleTimer) clearTimeout(inputIdleTimer);
-            inputIdleTimer = setTimeout(() => executeOperation(currentOperation), 100);
-        });
-
-        document.getElementById('lex-btn').addEventListener('click', () => { currentOperation = 'lex'; executeOperation('lex'); });
-        document.getElementById('parse-btn').addEventListener('click', () => { currentOperation = 'parse'; executeOperation('parse'); });
-        document.getElementById('perl-btn').addEventListener('click', () => { currentOperation = 'perl'; executeOperation('perl'); });
-        document.getElementById('rust-btn').addEventListener('click', () => { currentOperation = 'rust'; executeOperation('rust'); });
-        document.getElementById('python-btn').addEventListener('click', () => { currentOperation = 'python'; executeOperation('python'); });
-        document.getElementById('lua-btn').addEventListener('click', () => { currentOperation = 'lua'; executeOperation('lua'); });
-        document.getElementById('clear-btn').addEventListener('click', clearAll);
-        document.getElementById('c-btn').addEventListener('click', () => executeOperation('c'));
-        document.getElementById('js-btn').addEventListener('click', () => executeOperation('js'));
-        document.getElementById('english-btn').addEventListener('click', () => { currentOperation = 'english'; executeOperation('english'); });
-        document.getElementById('french-btn').addEventListener('click', () => { currentOperation = 'french'; executeOperation('french'); });
-        document.getElementById('bat-btn').addEventListener('click', () => { currentOperation = 'bat'; executeOperation('bat'); });
-        document.getElementById('ps-btn').addEventListener('click', () => { currentOperation = 'ps'; executeOperation('ps'); });
-
-        function populateExamples() {
-            try {
-                const data = JSON.parse(examples_json());
-                const container = document.getElementById('examples-list');
-                container.innerHTML = '';
-                
-                // Group examples by category
-                const categories = {
-                    'Basic': ['simple.sh', 'simple_backup.sh', 'args.sh', 'misc.sh'],
-                    'Control Flow': ['control_flow.sh', 'local.sh'],
-                    'Text Processing': ['pipeline.sh', 'subprocess.sh', 'cat_EOF.sh'],
-                    'Advanced Features': ['parameter_expansion.sh', 'brace_expansion.sh', 'arrays.sh', 'pattern_matching.sh', 'process_substitution.sh', 'ansi_quoting.sh', 'test_quoted.sh'],
-                    'Grep Examples': ['grep_basic.sh', 'grep_context.sh', 'grep_params.sh', 'grep_regex.sh', 'grep_advanced.sh'],
-                    'Other': ['file.txt']
-                };
-                
-                // Create category sections
-                Object.entries(categories).forEach(([category, exampleNames]) => {
-                    const categoryDiv = document.createElement('div');
-                    categoryDiv.className = 'example-category';
-                    categoryDiv.style.gridColumn = '1 / -1';
-                    categoryDiv.style.marginTop = '10px';
-                    categoryDiv.style.marginBottom = '5px';
-                    
-                    const categoryTitle = document.createElement('div');
-                    categoryTitle.className = 'category-title';
-                    categoryTitle.textContent = category;
-                    categoryTitle.style.fontWeight = 'bold';
-                    categoryTitle.style.color = '#495057';
-                    categoryTitle.style.fontSize = '12px';
-                    categoryTitle.style.textTransform = 'uppercase';
-                    categoryTitle.style.letterSpacing = '0.5px';
-                    categoryTitle.style.borderBottom = '1px solid #dee2e6';
-                    categoryTitle.style.paddingBottom = '3px';
-                    categoryTitle.style.marginBottom = '5px';
-                    
-                    categoryDiv.appendChild(categoryTitle);
-                    container.appendChild(categoryDiv);
-                    
-                    // Add examples for this category
-                    exampleNames.forEach(exampleName => {
-                        const example = data.find(ex => ex.name === exampleName);
-                        if (example) {
-                            const div = document.createElement('div');
-                            div.className = 'example-item';
-                            const btn = document.createElement('button');
-                            btn.className = 'example-btn';
-                            btn.textContent = example.name;
-                            btn.title = example.content.substring(0, 100) + (example.content.length > 100 ? '...' : '');
-                            btn.addEventListener('click', () => {
-                                document.getElementById('input').value = example.content;
-                                setOutput('');
-                                document.getElementById('status').style.display = 'none';
-                                executeOperation(currentOperation);
-                            });
-                            div.appendChild(btn);
-                            container.appendChild(div);
-                        }
-                    });
-                });
-            } catch (e) {
-                console.error('Error populating examples:', e);
-            }
+        function setupEventListeners() {
+            document.getElementById('lex-btn').addEventListener('click', () => { currentOperation = 'lex'; executeOperation('lex'); });
+            document.getElementById('parse-btn').addEventListener('click', () => { currentOperation = 'parse'; executeOperation('parse'); });
+            document.getElementById('perl-btn').addEventListener('click', () => { currentOperation = 'perl'; executeOperation('perl'); });
+            document.getElementById('rust-btn').addEventListener('click', () => { currentOperation = 'rust'; executeOperation('rust'); });
+            document.getElementById('python-btn').addEventListener('click', () => executeOperation('python'));
+            document.getElementById('lua-btn').addEventListener('click', () => executeOperation('lua'));
+            document.getElementById('c-btn').addEventListener('click', () => executeOperation('c'));
+            document.getElementById('js-btn').addEventListener('click', () => executeOperation('js'));
+            document.getElementById('english-btn').addEventListener('click', () => { currentOperation = 'english'; executeOperation('english'); });
+            document.getElementById('french-btn').addEventListener('click', () => { currentOperation = 'french'; executeOperation('french'); });
+            document.getElementById('bat-btn').addEventListener('click', () => executeOperation('bat'));
+            document.getElementById('ps-btn').addEventListener('click', () => executeOperation('ps'));
         }
 
         // Initialize the application
         initialize();
     </script>
-
 </body>
 </html>

@@ -1,6 +1,5 @@
 use wasm_bindgen::prelude::*;
 use crate::{Lexer, Parser, PerlGenerator, RustGenerator};
-use serde::Serialize;
 
 #[wasm_bindgen]
 pub struct Debashc;
@@ -12,31 +11,24 @@ impl Debashc {
         Self
     }
 
-    /// Get all examples as JSON
+    /// Get all examples as JSON - now handled by JavaScript
     pub fn get_examples(&self) -> String {
-        examples_json()
+        "[]".to_string()
     }
 
-    /// Get a specific example by name
-    pub fn get_example(&self, name: &str) -> Result<String, JsValue> {
-        let examples = all_examples();
-        for example in examples {
-            if example.name == name {
-                return Ok(example.content.to_string());
-            }
-        }
-        Err(JsValue::from_str(&format!("Example '{}' not found", name)))
+    /// Get a specific example by name - now handled by JavaScript
+    pub fn get_example(&self, _name: &str) -> Result<String, JsValue> {
+        Err(JsValue::from_str("Examples are now handled by JavaScript. Use the examples.js module instead."))
     }
 
-    /// Get the total number of examples
+    /// Get the total number of examples - now handled by JavaScript
     pub fn get_example_count(&self) -> usize {
-        all_examples().len()
+        0
     }
 
-    /// Get all example names as a JSON array
+    /// Get all example names as a JSON array - now handled by JavaScript
     pub fn get_example_names(&self) -> String {
-        let names: Vec<&str> = all_examples().iter().map(|e| e.name).collect();
-        serde_json::to_string(&names).unwrap_or_else(|_| "[]".to_string())
+        "[]".to_string()
     }
 
     /// Tokenize a shell script
@@ -100,26 +92,6 @@ impl Debashc {
         Err(JsValue::from_str("Lua generator not available"))
     }
 
-    /// Convert shell script to C
-    pub fn to_c(&mut self, _input: &str) -> Result<String, JsValue> {
-        Err(JsValue::from_str("C generator not available"))
-    }
-
-    /// Convert shell script to JavaScript
-    pub fn to_js(&mut self, _input: &str) -> Result<String, JsValue> {
-        Err(JsValue::from_str("JS generator not available"))
-    }
-
-    /// Convert shell script to English pseudocode
-    pub fn to_english(&mut self, _input: &str) -> Result<String, JsValue> {
-        Err(JsValue::from_str("English generator not available"))
-    }
-
-    /// Convert shell script to French pseudocode
-    pub fn to_french(&mut self, _input: &str) -> Result<String, JsValue> {
-        Err(JsValue::from_str("French generator not available"))
-    }
-
     /// Convert shell script to Windows Batch
     pub fn to_bat(&mut self, _input: &str) -> Result<String, JsValue> {
         Err(JsValue::from_str("Batch generator not available"))
@@ -131,88 +103,9 @@ impl Debashc {
     }
 }
 
-#[derive(Serialize)]
-struct ExampleEntry {
-    name: &'static str,
-    content: &'static str,
-}
-
-fn all_examples() -> Vec<ExampleEntry> {
-    vec![
-        // Basic examples
-        ExampleEntry { name: "args.sh", content: include_str!("../examples/args.sh") },
-        ExampleEntry { name: "simple.sh", content: include_str!("../examples/simple.sh") },
-        ExampleEntry { name: "simple_backup.sh", content: include_str!("../examples/simple_backup.sh") },
-        ExampleEntry { name: "misc.sh", content: include_str!("../examples/misc.sh") },
-        ExampleEntry { name: "subprocess.sh", content: include_str!("../examples/subprocess.sh") },
-        ExampleEntry { name: "test_quoted.sh", content: include_str!("../examples/test_quoted.sh") },
-        ExampleEntry { name: "cat_EOF.sh", content: include_str!("../examples/cat_EOF.sh") },
-        ExampleEntry { name: "file.txt", content: include_str!("../examples/file.txt") },
-        ExampleEntry { name: "cd..sh", content: include_str!("../examples/cd..sh") },
-        ExampleEntry { name: "test_ls_star_dot_sh.sh", content: include_str!("../examples/test_ls_star_dot_sh.sh") },
-        
-        // Control flow examples
-        ExampleEntry { name: "control_flow.sh", content: include_str!("../examples/control_flow.sh") },
-        ExampleEntry { name: "control_flow_if.sh", content: include_str!("../examples/control_flow_if.sh") },
-        ExampleEntry { name: "control_flow_loops.sh", content: include_str!("../examples/control_flow_loops.sh") },
-        ExampleEntry { name: "control_flow_function.sh", content: include_str!("../examples/control_flow_function.sh") },
-        
-        // Pipeline examples
-        ExampleEntry { name: "pipeline.sh", content: include_str!("../examples/pipeline.sh") },
-        
-        // Local and environment examples
-        ExampleEntry { name: "local.sh", content: include_str!("../examples/local.sh") },
-        
-        // Parameter expansion examples
-        ExampleEntry { name: "parameter_expansion.sh", content: include_str!("../examples/parameter_expansion.sh") },
-        ExampleEntry { name: "parameter_expansion_advanced.sh", content: include_str!("../examples/parameter_expansion_advanced.sh") },
-        ExampleEntry { name: "parameter_expansion_case.sh", content: include_str!("../examples/parameter_expansion_case.sh") },
-        ExampleEntry { name: "parameter_expansion_defaults.sh", content: include_str!("../examples/parameter_expansion_defaults.sh") },
-        ExampleEntry { name: "parameter_expansion_more.sh", content: include_str!("../examples/parameter_expansion_more.sh") },
-        
-        // Brace expansion examples
-        ExampleEntry { name: "brace_expansion.sh", content: include_str!("../examples/brace_expansion.sh") },
-        ExampleEntry { name: "brace_expansion_basic.sh", content: include_str!("../examples/brace_expansion_basic.sh") },
-        ExampleEntry { name: "brace_expansion_advanced.sh", content: include_str!("../examples/brace_expansion_advanced.sh") },
-        ExampleEntry { name: "brace_expansion_practical.sh", content: include_str!("../examples/brace_expansion_practical.sh") },
-        
-        // Arrays examples
-        ExampleEntry { name: "arrays.sh", content: include_str!("../examples/arrays.sh") },
-        ExampleEntry { name: "arrays_indexed.sh", content: include_str!("../examples/arrays_indexed.sh") },
-        ExampleEntry { name: "arrays_associative.sh", content: include_str!("../examples/arrays_associative.sh") },
-        
-        // Pattern matching examples
-        ExampleEntry { name: "pattern_matching.sh", content: include_str!("../examples/pattern_matching.sh") },
-        ExampleEntry { name: "pattern_matching_basic.sh", content: include_str!("../examples/pattern_matching_basic.sh") },
-        ExampleEntry { name: "pattern_matching_extglob.sh", content: include_str!("../examples/pattern_matching_extglob.sh") },
-        ExampleEntry { name: "pattern_matching_nocase.sh", content: include_str!("../examples/pattern_matching_nocase.sh") },
-        
-        // Process substitution examples
-        ExampleEntry { name: "process_substitution.sh", content: include_str!("../examples/process_substitution.sh") },
-        ExampleEntry { name: "process_substitution_advanced.sh", content: include_str!("../examples/process_substitution_advanced.sh") },
-        ExampleEntry { name: "process_substitution_comm.sh", content: include_str!("../examples/process_substitution_comm.sh") },
-        ExampleEntry { name: "process_substitution_mapfile.sh", content: include_str!("../examples/process_substitution_mapfile.sh") },
-        ExampleEntry { name: "process_substitution_here.sh", content: include_str!("../examples/process_substitution_here.sh") },
-        
-        // ANSI quoting examples
-        ExampleEntry { name: "ansi_quoting.sh", content: include_str!("../examples/ansi_quoting.sh") },
-        ExampleEntry { name: "ansi_quoting_basic.sh", content: include_str!("../examples/ansi_quoting_basic.sh") },
-        ExampleEntry { name: "ansi_quoting_escape.sh", content: include_str!("../examples/ansi_quoting_escape.sh") },
-        ExampleEntry { name: "ansi_quoting_practical.sh", content: include_str!("../examples/ansi_quoting_practical.sh") },
-        ExampleEntry { name: "ansi_quoting_unicode.sh", content: include_str!("../examples/ansi_quoting_unicode.sh") },
-        
-        // Grep examples
-        ExampleEntry { name: "grep_basic.sh", content: include_str!("../examples/grep_basic.sh") },
-        ExampleEntry { name: "grep_advanced.sh", content: include_str!("../examples/grep_advanced.sh") },
-        ExampleEntry { name: "grep_context.sh", content: include_str!("../examples/grep_context.sh") },
-        ExampleEntry { name: "grep_params.sh", content: include_str!("../examples/grep_params.sh") },
-        ExampleEntry { name: "grep_regex.sh", content: include_str!("../examples/grep_regex.sh") },
-    ]
-}
-
 #[wasm_bindgen]
 pub fn examples_json() -> String {
-    serde_json::to_string(&all_examples()).unwrap_or_else(|_| "[]".to_string())
+    "[]".to_string()
 }
 
 #[wasm_bindgen]
