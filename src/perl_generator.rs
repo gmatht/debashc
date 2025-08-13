@@ -120,6 +120,146 @@ impl PerlGenerator {
         }
     }
 
+    fn expand_brace_expression(&self, expansion: &BraceExpansion) -> String {
+        if expansion.items.len() == 1 {
+            self.expand_single_brace_item(&expansion.items[0])
+        } else {
+            // Multiple items - expand each and join
+            expansion.items.iter()
+                .map(|item| self.expand_single_brace_item(item))
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+    }
+
+    fn expand_single_brace_item(&self, item: &BraceItem) -> String {
+        match item {
+            BraceItem::Range(range) => self.expand_brace_range(range),
+            BraceItem::Literal(s) => self.expand_literal_with_ranges(s),
+            BraceItem::Sequence(seq) => seq.join(" ")
+        }
+    }
+
+    fn expand_literal_with_ranges(&self, s: &str) -> String {
+        if s.contains("..") {
+            self.expand_range_literal(s)
+        } else if s.contains(',') {
+            self.expand_comma_sequence(s)
+        } else {
+            s.to_string()
+        }
+    }
+
+    fn expand_range_literal(&self, s: &str) -> String {
+        let parts: Vec<&str> = s.split("..").collect();
+        match parts.len() {
+            2 => self.expand_simple_range(parts[0], parts[1]),
+            3 => self.expand_range_with_step(parts[0], parts[1], parts[2]),
+            _ => s.to_string()
+        }
+    }
+
+    fn expand_simple_range(&self, start_str: &str, end_str: &str) -> String {
+        if let (Some(start_char), Some(end_char)) = (start_str.chars().next(), end_str.chars().next()) {
+            if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
+                let start = start_char as u8;
+                let end = end_char as u8;
+                if start <= end {
+                    (start..=end)
+                        .map(|c| char::from(c).to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                } else {
+                    start_str.to_string()
+                }
+            } else {
+                start_str.to_string()
+            }
+        } else {
+            start_str.to_string()
+        }
+    }
+
+    fn expand_range_with_step(&self, start_str: &str, end_str: &str, step_str: &str) -> String {
+        if let (Ok(start), Ok(end), Ok(step)) = (start_str.parse::<i64>(), end_str.parse::<i64>(), step_str.parse::<i64>()) {
+            let values: Vec<String> = (start..=end)
+                .step_by(step as usize)
+                .map(|i| {
+                    if start_str.starts_with('0') && start_str.len() > 1 {
+                        format!("{:0width$}", i, width = start_str.len())
+                    } else {
+                        i.to_string()
+                    }
+                })
+                .collect();
+            values.join(" ")
+        } else {
+            start_str.to_string()
+        }
+    }
+
+    fn expand_comma_sequence(&self, s: &str) -> String {
+        let parts: Vec<&str> = s.split(',').collect();
+        if parts.len() > 1 {
+            parts.join(" ")
+        } else {
+            s.to_string()
+        }
+    }
+
+    fn expand_touch_patterns(&mut self, args: &[Word]) -> Vec<String> {
+        let mut all_files = Vec::new();
+        
+        // Check if we have a pattern like "file_" + brace_expansion + ".txt"
+        if args.len() >= 3 {
+            // Look for brace expansion in the middle
+            for i in 1..args.len()-1 {
+                if let Word::BraceExpansion(expansion) = &args[i] {
+                    // Reconstruct the pattern: prefix + brace_expansion + suffix
+                    let prefix = self.word_to_perl(&args[i-1]).trim_matches('"').to_string();
+                    let suffix: String = args.iter().skip(i+1).map(|arg| self.word_to_perl(arg).trim_matches('"').to_string()).collect();
+                    
+                    // Expand the brace expansion
+                    let expanded = self.expand_brace_expression(expansion);
+                    for item in expanded.split_whitespace() {
+                        all_files.push(format!("{}{}{}", prefix, item, suffix));
+                    }
+                } else {
+                    // Regular argument
+                    all_files.push(self.word_to_perl(&args[i]));
+                }
+            }
+        } else {
+            // Simple case - no brace expansion
+            for arg in args {
+                all_files.push(self.word_to_perl(arg));
+            }
+        }
+        
+        all_files
+    }
+
+    fn expand_numeric_range(&self, start: i64, end: i64, step: i64, start_str: &str) -> Vec<String> {
+        let values: Vec<String> = if step > 0 {
+            (start..=end).step_by(step as usize).map(|i| {
+                if start_str.starts_with('0') && start_str.len() > 1 {
+                    format!("{:0width$}", i, width = start_str.len())
+                } else {
+                    i.to_string()
+                }
+            }).collect()
+        } else {
+            (end..=start).rev().step_by((-step) as usize).map(|i| {
+                if start_str.starts_with('0') && start_str.len() > 1 {
+                    format!("{:0width$}", i, width = start_str.len())
+                } else {
+                    i.to_string()
+                }
+            }).collect()
+        };
+        values
+    }
+
 
 
     pub fn generate(&mut self, commands: &[Command]) -> String {
@@ -455,188 +595,10 @@ impl PerlGenerator {
         } else if cmd.name == "touch" {
             // Special handling for touch with brace expansion support
             if !cmd.args.is_empty() {
-                // For touch, we need to reconstruct the full filename pattern and expand brace expansion
-
-                
-                let mut all_files = Vec::new();
-                
-                // Check if we have a pattern like "file_" + brace_expansion + ".txt"
-                if cmd.args.len() >= 3 {
-                    // Look for brace expansion in the middle
-                    for i in 1..cmd.args.len()-1 {
-                        if let Word::BraceExpansion(expansion) = &cmd.args[i] {
-                            // Reconstruct the pattern: prefix + brace_expansion + suffix
-                            let prefix = self.word_to_perl(&cmd.args[i-1]).trim_matches('"').to_string();
-                            // Concatenate all remaining arguments after the brace expansion
-                            let suffix: String = cmd.args.iter().skip(i+1).map(|arg| self.word_to_perl(arg).trim_matches('"').to_string()).collect();
-                            
-                            if expansion.items.len() == 1 {
-                                match &expansion.items[0] {
-                                    BraceItem::Range(range) => {
-                                        if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
-                                            let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
-                                            let values: Vec<String> = if step > 0 {
-                                                (start..=end).step_by(step as usize).map(|i| {
-                                                    // Preserve leading zeros by formatting with the same width as the original
-                                                    if range.start.starts_with('0') && range.start.len() > 1 {
-                                                        format!("{:0width$}", i, width = range.start.len())
-                                                    } else {
-                                                        i.to_string()
-                                                    }
-                                                }).collect()
-                                            } else {
-                                                (end..=start).rev().step_by((-step) as usize).map(|i| {
-                                                    if range.start.starts_with('0') && range.start.len() > 1 {
-                                                        format!("{:0width$}", i, width = range.start.len())
-                                                    } else {
-                                                        i.to_string()
-                                                    }
-                                                }).collect()
-                                            };
-                                            for value in values {
-                                                all_files.push(format!("{}{}{}", prefix, value, suffix));
-                                            }
-                                        }
-                                    }
-                                    _ => {
-                                        // For other brace items, just add the literal
-                                        all_files.push(format!("{}{}{}", prefix, self.word_to_perl(&cmd.args[i]).trim_matches('"'), suffix));
-                                    }
-                                }
-                            } else {
-                                // Multiple items - expand each one
-                                for item in &expansion.items {
-                                    match item {
-                                        BraceItem::Literal(s) => all_files.push(format!("{}{}{}", prefix, s, suffix)),
-                                        BraceItem::Range(range) => {
-                                            if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
-                                                let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
-                                                let values: Vec<String> = if step > 0 {
-                                                    (start..=end).step_by(step as usize).map(|i| {
-                                                        // Preserve leading zeros by formatting with the same width as the original
-                                                        if range.start.starts_with('0') && range.start.len() > 1 {
-                                                            format!("{:0width$}", i, width = range.start.len())
-                                                        } else {
-                                                            i.to_string()
-                                                        }
-                                                    }).collect()
-                                                } else {
-                                                    (end..=start).rev().step_by((-step) as usize).map(|i| {
-                                                        if range.start.starts_with('0') && range.start.len() > 1 {
-                                                            format!("{:0width$}", i, width = range.start.len())
-                                                        } else {
-                                                            i.to_string()
-                                                        }
-                                                    }).collect()
-                                                };
-                                                for value in values {
-                                                    all_files.push(format!("{}{}{}", prefix, value, suffix));
-                                                }
-                                            }
-                                        }
-                                        BraceItem::Sequence(seq) => {
-                                            for s in seq {
-                                                all_files.push(format!("{}{}{}", prefix, s, suffix));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            break; // Only handle the first brace expansion
-                        }
-                    }
-                }
-                
-                // If no brace expansion pattern was found, handle each argument normally
-                if all_files.is_empty() {
-                    for arg in &cmd.args {
-                        if let Word::BraceExpansion(expansion) = arg {
-                            // Handle brace expansion
-                            if expansion.items.len() == 1 {
-                                match &expansion.items[0] {
-                                    BraceItem::Range(range) => {
-                                        if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
-                                            let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
-                                            let values: Vec<String> = if step > 0 {
-                                                (start..=end).step_by(step as usize).map(|i| {
-                                                    // Preserve leading zeros by formatting with the same width as the original
-                                                    if range.start.starts_with('0') && range.start.len() > 1 {
-                                                        format!("{:0width$}", i, width = range.start.len())
-                                                    } else {
-                                                        i.to_string()
-                                                    }
-                                                }).collect()
-                                            } else {
-                                                (end..=start).rev().step_by((-step) as usize).map(|i| {
-                                                    if range.start.starts_with('0') && range.start.len() > 1 {
-                                                        format!("{:0width$}", i, width = range.start.len())
-                                                    } else {
-                                                        i.to_string()
-                                                    }
-                                                }).collect()
-                                            };
-                                            for value in values {
-                                                all_files.push(value);
-                                            }
-                                        }
-                                    }
-                                    _ => {
-                                        // For other brace items, just add the literal
-                                        all_files.push(self.word_to_perl(arg));
-                                    }
-                                }
-                            } else {
-                                // Multiple items - expand each one
-                                for item in &expansion.items {
-                                    match item {
-                                        BraceItem::Literal(s) => all_files.push(s.clone()),
-                                        BraceItem::Range(range) => {
-                                            if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
-                                                let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
-                                                let values: Vec<String> = if step > 0 {
-                                                    (start..=end).step_by(step as usize).map(|i| {
-                                                        // Preserve leading zeros by formatting with the same width as the original
-                                                        if range.start.starts_with('0') && range.start.len() > 1 {
-                                                            format!("{:0width$}", i, width = range.start.len())
-                                                        } else {
-                                                            i.to_string()
-                                                        }
-                                                    }).collect()
-                                                } else {
-                                                    (end..=start).rev().step_by((-step) as usize).map(|i| {
-                                                        if range.start.starts_with('0') && range.start.len() > 1 {
-                                                            format!("{:0width$}", i, width = range.start.len())
-                                                        } else {
-                                                            i.to_string()
-                                                        }
-                                                    }).collect()
-                                                };
-                                                for value in values {
-                                                    all_files.push(value);
-                                                }
-                                            }
-                                        }
-                                        BraceItem::Sequence(seq) => {
-                                            for s in seq {
-                                                all_files.push(s.clone());
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            // Regular argument
-                            let arg_str = self.word_to_perl(arg);
-                            all_files.push(arg_str);
-                        }
-                    }
-                }
-                
-                // Now create all the files
+                let all_files = self.expand_touch_patterns(&cmd.args);
                 for file in all_files {
-                    let fh = self.get_unique_file_handle();
-                    output.push_str(&format!("open(my {}, '>', '{}') or die \"Cannot create file: $!\\n\";\n", fh, file));
-                    output.push_str(&format!("close({});\n", fh));
+                    output.push_str(&format!("open(my $fh, '>', '{}') or die \"Cannot create file: $!\\n\";\n", file));
+                    output.push_str("close($fh);\n");
                 }
             }
         } else if cmd.name == "cd" {
@@ -3623,7 +3585,7 @@ impl PerlGenerator {
         SharedUtils::parse_seq_command(s)
     }
 
-    fn expand_brace_expression(&self, expr: &str) -> String {
+    fn expand_simple_brace_expression(&self, expr: &str) -> String {
         // Handle simple numeric ranges like {1..5}
         if let Some(range) = self.parse_numeric_brace_range(expr) {
             let (start, end) = range;
