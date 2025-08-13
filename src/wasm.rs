@@ -201,12 +201,12 @@ fn all_examples() -> Vec<ExampleEntry> {
         ExampleEntry { name: "ansi_quoting_practical.sh", content: include_str!("../examples/ansi_quoting_practical.sh") },
         ExampleEntry { name: "ansi_quoting_unicode.sh", content: include_str!("../examples/ansi_quoting_unicode.sh") },
         
-        // Grep examples (from todo directory)
-        ExampleEntry { name: "grep_basic.sh", content: include_str!("../examples/todo/grep_basic.sh") },
-        ExampleEntry { name: "grep_advanced.sh", content: include_str!("../examples/todo/grep_advanced.sh") },
-        ExampleEntry { name: "grep_context.sh", content: include_str!("../examples/todo/grep_context.sh") },
-        ExampleEntry { name: "grep_params.sh", content: include_str!("../examples/todo/grep_params.sh") },
-        ExampleEntry { name: "grep_regex.sh", content: include_str!("../examples/todo/grep_regex.sh") },
+        // Grep examples
+        ExampleEntry { name: "grep_basic.sh", content: include_str!("../examples/grep_basic.sh") },
+        ExampleEntry { name: "grep_advanced.sh", content: include_str!("../examples/grep_advanced.sh") },
+        ExampleEntry { name: "grep_context.sh", content: include_str!("../examples/grep_context.sh") },
+        ExampleEntry { name: "grep_params.sh", content: include_str!("../examples/grep_params.sh") },
+        ExampleEntry { name: "grep_regex.sh", content: include_str!("../examples/grep_regex.sh") },
     ]
 }
 

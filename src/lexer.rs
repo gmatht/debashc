@@ -237,7 +237,7 @@ pub enum Token {
     Socket,
     #[token("-b")]
     Block,
-    #[token("-c")]
+    #[token("-c", priority = 1)]
     Character,
     #[token("-g")]
     SetGid,
@@ -270,6 +270,10 @@ pub enum Token {
     #[regex(r#"\$"([^"\\]|\\.)*""#, priority = 3)]
     DollarDoubleQuotedString,
 
+    // Long options (must come before Identifier to avoid conflicts)
+    #[regex(r"--[a-zA-Z][a-zA-Z0-9_*?.-]*=.*", priority = 3)]
+    LongOption,
+    
     // Identifiers and words
     #[regex(r"[a-zA-Z_][a-zA-Z0-9_*?.-]*|[.][a-zA-Z0-9_*?.-]*", priority = 2)]
     Identifier,

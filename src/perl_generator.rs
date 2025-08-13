@@ -687,80 +687,230 @@ impl PerlGenerator {
                 }
             }
         } else if cmd.name == "grep" {
-            // Special handling for grep
+            // Special handling for grep with proper flag parsing
             if cmd.args.len() >= 1 {
-                // Find the pattern (first non-flag argument)
                 let mut pattern = None;
                 let mut file = None;
-                let mut flags = Vec::new();
+                let mut max_count = None;
+                let mut show_byte_offset = false;
+                let mut only_matching = false;
+                let mut quiet_mode = false;
+                let mut literal_mode = false;
+                let mut ignore_case = false;
                 
-                for arg in &cmd.args {
-                    if arg.starts_with('-') {
-                        flags.push(arg.as_str());
+                // Parse grep arguments to handle flags properly
+                let mut i = 0;
+                while i < cmd.args.len() {
+                    let arg = &cmd.args[i];
+                    if let Word::Literal(s) = arg {
+                        if s.starts_with('-') {
+                            // Handle flags
+                            if s == "-m" && i + 1 < cmd.args.len() {
+                                // -m flag with count
+                                if let Word::Literal(count_str) = &cmd.args[i + 1] {
+                                    max_count = count_str.parse::<usize>().ok();
+                                    i += 1; // Skip the count argument
+                                }
+                            } else if s == "-b" {
+                                show_byte_offset = true;
+                            } else if s == "-o" {
+                                only_matching = true;
+                            } else if s == "-q" {
+                                quiet_mode = true;
+                            } else if s == "-F" {
+                                literal_mode = true;
+                            } else if s == "-i" {
+                                ignore_case = true;
+                            } else if s == "-Z" {
+                                // -Z flag for null-terminated output
+                            } else if s == "-l" {
+                                // -l flag for listing filenames only
+                            } else if s == "-A" && i + 1 < cmd.args.len() {
+                                // -A flag with context count (after)
+                                if let Word::Literal(count_str) = &cmd.args[i + 1] {
+                                    // Store context count for later use
+                                    i += 1; // Skip the count argument
+                                }
+                            } else if s == "-B" && i + 1 < cmd.args.len() {
+                                // -B flag with context count (before)
+                                if let Word::Literal(count_str) = &cmd.args[i + 1] {
+                                    // Store context count for later use
+                                    i += 1; // Skip the count argument
+                                        }
+                            } else if s == "-C" && i + 1 < cmd.args.len() {
+                                // -C flag with context count (both)
+                                if let Word::Literal(count_str) = &cmd.args[i + 1] {
+                                    // Store context count for later use
+                                    i += 1; // Skip the count argument
+                                }
+                            }
+                        } else if pattern.is_none() {
+                            pattern = Some(s.clone());
+                        } else if file.is_none() {
+                            file = Some(s.clone());
+                        }
                     } else if pattern.is_none() {
-                        pattern = Some(arg);
+                        pattern = Some(self.word_to_perl(arg));
                     } else if file.is_none() {
-                        file = Some(arg);
+                        file = Some(self.word_to_perl(arg));
                     }
+                    i += 1;
                 }
                 
                 if let Some(pattern) = pattern {
-                    let file = file.map_or("STDIN", |w| w.as_str());
+                    let file = file.map_or("STDIN".to_string(), |w| w.to_string());
                     
-                    // Check for -o flag (only matching part)
-                    let only_matching = flags.iter().any(|&flag| flag == "-o");
-                    
-                    // Use the has_here_string variable set at the beginning of the function
-                    
-                                            if only_matching {
-                            if file == "STDIN" {
-                                if has_here_string {
-                                    // Use string splitting to process here-string content directly
-                                    output.push_str("my @here_lines = split(/\\n/, $here_string_content);\n");
-                                    output.push_str("foreach my $line (@here_lines) {\n");
-                                    output.push_str(&format!("    if ($line =~ /({})/g) {{\n", pattern));
-                                    output.push_str("        print \"$1\\n\";\n");
-                                    output.push_str("    }\n");
-                                    output.push_str("}\n");
+                    if quiet_mode {
+                        // Quiet mode - just check if pattern exists
+                        if &file == "STDIN" {
+                            output.push_str("my $found = 0;\n");
+                            if has_here_string {
+                                output.push_str("my @here_lines = split(/\\n/, $here_string_content);\n");
+                                output.push_str("foreach my $line (@here_lines) {\n");
+                                if literal_mode {
+                                    output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
                                 } else {
+                                    let regex_flags = if ignore_case { "i" } else { "" };
+                                    output.push_str(&format!("    if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                                }
+                                output.push_str("        $found = 1;\n");
+                                output.push_str("        last;\n");
+                                output.push_str("    }\n");
+                                output.push_str("}\n");
+                            } else {
                                 output.push_str("while (my $line = <STDIN>) {\n");
-                                output.push_str(&format!("    if ($line =~ /({})/g) {{\n", pattern));
-                                output.push_str("        print \"$1\\n\";\n");
+                                if literal_mode {
+                                    output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
+                                } else {
+                                    let regex_flags = if ignore_case { "i" } else { "" };
+                                    output.push_str(&format!("    if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                                }
+                                output.push_str("        $found = 1;\n");
+                                output.push_str("        last;\n");
                                 output.push_str("    }\n");
                                 output.push_str("}\n");
                             }
+                            output.push_str("exit($found ? 0 : 1);\n");
                         } else {
                             let fh = self.get_unique_file_handle();
-                            output.push_str(&format!("open(my {}, '<', '{}') or die \"Cannot open file: $!\\n\";\n", fh, file));
-                            output.push_str(&format!("while (my $line = <{}) {{\n", fh));
-                            output.push_str(&format!("    if ($line =~ /({})/g) {{\n", pattern));
-                            output.push_str("        print \"$1\\n\";\n");
+                            output.push_str(&format!("my $found = 0;\n"));
+                            output.push_str(&format!("if (open(my {}, '<', '{}')) {{\n", fh, file));
+                            output.push_str(&format!("    while (my $line = <{}>) {{\n", fh));
+                            if literal_mode {
+                                output.push_str(&format!("        if (index($line, \"{}\") != -1) {{\n", pattern));
+                            } else {
+                                let regex_flags = if ignore_case { "i" } else { "" };
+                                output.push_str(&format!("        if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                            }
+                            output.push_str("            $found = 1;\n");
+                            output.push_str("            last;\n");
+                            output.push_str("        }\n");
                             output.push_str("    }\n");
+                            output.push_str(&format!("    close({});\n", fh));
                             output.push_str("}\n");
-                            output.push_str(&format!("close({});\n", fh));
+                            output.push_str("exit($found ? 0 : 1);\n");
                         }
-                                            } else {
-                            if file == "STDIN" {
+                    } else {
+                        // Normal mode
+                        if only_matching {
+                            if &file == "STDIN" {
                                 if has_here_string {
-                                    // Use string splitting to process here-string content directly
                                     output.push_str("my @here_lines = split(/\\n/, $here_string_content);\n");
                                     output.push_str("foreach my $line (@here_lines) {\n");
-                                    output.push_str(&format!("    if ($line =~ /({})/g) {{\n", pattern));
+                                    if literal_mode {
+                                        output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
+                                    } else {
+                                        let regex_flags = if ignore_case { "i" } else { "" };
+                                        output.push_str(&format!("    if ($line =~ /({})/{}) {{\n", pattern, regex_flags));
+                                    }
                                     output.push_str("        print \"$1\\n\";\n");
                                     output.push_str("    }\n");
                                     output.push_str("}\n");
                                 } else {
-                                output.push_str("while (my $line = <STDIN>) {\n");
-                                output.push_str(&format!("    print($line) if $line =~ /{}/;\n", pattern));
+                                    output.push_str("while (my $line = <STDIN>) {\n");
+                                    if literal_mode {
+                                        output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
+                                    } else {
+                                        let regex_flags = if ignore_case { "i" } else { "" };
+                                        output.push_str(&format!("    if ($line =~ /({})/{}) {{\n", pattern, regex_flags));
+                                    }
+                                    output.push_str("        print \"$1\\n\";\n");
+                                    output.push_str("    }\n");
+                                    output.push_str("}\n");
+                                }
+                            } else {
+                                let fh = self.get_unique_file_handle();
+                                output.push_str(&format!("if (open(my {}, '<', '{}')) {{\n", fh, file));
+                                output.push_str(&format!("    while (my $line = <{}>) {{\n", fh));
+                                if literal_mode {
+                                    output.push_str(&format!("        if (index($line, \"{}\") != -1) {{\n", pattern));
+                                } else {
+                                    let regex_flags = if ignore_case { "i" } else { "" };
+                                    output.push_str(&format!("        if ($line =~ /({})/{}) {{\n", pattern, regex_flags));
+                                }
+                                output.push_str("            print \"$1\\n\";\n");
+                                output.push_str("        }\n");
+                                output.push_str("    }\n");
+                                output.push_str(&format!("    close({});\n", fh));
                                 output.push_str("}\n");
                             }
                         } else {
-                            let fh = self.get_unique_file_handle();
-                            output.push_str(&format!("open(my {}, '<', '{}') or die \"Cannot open file: $!\\n\";\n", fh, file));
-                            output.push_str(&format!("while (my $line = <{}) {{\n", fh));
-                            output.push_str(&format!("    print($line) if $line =~ /{}/;\n", pattern));
-                            output.push_str("}\n");
-                            output.push_str(&format!("close({});\n", fh));
+                            if &file == "STDIN" {
+                                if has_here_string {
+                                    output.push_str("my @here_lines = split(/\\n/, $here_string_content);\n");
+                                    output.push_str("foreach my $line (@here_lines) {\n");
+                                    if literal_mode {
+                                        output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
+                                    } else {
+                                        let regex_flags = if ignore_case { "i" } else { "" };
+                                        output.push_str(&format!("    if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                                    }
+                                    if show_byte_offset {
+                                        output.push_str(&format!("        my $offset = index($line, \"{}\");\n", pattern));
+                                        output.push_str("        print \"$offset:$line\";\n");
+                                    } else {
+                                        output.push_str("        print \"$line\";\n");
+                                    }
+                                    output.push_str("    }\n");
+                                    output.push_str("}\n");
+                                } else {
+                                    output.push_str("while (my $line = <STDIN>) {\n");
+                                    if literal_mode {
+                                        output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
+                                    } else {
+                                        let regex_flags = if ignore_case { "i" } else { "" };
+                                        output.push_str(&format!("    if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                                    }
+                                    if show_byte_offset {
+                                        output.push_str(&format!("        my $offset = index($line, \"{}\");\n", pattern));
+                                        output.push_str("        print \"$offset:$line\";\n");
+                                    } else {
+                                        output.push_str("        print \"$line\";\n");
+                                    }
+                                    output.push_str("    }\n");
+                                    output.push_str("}\n");
+                                }
+                            } else {
+                                let fh = self.get_unique_file_handle();
+                                output.push_str(&format!("if (open(my {}, '<', '{}')) {{\n", fh, file));
+                                output.push_str(&format!("    while (my $line = <{}>) {{\n", fh));
+                                if literal_mode {
+                                    output.push_str(&format!("        if (index($line, \"{}\") != -1) {{\n", pattern));
+                                } else {
+                                    let regex_flags = if ignore_case { "i" } else { "" };
+                                    output.push_str(&format!("        if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                                }
+                                if show_byte_offset {
+                                    output.push_str(&format!("            my $offset = index($line, \"{}\");\n", pattern));
+                                    output.push_str("            print \"$offset:$line\";\n");
+                                } else {
+                                    output.push_str("            print \"$line\";\n");
+                                }
+                                output.push_str("        }\n");
+                                output.push_str("    }\n");
+                                output.push_str(&format!("    close({});\n", fh));
+                                output.push_str("}\n");
+                            }
                         }
                     }
                 }
@@ -2157,75 +2307,122 @@ impl PerlGenerator {
                             output.push_str(&format!("$output_{} = \"$lines_{} $words_{} $chars_{}\";\n", pipeline_id, pipeline_id, pipeline_id, pipeline_id));
                         }
                     } else if cmd.name == "grep" {
-                        // Handle grep command
-                        let pattern = if let Some(arg) = cmd.args.first() {
-                            // Convert grep pattern to proper Perl regex
-                            match arg {
-                                Word::Literal(s) => {
-                                                                            // Check if the pattern is already a regex pattern (contains regex metacharacters)
-                                        // Also check for escaped backslashes (\\), which indicate regex patterns
-                                        if s.contains('\\') || s.contains('^') || s.contains('$') || s.contains('[') || s.contains(']') || s.contains('(') || s.contains(')') || s.contains('|') || s.contains('+') || s.contains('*') || s.contains('?') {
-                                            // Pattern is already a regex, but may need conversion from shell escape to Perl escape
-                                            if s.contains('\\') {
-                                                // Convert shell backslash escapes to Perl regex escapes
-                                                s.replace("\\\\", "\\").replace("\\", "")
-                                            } else {
-                                                // Pattern is already a valid Perl regex
-                                                s.clone()
-                                            }
-                                        } else {
-                                            // Convert shell glob pattern to Perl regex
-                                            self.convert_glob_to_regex(s)
+                        // Handle grep command with proper flag parsing
+                        let mut pattern = None;
+                        let mut max_count = None;
+                        let mut show_byte_offset = false;
+                        let mut suppress_filename = false;
+                        let mut show_filename = false;
+                        let mut quiet_mode = false;
+                        let mut literal_mode = false;
+                        let mut ignore_case = false;
+                        
+                        // Parse grep arguments to handle flags properly
+                        let mut i = 0;
+                        while i < cmd.args.len() {
+                            let arg = &cmd.args[i];
+                            if let Word::Literal(s) = arg {
+                                if s.starts_with('-') {
+                                    // Handle flags
+                                    if s == "-m" && i + 1 < cmd.args.len() {
+                                        // -m flag with count
+                                        if let Word::Literal(count_str) = &cmd.args[i + 1] {
+                                            max_count = count_str.parse::<usize>().ok();
+                                            i += 1; // Skip the count argument
                                         }
-                                }
-                                Word::StringInterpolation(interp) => {
-                                    // Handle string interpolation in grep patterns
-                                    if interp.parts.len() == 1 {
-                                        if let StringPart::Literal(s) = &interp.parts[0] {
-                                                                                    // Check if the pattern is already a regex pattern
-                                        // Also check for escaped backslashes (\\), which indicate regex patterns
-                                        if s.contains('\\') || s.contains('^') || s.contains('$') || s.contains('[') || s.contains(']') || s.contains('(') || s.contains(')') || s.contains('|') || s.contains('+') || s.contains('*') || s.contains('?') {
-                                            // Pattern is already a regex, but may need conversion from shell escape to Perl escape
-                                            if s.contains('\\') {
-                                                // Convert shell backslash escapes to Perl regex escapes
-                                                s.replace("\\\\", "\\").replace("\\", "")
-                                            } else {
-                                                // Pattern is already a valid Perl regex
-                                                s.clone()
-                                            }
-                                        } else {
-                                            // Convert shell glob pattern to Perl regex
-                                            self.convert_glob_to_regex(s)
+                                    } else if s == "-b" {
+                                        show_byte_offset = true;
+                                    } else if s == "-h" {
+                                        suppress_filename = true;
+                                    } else if s == "-H" {
+                                        show_filename = true;
+                                    } else if s == "-q" {
+                                        quiet_mode = true;
+                                    } else if s == "-F" {
+                                        literal_mode = true;
+                                    } else if s == "-i" {
+                                        ignore_case = true;
+                                    } else if s == "-Z" {
+                                        // -Z flag for null-terminated output
+                                    } else if s == "-l" {
+                                        // -l flag for listing filenames only
+                                    } else if s == "-A" && i + 1 < cmd.args.len() {
+                                        // -A flag with context count (after)
+                                        if let Word::Literal(count_str) = &cmd.args[i + 1] {
+                                            // Store context count for later use
+                                            i += 1; // Skip the count argument
                                         }
-                                        } else {
-                                            // For other parts, use the converted string
-                                            self.convert_string_interpolation_to_perl(interp)
+                                    } else if s == "-B" && i + 1 < cmd.args.len() {
+                                        // -B flag with context count (before)
+                                        if let Word::Literal(count_str) = &cmd.args[i + 1] {
+                                            // Store context count for later use
+                                            i += 1; // Skip the count argument
                                         }
-                                    } else {
-                                        // For complex interpolations, reconstruct the full pattern and check if it's regex
-                                        let full_pattern = self.convert_string_interpolation_to_perl(interp);
-                                        // Check if the reconstructed pattern contains regex metacharacters
-                                        if full_pattern.contains('\\') || full_pattern.contains('^') || full_pattern.contains('$') || full_pattern.contains('[') || full_pattern.contains(']') || full_pattern.contains('(') || full_pattern.contains(')') || full_pattern.contains('|') || full_pattern.contains('+') || full_pattern.contains('*') || full_pattern.contains('?') {
-                                            // Pattern is already a regex, use as-is
-                                            full_pattern
-                                        } else {
-                                            // Convert shell glob pattern to Perl regex
-                                            self.convert_glob_to_regex(&full_pattern)
+                                    } else if s == "-C" && i + 1 < cmd.args.len() {
+                                        // -C flag with context count (both)
+                                        if let Word::Literal(count_str) = &cmd.args[i + 1] {
+                                            // Store context count for later use
+                                            i += 1; // Skip the count argument
                                         }
                                     }
+                                } else if pattern.is_none() {
+                                    pattern = Some(s.clone());
                                 }
-                                _ => self.word_to_perl(arg)
+                            } else if pattern.is_none() {
+                                pattern = Some(self.word_to_perl(arg));
                             }
+                            i += 1;
+                        }
+                        
+                        let pattern = pattern.unwrap_or_else(|| "".to_string());
+                        
+                        if quiet_mode {
+                            // Quiet mode - just check if pattern exists
+                            output.push_str(&format!("my $found_{} = 0;\n", pipeline_id));
+                            output.push_str(&format!("for my $line (split(/\\n/, $output_{})) {{\n", pipeline_id));
+                            if literal_mode {
+                                output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
+                            } else {
+                                let regex_flags = if ignore_case { "i" } else { "" };
+                                output.push_str(&format!("    if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                            }
+                            output.push_str(&format!("        $found_{} = 1;\n", pipeline_id));
+                            output.push_str("        last;\n");
+                            output.push_str("    }\n");
+                            output.push_str("}\n");
+                            output.push_str(&format!("$output_{} = $found_{};\n", pipeline_id, pipeline_id));
                         } else {
-                            "".to_string()
-                        };
-                        output.push_str(&format!("my @grep_lines_{};\n", pipeline_id));
-                        output.push_str(&format!("for my $line (split(/\\n/, $output_{})) {{\n", pipeline_id));
-                        output.push_str(&format!("    if ($line =~ /{}/) {{\n", pattern));
-                        output.push_str(&format!("        push @grep_lines_{}, $line;\n", pipeline_id));
-                        output.push_str("    }\n");
-                        output.push_str("}\n");
-                        output.push_str(&format!("$output_{} = join(\"\\n\", @grep_lines_{});\n", pipeline_id, pipeline_id));
+                            // Normal mode - collect matching lines
+                            output.push_str(&format!("my @grep_lines_{};\n", pipeline_id));
+                            output.push_str(&format!("my $count_{} = 0;\n", pipeline_id));
+                            output.push_str(&format!("for my $line (split(/\\n/, $output_{})) {{\n", pipeline_id));
+                            
+                            // Check if we've reached max count
+                            if let Some(max) = max_count {
+                                output.push_str(&format!("    last if $count_{} >= {};\n", pipeline_id, max));
+                            }
+                            
+                            // Pattern matching
+                            if literal_mode {
+                                output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
+                            } else {
+                                let regex_flags = if ignore_case { "i" } else { "" };
+                                output.push_str(&format!("    if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                            }
+                            
+                            // Handle byte offset if requested
+                            if show_byte_offset {
+                                output.push_str(&format!("        my $offset = index($line, \"{}\");\n", pattern));
+                                output.push_str(&format!("        push @grep_lines_{}, \"$offset:$line\";\n", pipeline_id));
+                            } else {
+                                output.push_str(&format!("        push @grep_lines_{}, $line;\n", pipeline_id));
+                            }
+                            
+                            output.push_str(&format!("        $count_{}++;\n", pipeline_id));
+                            output.push_str("    }\n");
+                            output.push_str("}\n");
+                            output.push_str(&format!("$output_{} = join(\"\\n\", @grep_lines_{});\n", pipeline_id, pipeline_id));
+                        }
                     } else if cmd.name == "xargs" {
                         // Handle xargs command with cross-platform compatibility
                         if let Some(grep_cmd) = cmd.args.first() {
@@ -2327,6 +2524,43 @@ impl PerlGenerator {
                             output.push_str(&format!("$output_{} = join(\"\\n\", @find_files_{});\n", pipeline_id, pipeline_id));
                         } else {
                             // Fallback to system find command
+                            let cmd_str = self.command_to_string(command);
+                            let escaped_cmd = cmd_str.replace("'", "'\"'\"'");
+                            output.push_str(&format!("$output_{} = `echo \"$output_{}\" | {}`;\n", pipeline_id, pipeline_id, escaped_cmd));
+                        }
+                    } else if cmd.name == "tr" {
+                        // Handle tr command for character translation
+                        if cmd.args.len() >= 2 {
+                            let set1 = &cmd.args[0];
+                            let set2 = &cmd.args[1];
+                            
+                            if let (Word::Literal(s1), Word::Literal(s2)) = (set1, set2) {
+                                if s1 == "\\0" && s2 == "\\n" {
+                                    // Common case: tr '\0' '\n' - convert null bytes to newlines
+                                    output.push_str(&format!("$output_{} =~ tr/\\0/\\n/;\n", pipeline_id));
+                                } else if s1 == "\\n" && s2 == "\\0" {
+                                    // Convert newlines to null bytes
+                                    output.push_str(&format!("$output_{} =~ tr/\\n/\\0/;\n", pipeline_id));
+                                } else if s1 == "[:upper:]" && s2 == "[:lower:]" {
+                                    // Convert uppercase to lowercase
+                                    output.push_str(&format!("$output_{} = lc($output_{});\n", pipeline_id, pipeline_id));
+                                } else if s1 == "[:lower:]" && s2 == "[:upper:]" {
+                                    // Convert lowercase to uppercase
+                                    output.push_str(&format!("$output_{} = uc($output_{});\n", pipeline_id, pipeline_id));
+                                } else {
+                                    // Generic tr command
+                                    let set1_perl = self.word_to_perl(set1);
+                                    let set2_perl = self.word_to_perl(set2);
+                                    output.push_str(&format!("$output_{} =~ tr/{}/{}/;\n", pipeline_id, set1_perl, set2_perl));
+                                }
+                            } else {
+                                // Generic tr command with non-literal arguments
+                                let set1_perl = self.word_to_perl(set1);
+                                let set2_perl = self.word_to_perl(set2);
+                                output.push_str(&format!("$output_{} =~ tr/{}/{}/;\n", pipeline_id, set1_perl, set2_perl));
+                            }
+                        } else {
+                            // Invalid tr command - fallback to system command
                             let cmd_str = self.command_to_string(command);
                             let escaped_cmd = cmd_str.replace("'", "'\"'\"'");
                             output.push_str(&format!("$output_{} = `echo \"$output_{}\" | {}`;\n", pipeline_id, pipeline_id, escaped_cmd));

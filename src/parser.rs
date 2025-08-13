@@ -366,7 +366,7 @@ impl Parser {
         while let Some(token) = self.lexer.peek() {
             println!("DEBUG: Processing token: {:?}", token);
             match token {
-                Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString | Token::Source | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString | Token::Star | Token::Range | Token::Slash | Token::Tilde => {
+                Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString | Token::Source | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString | Token::Star | Token::Range | Token::Slash | Token::Tilde | Token::LongOption => {
                     args.push(self.parse_word()?);
                 }
                 Token::Dollar | Token::DollarBrace | Token::DollarParen | Token::DollarHashSimple | Token::DollarAtSimple | Token::DollarStarSimple
@@ -428,6 +428,38 @@ impl Parser {
                         println!("DEBUG: Found standalone minus with no next token");
                         args.push(Word::Literal("-".to_string()));
                     }
+                }
+                Token::Plus => {
+                    // Handle arguments starting with plus (like +1M in find commands)
+                    self.lexer.next(); // consume the plus
+                    
+                    // Check what follows the plus
+                    if let Some(token_after_plus) = self.lexer.peek() {
+                        match token_after_plus {
+                            Token::Number => {
+                                // Handle number after plus (e.g., +1M -> +1)
+                                let num = self.get_number_text()?;
+                                args.push(Word::Literal(format!("+{}", num)));
+                            }
+                            Token::Identifier => {
+                                // Handle identifier after plus (e.g., +1M -> +1M)
+                                let identifier = self.get_identifier_text()?;
+                                args.push(Word::Literal(format!("+{}", identifier)));
+                            }
+                            _ => {
+                                // Handle standalone plus
+                                args.push(Word::Literal("+".to_string()));
+                            }
+                        }
+                    } else {
+                        // Handle standalone plus
+                        args.push(Word::Literal("+".to_string()));
+                    }
+                }
+                Token::Escape => {
+                    // Handle escape character (like \ in find -exec commands)
+                    self.lexer.next(); // consume the escape
+                    args.push(Word::Literal("\\".to_string()));
                 }
                 // Process substitution as redirects: <(cmd) or >(cmd)
                 Token::RedirectIn => {
@@ -1181,6 +1213,10 @@ impl Parser {
                 // Treat standalone '~' as a literal (e.g., `cd ~`)
                 self.lexer.next();
                 Ok(Word::Literal("~".to_string()))
+            }
+            Some(Token::LongOption) => {
+                // Treat long options like --color=always as literals
+                Ok(Word::Literal(self.get_raw_token_text()?))
             }
             Some(Token::Dollar) => Ok(self.parse_variable_expansion()?),
             Some(Token::DollarBrace) | Some(Token::DollarParen) | Some(Token::DollarHashSimple) | Some(Token::DollarAtSimple) | Some(Token::DollarStarSimple)
