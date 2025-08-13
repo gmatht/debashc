@@ -1,6 +1,10 @@
 use crate::ast::*;
 use crate::shared_utils::SharedUtils;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+// Static counter for generating unique temp file names
+static TEMP_FILE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 // HashMap import removbed as it's not used
 
@@ -126,7 +130,7 @@ impl PerlGenerator {
                 RedirectOperator::ProcessSubstitutionInput(cmd) => {
                     // Process substitution input: <(command)
                     temp_file_counter += 1;
-                    let temp_file = format!("/tmp/process_sub_{}_{}.tmp", std::process::id(), temp_file_counter);
+                    let temp_file = format!("/tmp/process_sub_{}_{}.tmp", TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed), temp_file_counter);
                     let temp_var = format!("temp_file_ps_{}", temp_file_counter);
                     output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
                     
@@ -180,7 +184,7 @@ impl PerlGenerator {
                 RedirectOperator::ProcessSubstitutionOutput(_cmd) => {
                     // Process substitution output: >(command)
                     temp_file_counter += 1;
-                    let temp_file = format!("/tmp/process_sub_out_{}_{}.tmp", std::process::id(), temp_file_counter);
+                    let temp_file = format!("/tmp/process_sub_out_{}_{}.tmp", TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed), temp_file_counter);
                     let temp_var = format!("temp_file_out_{}", temp_file_counter);
                     output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
                     process_sub_files.push((temp_var, temp_file));
@@ -199,7 +203,7 @@ impl PerlGenerator {
                     if redir.target.starts_with("(") && redir.target.ends_with(")") {
                         // This looks like a process substitution, create a temp file
                         temp_file_counter += 1;
-                        let temp_file = format!("/tmp/process_sub_input_{}_{}.tmp", std::process::id(), temp_file_counter);
+                        let temp_file = format!("/tmp/process_sub_input_{}_{}.tmp", TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed), temp_file_counter);
                         let temp_var = format!("temp_file_input_{}", temp_file_counter);
                         output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
                         

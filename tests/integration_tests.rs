@@ -2677,3 +2677,52 @@ fn test_no_unsafe_blocks_in_codebase() {
     // Log success message
     println!("✓ No unsafe blocks or unsafe function calls found in the codebase");
 }
+
+#[test]
+fn test_no_std_process_id_usage() {
+    // This test ensures that std::process::id is not used anywhere in the codebase
+    // as it can cause issues in certain environments (e.g., WASM)
+    
+    let mut files_with_process_id = Vec::new();
+    
+    // Check src directory for std::process::id usage
+    let src_dir = "src";
+    if let Ok(entries) = fs::read_dir(src_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    if content.contains("std::process::id") {
+                        files_with_process_id.push((path.clone(), "std::process::id".to_string()));
+                    }
+                }
+            }
+        }
+    }
+    
+    // Check examples directory for any Rust files
+    let examples_dir = "examples";
+    if let Ok(entries) = fs::read_dir(examples_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    if content.contains("std::process::id") {
+                        files_with_process_id.push((path.clone(), "std::process::id".to_string()));
+                    }
+                }
+            }
+        }
+    }
+    
+    // Assert that no std::process::id usage was found
+    assert!(
+        files_with_process_id.is_empty(),
+        "Found std::process::id usage in the following files: {:?}. \
+         The codebase should not use std::process::id as it can cause issues in certain environments.",
+        files_with_process_id
+    );
+    
+    // Log success message
+    println!("✓ No std::process::id usage found in the codebase");
+}
