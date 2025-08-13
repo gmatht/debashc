@@ -4300,8 +4300,82 @@ impl PerlGenerator {
                 .map(|combo| format!("\"{}\"", combo.join("")))
                 .collect();
             
-            // Join with spaces between combinations
-            format!("{} . \"\\n\"", combination_strings.join(" . \" \" . "))
+            // Check if all combinations are simple strings (no variables, interpolation, etc.)
+            let all_simple = all_combinations.iter().all(|combo| {
+                combo.iter().all(|item| {
+                    // Check if the item is just alphanumeric characters and common symbols
+                    item.chars().all(|c| c.is_alphanumeric() || c.is_ascii_punctuation())
+                })
+            });
+            
+            // Process remaining arguments (non-brace expansions)
+            let mut remaining_parts = Vec::new();
+            for (i, arg) in args.iter().enumerate() {
+                if !brace_expansions.contains(&i) {
+                    match arg {
+                        Word::Literal(s) => {
+                            if s.contains('\r') || s.contains('\x0b') {
+                                let processed = self.handle_control_char_literal(s);
+                                remaining_parts.push(format!("\"{}\"", processed));
+                            } else {
+                                remaining_parts.push(format!("\"{}\"", self.escape_perl_string_without_quotes(s)));
+                            }
+                        }
+                        Word::Variable(var) => {
+                            if var == "#" {
+                                remaining_parts.push("scalar(@ARGV)".to_string());
+                            } else if var == "@" {
+                                remaining_parts.push("join(\" \", @ARGV)".to_string());
+                            } else if var.starts_with('#') && var.ends_with("[@]") {
+                                let array_name = &var[1..var.len()-3];
+                                remaining_parts.push(format!("scalar(@{})", array_name));
+                            } else if var.starts_with('#') && var.ends_with("[*]") {
+                                let array_name = &var[1..var.len()-3];
+                                remaining_parts.push(format!("scalar(@{})", array_name));
+                            } else if var.starts_with('!') && var.ends_with("[@]") {
+                                let array_name = &var[1..var.len()-3];
+                                remaining_parts.push(format!("join(\" \", keys(%{}))", array_name));
+                            } else if var.starts_with('!') && var.ends_with("[*]") {
+                                let array_name = &var[1..var.len()-3];
+                                remaining_parts.push(format!("join(\" \", keys(%{}))", array_name));
+                            } else {
+                                remaining_parts.push(format!("${}", var));
+                            }
+                        }
+                        Word::StringInterpolation(interp) => {
+                            remaining_parts.push(self.convert_string_interpolation_to_perl(interp));
+                        }
+                        Word::BraceExpansion(expansion) => {
+                            // This shouldn't happen since we already processed all brace expansions
+                            let expanded = self.expand_brace_expansion_to_strings(expansion);
+                            remaining_parts.push(format!("\"{}\"", expanded.join(" ")));
+                        }
+                        _ => {
+                            remaining_parts.push(self.word_to_perl(arg));
+                        }
+                    }
+                }
+            }
+            
+            // Combine brace expansion results with remaining arguments
+            let brace_part = if all_simple {
+                // All simple strings - just join them with spaces in one big string
+                let all_values: Vec<String> = all_combinations.iter()
+                    .map(|combo| combo.join(""))
+                    .collect();
+                format!("\"{}\\n\"", all_values.join(" "))
+            } else {
+                // Use join for cleaner output when we have complex values
+                format!("join(\" \", {})", combination_strings.join(", "))
+            };
+            
+            if remaining_parts.is_empty() {
+                // Only brace expansions, newline already included in brace_part
+                brace_part
+            } else {
+                // Combine brace expansions with remaining arguments
+                format!("{} . \" \" . {} . \"\\n\"", brace_part, remaining_parts.join(" . \" \" . "))
+            }
         } else {
             // Single brace expansion or no brace expansions - handle normally
             let mut parts = Vec::new();
