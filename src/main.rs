@@ -156,7 +156,7 @@ fn main() {
             }
             "-i" => {
                 if i + 1 < args.len() {
-                    input_file = Some(args[i + 1].clone());
+                    input_file = Some(args[i + 1].to_string());
                     i += 1; // Skip the next argument since it's the filename
                 } else {
                     println!("Error: -i requires a filename");
@@ -165,7 +165,7 @@ fn main() {
             }
             "-o" => {
                 if i + 1 < args.len() {
-                    output_file = Some(args[i + 1].clone());
+                    output_file = Some(args[i + 1].to_string());
                     i += 1; // Skip the next argument since it's the filename
                 } else {
                     println!("Error: -o requires a filename");

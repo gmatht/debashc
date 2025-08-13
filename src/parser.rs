@@ -327,7 +327,7 @@ impl Parser {
                                 .get_span()
                                 .map(|(s, _)| self.lexer.offset_to_line_col(s))
                                 .unwrap_or((1, 1));
-                            return Err(ParserError::UnexpectedToken { token: token.clone(), line, col });
+                            return Err(ParserError::UnexpectedToken { token: token.to_owned(), line, col });
                         }
                     }
                 }
@@ -379,7 +379,6 @@ impl Parser {
                 }
                 Token::Minus => {
                     // Handle arguments starting with minus (like -la, -v, etc.)
-                    let token_clone = token.clone();
                     println!("DEBUG: Processing Minus token, about to consume it");
                     self.lexer.next(); // consume the minus
                     println!("DEBUG: Consumed Minus token, next token: {:?}", self.lexer.peek());
@@ -420,7 +419,7 @@ impl Parser {
                                     .map(|(s, _)| self.lexer.offset_to_line_col(s))
                                     .unwrap_or((1, 1));
                                 println!("DEBUG: Unexpected token after minus: {:?}", token_after_minus);
-                                return Err(ParserError::UnexpectedToken { token: token_clone, line, col });
+                                return Err(ParserError::UnexpectedToken { token: Token::Minus, line, col });
                             }
                         }
                     } else {
@@ -1679,7 +1678,7 @@ impl Parser {
                                             format: None,
                                         }));
                                     } else {
-                                        items.push(BraceItem::Literal(current_item.clone()));
+                                        items.push(BraceItem::Literal(current_item.to_string()));
                                     }
                                 } else {
                                     items.push(BraceItem::Literal(current_item.clone()));
@@ -1735,12 +1734,12 @@ impl Parser {
                                         step: Some(parts[2].to_string()),
                                         format: None,
                                     }));
-                                } else {
-                                    items.push(BraceItem::Literal(current_item.clone()));
-                                }
-                            } else {
-                                items.push(BraceItem::Literal(current_item.clone()));
-                            }
+                                                                        } else {
+                                            items.push(BraceItem::Literal(current_item.to_string()));
+                                        }
+                                    } else {
+                                        items.push(BraceItem::Literal(current_item.to_string()));
+                                    }
                             current_item.clear();
                         }
                         self.lexer.next();
@@ -1749,7 +1748,7 @@ impl Parser {
                         // This is a range separator (e.g., 1..5 or 00..04..2)
                         if !current_item.is_empty() {
                             // This is the start of the range
-                            let start_val = current_item.clone();
+                            let start_val = current_item.to_string();
                             current_item.clear();
                             
                             // Consume the range token
@@ -1858,16 +1857,16 @@ impl Parser {
                         // Don't include the final closing parentheses in the expression
                     }
                     Some(Token::Number) => {
-                        tokens.push(ArithmeticToken::Number(text.clone()));
+                        tokens.push(ArithmeticToken::Number(text.to_string()));
                         inner_expression.push_str(&text);
                     }
                     Some(Token::Identifier) => {
-                        tokens.push(ArithmeticToken::Variable(text.clone()));
+                        tokens.push(ArithmeticToken::Variable(text.to_string()));
                         inner_expression.push_str(&text);
                     }
                     Some(Token::Plus) | Some(Token::Minus) | Some(Token::Star) | Some(Token::Slash) 
                     | Some(Token::Percent) | Some(Token::Caret) => {
-                        tokens.push(ArithmeticToken::Operator(text.clone()));
+                        tokens.push(ArithmeticToken::Operator(text.to_string()));
                         inner_expression.push_str(&text);
                     }
                     _ => {
@@ -1919,7 +1918,7 @@ impl Parser {
                 
                 // Flush current literal if any
                 if !current_literal.is_empty() {
-                    parts.push(StringPart::Literal(current_literal.clone()));
+                    parts.push(StringPart::Literal(current_literal.to_string()));
                     current_literal.clear();
                 }
                 
@@ -2733,7 +2732,7 @@ impl Parser {
     }
 
     fn get_current_shopt_state(&self) -> TestModifiers {
-        self.shopt_state.clone()
+        self.shopt_state.to_owned()
     }
 
 

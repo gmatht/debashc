@@ -141,7 +141,7 @@ impl PythonGenerator {
                     let args_str = python_args.join(" + ");
                     if args_str.contains('$') {
                         // Convert shell variables to Python f-string variables
-                        let mut converted_args = args_str.clone();
+                        let mut converted_args = args_str.to_string();
                         converted_args = converted_args.replace("$i", "{i}");
                         converted_args = converted_args.replace("$1", "{sys.argv[1] if len(sys.argv) > 1 else ''}");
                         converted_args = converted_args.replace("$2", "{sys.argv[2] if len(sys.argv) > 2 else ''}");
@@ -1044,7 +1044,7 @@ impl PythonGenerator {
     
     fn brace_item_to_string(&self, item: &BraceItem) -> String {
         match item {
-            BraceItem::Literal(s) => s.clone(),
+                                    BraceItem::Literal(s) => s.to_string(),
             BraceItem::Range(range) => format!("{}..{}", range.start, range.end),
             BraceItem::Sequence(seq) => seq.join(","),
         }

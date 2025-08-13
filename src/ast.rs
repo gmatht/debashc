@@ -270,7 +270,7 @@ impl Word {
     /// Get a string representation of the word, suitable for display
     pub fn to_string(&self) -> String {
         match self {
-            Word::Literal(s) => s.clone(),
+            Word::Literal(s) => s.to_string(),
             Word::Variable(var) => format!("${}", var),
             Word::ParameterExpansion(pe) => {
                 match &pe.operator {
@@ -293,7 +293,7 @@ impl Word {
             Word::MapAccess(map_name, key) => format!("{}[{}]", map_name, key),
             Word::MapKeys(map_name) => format!("!{}[@]", map_name),
             Word::MapLength(map_name) => format!("#{}[@]", map_name),
-            Word::Arithmetic(expr) => expr.expression.clone(),
+            Word::Arithmetic(expr) => expr.expression.to_string(),
             Word::BraceExpansion(expansion) => {
                 let mut result = String::new();
                 if let Some(ref prefix) = expansion.prefix {

@@ -409,15 +409,15 @@ impl<T: SimpleCommandHandler> SimpleCommandHandler for T {
                     } else if s == "--include" && i + 1 < cmd.args.len() {
                         // --include flag with pattern
                         if let Word::Literal(pattern_str) = &cmd.args[i + 1] {
-                            include_pattern = Some(pattern_str.clone());
+                            include_pattern = Some(pattern_str.to_string());
                             i += 1; // Skip the pattern argument
                         }
                     }
                 } else if pattern.is_none() {
-                    pattern = Some(s.clone());
+                                            pattern = Some(s.to_string());
                 } else if recursive && search_path == "." {
                     // Second non-flag argument is the search path for recursive grep
-                    search_path = s.clone();
+                                            search_path = s.to_string();
                 }
             } else if pattern.is_none() {
                 pattern = Some(self.word_to_perl(arg));
@@ -683,7 +683,7 @@ impl<T: SimpleCommandHandler> TestWordConverter for T {
                                 format!("{{{}}}", range.start)
                             }
                         }
-                        BraceItem::Literal(s) => s.clone(),
+                        BraceItem::Literal(s) => s.to_string(),
                         BraceItem::Sequence(seq) => {
                             // Expand sequence like {a,b,c} to "a b c"
                             seq.join(" ")
@@ -693,7 +693,7 @@ impl<T: SimpleCommandHandler> TestWordConverter for T {
                     // Multiple items - expand each one and join
                     let parts: Vec<String> = expansion.items.iter().map(|item| {
                         match item {
-                            BraceItem::Literal(s) => s.clone(),
+                            BraceItem::Literal(s) => s.to_string(),
                             BraceItem::Range(range) => {
                                 if let (Ok(start), Ok(end)) = (range.start.parse::<i64>(), range.end.parse::<i64>()) {
                                     let step = range.step.as_ref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);

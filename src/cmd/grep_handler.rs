@@ -101,11 +101,11 @@ impl GrepHandler {
                         _ => {} // Ignore unknown flags
                     }
                 } else if options.pattern.is_none() {
-                    options.pattern = Some(s.clone());
+                    options.pattern = Some(s.to_string());
                 } else if options.file.is_none() {
-                    options.file = Some(s.clone());
+                    options.file = Some(s.to_string());
                 } else if options.recursive && options.search_path == "." {
-                    options.search_path = s.clone();
+                    options.search_path = s.to_string();
                 }
             } else if options.pattern.is_none() {
                 options.pattern = Some(word_to_perl(arg));
