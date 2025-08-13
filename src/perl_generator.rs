@@ -47,6 +47,81 @@ impl PerlGenerator {
         format!("$dh_{}", self.file_handle_counter)
     }
 
+    fn extract_array_key<'a>(&self, var: &'a str) -> Option<(&'a str, &'a str)> {
+        if var.contains('[') && var.ends_with(']') {
+            var.find('[').map(|bracket_start| {
+                let array_name = &var[..bracket_start];
+                let key = &var[bracket_start + 1..var.len() - 1];
+                (array_name, key)
+            })
+        } else {
+            None
+        }
+    }
+
+    fn extract_array_elements<'a>(&self, value: &'a Word) -> Option<Vec<&'a str>> {
+        match value {
+            Word::Array(_, elements) => Some(elements.iter().map(|s| s.as_str()).collect()),
+            Word::Literal(literal) if literal.starts_with('(') && literal.ends_with(')') => {
+                let content = &literal[1..literal.len()-1];
+                Some(content.split_whitespace().collect())
+            }
+            _ => None
+        }
+    }
+
+    fn generate_command_string_for_system(&mut self, cmd: &Command) -> String {
+        match cmd {
+            Command::Simple(simple_cmd) => {
+                let args = simple_cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join(" ");
+                format!("{} {}", simple_cmd.name, args)
+            }
+            Command::Subshell(subshell_cmd) => {
+                match &**subshell_cmd {
+                    Command::Simple(simple_cmd) => {
+                        let args = simple_cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join(" ");
+                        format!("{} {}", simple_cmd.name, args)
+                    }
+                    Command::Pipeline(pipeline) => {
+                        pipeline.commands.iter()
+                            .filter_map(|cmd| {
+                                if let Command::Simple(simple_cmd) = cmd {
+                                    let args = simple_cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join(" ");
+                                    Some(format!("{} {}", simple_cmd.name, args))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" | ")
+                    }
+                    _ => self.generate_command(&**subshell_cmd),
+                }
+            }
+            _ => self.generate_command(cmd),
+        }
+    }
+
+    fn extract_simple_pattern(&mut self, word: &Word) -> String {
+        match word {
+            Word::Literal(s) => s.clone(),
+            Word::StringInterpolation(interp) => {
+                if interp.parts.len() == 1 {
+                    if let StringPart::Literal(s) = &interp.parts[0] {
+                        s.clone()
+                    } else {
+                        self.word_to_perl(word)
+                    }
+                } else {
+                    self.word_to_perl(word)
+                }
+            }
+            _ => self.word_to_perl(word)
+        }
+    }
+
+
+
     pub fn generate(&mut self, commands: &[Command]) -> String {
         // First pass: scan all commands to determine if File::Find is needed
         self.scan_for_file_find_usage(commands);
@@ -135,43 +210,7 @@ impl PerlGenerator {
                     output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
                     
                     // Generate the command for system call
-                    let cmd_str = match &**cmd {
-                        Command::Simple(simple_cmd) => {
-                            let args = simple_cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join(" ");
-                            format!("{} {}", simple_cmd.name, args)
-                        }
-                        Command::Subshell(subshell_cmd) => {
-                            // For subshells in process substitution, we need to execute the inner command
-                            match &**subshell_cmd {
-                                Command::Simple(simple_cmd) => {
-                                    let args = simple_cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join(" ");
-                                    format!("{} {}", simple_cmd.name, args)
-                                }
-                                Command::Pipeline(pipeline) => {
-                                    // Handle pipeline in subshell
-                                    let mut cmd_parts = Vec::new();
-                                    for cmd in pipeline.commands.iter() {
-                                        if let Command::Simple(simple_cmd) = cmd {
-                                            let args = simple_cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join(" ");
-                                            cmd_parts.push(format!("{} {}", simple_cmd.name, args));
-                                        }
-                                    }
-                                    cmd_parts.join(" | ")
-                                }
-                                _ => {
-                                    // For other command types, generate the command without the subshell wrapper
-                                    match &**subshell_cmd {
-                                        Command::Simple(simple_cmd) => {
-                                            let args = simple_cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join(" ");
-                                            format!("{} {}", simple_cmd.name, args)
-                                        }
-                                        _ => self.generate_command(&**subshell_cmd),
-                                    }
-                                }
-                            }
-                        }
-                        _ => self.generate_command(&**cmd),
-                    };
+                    let cmd_str = self.generate_command_string_for_system(&**cmd);
                     
                     // Clean up the command string for system call and properly escape it
                     let _clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
@@ -241,55 +280,35 @@ impl PerlGenerator {
         } else if cmd.name == "true" && !cmd.env_vars.is_empty() && cmd.args.is_empty() {
             // Assignment-only shell locals: e.g., a=1
             for (var, value) in &cmd.env_vars {
-                if let Word::Array(_, elements) = value {
-                    // Handle array assignment: arr=(one two three) -> @arr = ("one", "two", "three")
+                if let Some(elements) = self.extract_array_elements(value) {
                     let elements_perl: Vec<String> = elements.iter()
                         .map(|s| self.perl_string_literal(s))
                         .collect();
-                    if self.subshell_depth > 0 || !self.declared_locals.contains(var) {
-                        output.push_str(&format!("my @{} = ({});\n", var, elements_perl.join(", ")));
+                    let declaration = if self.subshell_depth > 0 || !self.declared_locals.contains(var) {
+                        format!("my @{} = ({});", var, elements_perl.join(", "))
                     } else {
-                        output.push_str(&format!("@{} = ({});\n", var, elements_perl.join(", ")));
-                    }
+                        format!("@{} = ({});", var, elements_perl.join(", "))
+                    };
+                    output.push_str(&format!("{}\n", declaration));
                     if self.subshell_depth == 0 {
                         self.declared_locals.insert(var.clone());
                     }
                     continue; // Skip the regular assignment below
-                } else if let Word::Literal(literal) = value {
-                    if literal.starts_with("(") && literal.ends_with(")") {
-                        // Handle array assignment: arr=(one two three) -> @arr = ("one", "two", "three")
-                        let content = &literal[1..literal.len()-1];
-                        let elements: Vec<String> = content.split_whitespace()
-                            .map(|s| self.perl_string_literal(s))
-                            .collect();
-                        if self.subshell_depth > 0 || !self.declared_locals.contains(var) {
-                            output.push_str(&format!("my @{} = ({});\n", var, elements.join(", ")));
-                        } else {
-                            output.push_str(&format!("@{} = ({});\n", var, elements.join(", ")));
-                        }
-                        if self.subshell_depth == 0 {
-                            self.declared_locals.insert(var.clone());
-                        }
-                        continue; // Skip the regular assignment below
-                    }
                 }
                 
                 // Check if this is an array assignment like map[foo]=bar
-                if var.contains('[') && var.ends_with(']') {
-                    if let Some(bracket_start) = var.find('[') {
-                        let array_name = &var[..bracket_start];
-                        let key = &var[bracket_start + 1..var.len() - 1];
-                        let val = match value {
-                            Word::Literal(literal) => self.perl_string_literal(literal),
-                            _ => self.word_to_perl(value),
-                        };
-                        if self.subshell_depth > 0 || !self.declared_locals.contains(array_name) {
-                            output.push_str(&format!("my %{} = ();\n", array_name));
-                            self.declared_locals.insert(array_name.to_string());
-                        }
-                        output.push_str(&format!("${}{{{}}} = {};\n", array_name, key, val));
-                        continue; // Skip the regular assignment below
+                if let Some((array_name, key)) = self.extract_array_key(var) {
+                    let array_name = array_name.to_string();
+                    let val = match value {
+                        Word::Literal(literal) => self.perl_string_literal(literal),
+                        _ => self.word_to_perl(value),
+                    };
+                    if self.subshell_depth > 0 || !self.declared_locals.contains(&array_name) {
+                        output.push_str(&format!("my %{} = ();\n", array_name));
+                        self.declared_locals.insert(array_name.clone());
                     }
+                    output.push_str(&format!("${}{{{}}} = {};\n", array_name, key, val));
+                    continue; // Skip the regular assignment below
                 }
                 
                 let val = match value {
@@ -1776,31 +1795,12 @@ impl PerlGenerator {
         let mut output = String::new();
         
         // Handle shopt command for shell options
-        if cmd.enable {
-            match cmd.option.as_str() {
-                "extglob" => {
-                    output.push_str("# extglob option enabled\n");
-                }
-                "nocasematch" => {
-                    output.push_str("# nocasematch option enabled\n");
-                }
-                _ => {
-                    output.push_str(&format!("# shopt -s {} not implemented\n", cmd.option));
-                }
-            }
-        } else {
-            match cmd.option.as_str() {
-                "extglob" => {
-                    output.push_str("# extglob option disabled\n");
-                }
-                "nocasematch" => {
-                    output.push_str("# nocasematch option disabled\n");
-                }
-                _ => {
-                    output.push_str(&format!("# shopt -u {} not implemented\n", cmd.option));
-                }
-            }
-        }
+        let action = if cmd.enable { "enabled" } else { "disabled" };
+        let comment = match cmd.option.as_str() {
+            "extglob" | "nocasematch" => format!("# {} option {}", cmd.option, action),
+            _ => format!("# shopt -{} {} not implemented", if cmd.enable { "s" } else { "u" }, cmd.option),
+        };
+        output.push_str(&format!("{}\n", comment));
         
         // shopt commands always succeed (return true)
         output
@@ -1830,9 +1830,7 @@ impl PerlGenerator {
                             "-u" => output.push_str("use strict;\n"),
                             "-o" => {
                                 // Handle pipefail and other options
-                                if let Some(_next_arg) = cmd.args.iter().skip(1).find(|a| {
-                                    if let Word::Literal(s) = a { s == "pipefail" } else { false }
-                                }) {
+                                if cmd.args.iter().skip(1).any(|a| matches!(a, Word::Literal(s) if s == "pipefail")) {
                                     output.push_str("# set -o pipefail\n");
                                 }
                             }
@@ -1845,13 +1843,8 @@ impl PerlGenerator {
                 // Convert export to Perl environment variable assignment
                 for arg in &cmd.args {
                     if let Word::Literal(var) = arg {
-                        if var.contains('=') {
-                            let parts: Vec<&str> = var.splitn(2, '=').collect();
-                            if parts.len() == 2 {
-                                let var_name = parts[0];
-                                let var_value = self.perl_string_literal(parts[1]);
-                                output.push_str(&format!("$ENV{{{}}} = {};\n", var_name, var_value));
-                            }
+                        if let Some((var_name, var_value)) = var.split_once('=') {
+                            output.push_str(&format!("$ENV{{{}}} = {};\n", var_name, self.perl_string_literal(var_value)));
                         } else {
                             output.push_str(&format!("# export {}\n", var));
                         }
@@ -1862,14 +1855,9 @@ impl PerlGenerator {
                 // Convert local to Perl my declaration
                 for arg in &cmd.args {
                     if let Word::Literal(var) = arg {
-                        if var.contains('=') {
-                            let parts: Vec<&str> = var.splitn(2, '=').collect();
-                            if parts.len() == 2 {
-                                let var_name = parts[0];
-                                let var_value = self.perl_string_literal(parts[1]);
-                                output.push_str(&format!("my ${} = {};\n", var_name, var_value));
-                                self.declared_locals.insert(var_name.to_string());
-                            }
+                        if let Some((var_name, var_value)) = var.split_once('=') {
+                            output.push_str(&format!("my ${} = {};\n", var_name, self.perl_string_literal(var_value)));
+                            self.declared_locals.insert(var_name.to_string());
                         } else {
                             output.push_str(&format!("my ${};\n", var));
                             self.declared_locals.insert(var.to_string());
@@ -3065,21 +3053,7 @@ impl PerlGenerator {
                             if grep_cmd.to_string() == "grep" {
                                 // Handle xargs grep -l pattern
                                 let pattern = if cmd.args.len() > 2 {
-                                    match &cmd.args[2] {
-                                        Word::Literal(s) => s.clone(),
-                                        Word::StringInterpolation(interp) => {
-                                            if interp.parts.len() == 1 {
-                                                if let StringPart::Literal(s) = &interp.parts[0] {
-                                                    s.clone()
-                                                } else {
-                                                    self.word_to_perl(&cmd.args[2])
-                                                }
-                                            } else {
-                                                self.word_to_perl(&cmd.args[2])
-                                            }
-                                        }
-                                        _ => self.word_to_perl(&cmd.args[2])
-                                    }
+                                    self.extract_simple_pattern(&cmd.args[2])
                                 } else {
                                     "".to_string()
                                 };
