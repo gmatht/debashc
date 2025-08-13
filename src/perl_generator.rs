@@ -47,6 +47,52 @@ impl PerlGenerator {
         format!("$dh_{}", self.file_handle_counter)
     }
 
+    /// Helper method to efficiently build strings with pre-allocated capacity
+    fn build_string_with_capacity(&self, estimated_size: usize) -> String {
+        String::with_capacity(estimated_size)
+    }
+
+    /// Helper method to efficiently join strings with a separator
+    fn join_strings(&self, strings: &[String], separator: &str) -> String {
+        if strings.is_empty() {
+            return String::new();
+        }
+        if strings.len() == 1 {
+            return strings[0].to_string();
+        }
+        
+        let total_length: usize = strings.iter().map(|s| s.len()).sum::<usize>() + separator.len() * (strings.len() - 1);
+        let mut result = String::with_capacity(total_length);
+        
+        for (i, s) in strings.iter().enumerate() {
+            if i > 0 {
+                result.push_str(separator);
+            }
+            result.push_str(s);
+        }
+        
+        result
+    }
+
+    /// Optimized method to build strings from multiple parts
+    fn build_string_from_parts(&self, parts: &[&str]) -> String {
+        if parts.is_empty() {
+            return String::new();
+        }
+        if parts.len() == 1 {
+            return parts[0].to_string();
+        }
+        
+        let total_length: usize = parts.iter().map(|s| s.len()).sum::<usize>();
+        let mut result = String::with_capacity(total_length);
+        
+        for part in parts {
+            result.push_str(part);
+        }
+        
+        result
+    }
+
     fn extract_array_key<'a>(&self, var: &'a str) -> Option<(&'a str, &'a str)> {
         if var.contains('[') && var.ends_with(']') {
             var.find('[').map(|bracket_start| {
@@ -73,27 +119,33 @@ impl PerlGenerator {
     fn generate_command_string_for_system(&mut self, cmd: &Command) -> String {
         match cmd {
             Command::Simple(simple_cmd) => {
-                let args = simple_cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join(" ");
-                format!("{} {}", simple_cmd.name, args)
+                let args: Vec<String> = simple_cmd.args.iter()
+                    .map(|arg| self.word_to_perl(arg))
+                    .collect();
+                format!("{} {}", simple_cmd.name, args.join(" "))
             }
             Command::Subshell(subshell_cmd) => {
                 match &**subshell_cmd {
                     Command::Simple(simple_cmd) => {
-                        let args = simple_cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join(" ");
-                        format!("{} {}", simple_cmd.name, args)
+                        let args: Vec<String> = simple_cmd.args.iter()
+                            .map(|arg| self.word_to_perl(arg))
+                            .collect();
+                        format!("{} {}", simple_cmd.name, args.join(" "))
                     }
                     Command::Pipeline(pipeline) => {
-                        pipeline.commands.iter()
+                        let commands: Vec<String> = pipeline.commands.iter()
                             .filter_map(|cmd| {
                                 if let Command::Simple(simple_cmd) = cmd {
-                                    let args = simple_cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join(" ");
-                                    Some(format!("{} {}", simple_cmd.name, args))
+                                    let args: Vec<String> = simple_cmd.args.iter()
+                                        .map(|arg| self.word_to_perl(arg))
+                                        .collect();
+                                    Some(format!("{} {}", simple_cmd.name, args.join(" ")))
                                 } else {
                                     None
                                 }
                             })
-                            .collect::<Vec<_>>()
-                            .join(" | ")
+                            .collect();
+                        commands.join(" | ")
                     }
                     _ => self.generate_command(&**subshell_cmd),
                 }
@@ -104,11 +156,11 @@ impl PerlGenerator {
 
     fn extract_simple_pattern(&mut self, word: &Word) -> String {
         match word {
-            Word::Literal(s) => s.clone(),
+            Word::Literal(s) => s.to_string(),
             Word::StringInterpolation(interp) => {
                 if interp.parts.len() == 1 {
                     if let StringPart::Literal(s) = &interp.parts[0] {
-                        s.clone()
+                        s.to_string()
                     } else {
                         self.word_to_perl(word)
                     }
@@ -125,10 +177,10 @@ impl PerlGenerator {
             self.expand_single_brace_item(&expansion.items[0])
         } else {
             // Multiple items - expand each and join
-            expansion.items.iter()
+            let expanded_items: Vec<String> = expansion.items.iter()
                 .map(|item| self.expand_single_brace_item(item))
-                .collect::<Vec<_>>()
-                .join(" ")
+                .collect();
+            self.join_strings(&expanded_items, " ")
         }
     }
 
@@ -165,10 +217,15 @@ impl PerlGenerator {
                 let start = start_char as u8;
                 let end = end_char as u8;
                 if start <= end {
-                    (start..=end)
-                        .map(|c| char::from(c).to_string())
-                        .collect::<Vec<_>>()
-                        .join(" ")
+                    // Pre-allocate capacity for better performance
+                    let mut result = String::with_capacity(((end - start + 1) * 2) as usize); // Estimate 2 chars per item
+                    for (i, c) in (start..=end).enumerate() {
+                        if i > 0 {
+                            result.push(' ');
+                        }
+                        result.push(char::from(c));
+                    }
+                    result
                 } else {
                     start_str.to_string()
                 }
@@ -182,26 +239,31 @@ impl PerlGenerator {
 
     fn expand_range_with_step(&self, start_str: &str, end_str: &str, step_str: &str) -> String {
         if let (Ok(start), Ok(end), Ok(step)) = (start_str.parse::<i64>(), end_str.parse::<i64>(), step_str.parse::<i64>()) {
-            let values: Vec<String> = (start..=end)
-                .step_by(step as usize)
-                .map(|i| {
-                    if start_str.starts_with('0') && start_str.len() > 1 {
-                        format!("{:0width$}", i, width = start_str.len())
-                    } else {
-                        i.to_string()
-                    }
-                })
-                .collect();
-            values.join(" ")
+            let count = ((end - start) / step + 1) as usize;
+            let mut result = String::with_capacity(count * start_str.len());
+            
+            for (i, val) in (start..=end).step_by(step as usize).enumerate() {
+                if i > 0 {
+                    result.push(' ');
+                }
+                if start_str.starts_with('0') && start_str.len() > 1 {
+                    result.push_str(&format!("{:0width$}", val, width = start_str.len()));
+                } else {
+                    result.push_str(&val.to_string());
+                }
+            }
+            result
         } else {
             start_str.to_string()
         }
     }
 
     fn expand_comma_sequence(&self, s: &str) -> String {
-        let parts: Vec<&str> = s.split(',').collect();
-        if parts.len() > 1 {
-            parts.join(" ")
+        if s.contains(',') {
+            s.split(',')
+                .map(|part| part.trim())
+                .collect::<Vec<_>>()
+                .join(" ")
         } else {
             s.to_string()
         }
@@ -240,24 +302,33 @@ impl PerlGenerator {
     }
 
     fn expand_numeric_range(&self, start: i64, end: i64, step: i64, start_str: &str) -> Vec<String> {
-        let values: Vec<String> = if step > 0 {
-            (start..=end).step_by(step as usize).map(|i| {
-                if start_str.starts_with('0') && start_str.len() > 1 {
-                    format!("{:0width$}", i, width = start_str.len())
-                } else {
-                    i.to_string()
-                }
-            }).collect()
+        let count = if step > 0 {
+            ((end - start) / step + 1) as usize
         } else {
-            (end..=start).rev().step_by((-step) as usize).map(|i| {
-                if start_str.starts_with('0') && start_str.len() > 1 {
-                    format!("{:0width$}", i, width = start_str.len())
-                } else {
-                    i.to_string()
-                }
-            }).collect()
+            ((start - end) / (-step) + 1) as usize
         };
-        values
+        
+        let mut result = Vec::with_capacity(count);
+        
+        if step > 0 {
+            for i in (start..=end).step_by(step as usize) {
+                if start_str.starts_with('0') && start_str.len() > 1 {
+                    result.push(format!("{:0width$}", i, width = start_str.len()));
+                } else {
+                    result.push(i.to_string());
+                }
+            }
+        } else {
+            for i in (end..=start).rev().step_by((-step) as usize) {
+                if start_str.starts_with('0') && start_str.len() > 1 {
+                    result.push(format!("{:0width$}", i, width = start_str.len()));
+                } else {
+                    result.push(i.to_string());
+                }
+            }
+        }
+        
+        result
     }
 
 
@@ -266,7 +337,10 @@ impl PerlGenerator {
         // First pass: scan all commands to determine if File::Find is needed
         self.scan_for_file_find_usage(commands);
         
-        let mut output = String::new();
+        // Estimate output size: header + commands + some buffer
+        let estimated_size = 200 + commands.len() * 100; // Rough estimate
+        let mut output = String::with_capacity(estimated_size);
+        
         output.push_str("#!/usr/bin/env perl\n");
         output.push_str("use strict;\n");
         output.push_str("use warnings;\n");
@@ -4272,88 +4346,7 @@ impl PerlGenerator {
                             self.expand_brace_range(range)
                         }
                         BraceItem::Literal(s) => {
-                            // Handle literal strings that might contain ranges like "a..c" or "00..04..2"
-                            if s.contains("..") {
-                                let parts: Vec<&str> = s.split("..").collect();
-                                if parts.len() == 2 {
-                                    // Simple range like "a..c"
-                                    if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), parts[1].chars().next()) {
-                                        if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
-                                            let start = start_char as u8;
-                                            let end = end_char as u8;
-                                            if start <= end {
-                                                let values: Vec<String> = (start..=end)
-                                                    .map(|c| char::from(c).to_string())
-                                                    .collect();
-                                                values.join(" ")
-                                            } else {
-                                                s.clone()
-                                            }
-                                        } else {
-                                            s.clone()
-                                        }
-                                    } else {
-                                        s.clone()
-                                    }
-                                } else if parts.len() == 3 && parts[1].contains("..") {
-                                    // Character range with step like "a..z..3"
-                                    let sub_parts: Vec<&str> = parts[1].split("..").collect();
-                                    if sub_parts.len() == 2 {
-                                        if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), sub_parts[1].chars().next()) {
-                                            if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
-                                                if let Ok(step) = parts[2].parse::<usize>() {
-                                                    let start = start_char as u8;
-                                                    let end = end_char as u8;
-                                                    if start <= end {
-                                                        let values: Vec<String> = (start..=end)
-                                                            .step_by(step)
-                                                            .map(|c| char::from(c).to_string())
-                                                            .collect();
-                                                        values.join(" ")
-                                                    } else {
-                                                        s.clone()
-                                                    }
-                                                } else {
-                                                    s.clone()
-                                                }
-                                            } else {
-                                                s.clone()
-                                            }
-                                        } else {
-                                            s.clone()
-                                        }
-                                    } else {
-                                        s.clone()
-                                    }
-                                } else if parts.len() == 3 {
-                                    // Range with step like "00..04..2"
-                                    if let (Ok(start), Ok(end), Ok(step)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>(), parts[2].parse::<i64>()) {
-                                        let values: Vec<String> = (start..=end).step_by(step as usize).map(|i| {
-                                            // Preserve leading zeros by formatting with the same width as the original
-                                            if parts[0].starts_with('0') && parts[0].len() > 1 {
-                                                format!("{:0width$}", i, width = parts[0].len())
-                                            } else {
-                                                i.to_string()
-                                            }
-                                        }).collect();
-                                        values.join(" ")
-                                    } else {
-                                        s.clone()
-                                    }
-                                } else {
-                                    s.clone()
-                                }
-                            } else if s.contains(',') {
-                                // Handle comma-separated sequences like "a,b,c"
-                                let parts: Vec<&str> = s.split(',').collect();
-                                if parts.len() > 1 {
-                                    parts.join(" ")
-                                } else {
-                                    s.clone()
-                                }
-                            } else {
-                                s.clone()
-                            }
+                            self.expand_brace_literal(s)
                         }
                         BraceItem::Sequence(seq) => {
                             // Expand sequence like {a,b,c} to "a b c"
@@ -4364,11 +4357,11 @@ impl PerlGenerator {
                     // Multiple items - expand each one and join
                     let expanded_items: Vec<Vec<String>> = expansion.items.iter().map(|item| {
                         match item {
-                            BraceItem::Literal(s) => vec![s.clone()],
+                            BraceItem::Literal(s) => vec![s.to_string()],
                             BraceItem::Range(range) => {
                                 self.expand_brace_range(range).split_whitespace().map(|s| s.to_string()).collect()
                             }
-                            BraceItem::Sequence(seq) => seq.clone()
+                            BraceItem::Sequence(seq) => seq.to_vec()
                         }
                     }).collect();
                     
@@ -5133,7 +5126,7 @@ impl PerlGenerator {
     /// Reconstruct split glob patterns that the parser may have broken apart
     /// For example, "file_*.txt" might be parsed as ["file_*", ".", "txt"]
     fn reconstruct_split_patterns(&self, args: &[Word]) -> Vec<Word> {
-        let mut reconstructed = Vec::new();
+        let mut reconstructed = Vec::with_capacity(args.len());
         let mut i = 0;
         
         while i < args.len() {
@@ -5146,12 +5139,12 @@ impl PerlGenerator {
                     // But don't reconstruct if the current pattern is just a single glob character
                     if s.len() == 1 && (s == "*" || s == "?" || s == "[") {
                         // Single glob character - don't reconstruct, treat as separate argument
-                        reconstructed.push(args[i].clone());
+                        reconstructed.push(args[i].to_owned());
                         i += 1;
                         continue;
                     }
                     
-                    let mut full_pattern = s.clone();
+                    let mut full_pattern = s.to_string();
                     let mut j = i + 1;
                     
                     // Look ahead to see if we can reconstruct the full pattern
@@ -5180,7 +5173,7 @@ impl PerlGenerator {
             }
             
             // If no reconstruction was possible, add the argument as-is
-            reconstructed.push(args[i].clone());
+            reconstructed.push(args[i].to_owned());
             i += 1;
         }
         
@@ -5189,23 +5182,12 @@ impl PerlGenerator {
 
     /// Expand a single pattern that may contain both glob and brace expansions
     fn expand_single_pattern(&self, pattern: &str) -> Vec<String> {
-        let mut results = Vec::new();
-        
         // First, expand any brace expansions within the pattern
         let brace_expanded = self.expand_braces_in_pattern(pattern);
         
-        // Then, for each brace-expanded result, handle glob patterns
-        for expanded_pattern in brace_expanded {
-            if expanded_pattern.contains('*') || expanded_pattern.contains('?') || expanded_pattern.contains('[') {
-                // This is a glob pattern - we'll handle it at runtime
-                results.push(expanded_pattern);
-            } else {
-                // No glob patterns, just add the literal
-                results.push(expanded_pattern);
-            }
-        }
-        
-        results
+        // Since we're just passing through the patterns, we can return directly
+        // No need to iterate and check each pattern
+        brace_expanded
     }
 
     /// Expand braces within a pattern string
@@ -5274,33 +5256,39 @@ impl PerlGenerator {
 
     /// Parse brace content and expand it
     fn parse_brace_content(&self, content: &str) -> Vec<String> {
-        let mut results = Vec::new();
-        
         // Handle comma-separated lists: {a,b,c}
         if content.contains(',') {
-            for item in content.split(',') {
-                results.push(item.trim().to_string());
-            }
+            content.split(',')
+                .map(|item| item.trim().to_string())
+                .collect()
         }
         // Handle ranges: {1..5} or {a..z}
         else if content.contains("..") {
             if let Some((start, end)) = content.split_once("..") {
                 // Check if it's numeric
                 if let (Ok(start_num), Ok(end_num)) = (start.parse::<i64>(), end.parse::<i64>()) {
-                    for i in start_num..=end_num {
-                        results.push(i.to_string());
-                    }
+                    (start_num..=end_num)
+                        .map(|i| i.to_string())
+                        .collect()
                 }
                 // Check if it's alphabetic
                 else if start.len() == 1 && end.len() == 1 {
                     if let (Some(start_char), Some(end_char)) = (start.chars().next(), end.chars().next()) {
                         if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
-                            for c in start_char..=end_char {
-                                results.push(c.to_string());
-                            }
+                            (start_char..=end_char)
+                                .map(|c| c.to_string())
+                                .collect()
+                        } else {
+                            vec![content.to_string()]
                         }
+                    } else {
+                        vec![content.to_string()]
                     }
+                } else {
+                    vec![content.to_string()]
                 }
+            } else {
+                vec![content.to_string()]
             }
         }
         // Handle step ranges: {1..10..2}
@@ -5312,20 +5300,21 @@ impl PerlGenerator {
                     parts[1].parse::<i64>(),
                     parts[2].parse::<i64>()
                 ) {
-                    let mut i = start;
-                    while i <= end {
-                        results.push(i.to_string());
-                        i += step;
-                    }
+                    (start..=end)
+                        .step_by(step as usize)
+                        .map(|i| i.to_string())
+                        .collect()
+                } else {
+                    vec![content.to_string()]
                 }
+            } else {
+                vec![content.to_string()]
             }
         }
         // If no special syntax, just return the content as-is
         else {
-            results.push(content.to_string());
+            vec![content.to_string()]
         }
-        
-        results
     }
 
     /// Generate Perl code to handle glob patterns at runtime
@@ -5697,4 +5686,105 @@ impl PerlGenerator {
             }
         }
     }
-} 
+
+    /// Optimized helper for character range expansion
+    fn expand_char_range(&self, start: char, end: char, step: Option<usize>) -> Option<String> {
+        if !start.is_ascii_lowercase() || !end.is_ascii_lowercase() {
+            return None;
+        }
+        
+        let start_byte = start as u8;
+        let end_byte = end as u8;
+        
+        if start_byte > end_byte {
+            return None;
+        }
+        
+        let values: Vec<String> = if let Some(step_val) = step {
+            (start_byte..=end_byte)
+                .step_by(step_val)
+                .map(|c| char::from(c).to_string())
+                .collect()
+        } else {
+            (start_byte..=end_byte)
+                .map(|c| char::from(c).to_string())
+                .collect()
+        };
+        
+        Some(values.join(" "))
+    }
+
+    /// Optimized helper for numeric range expansion
+    fn expand_numeric_range_helper(&self, start_str: &str, end_str: &str, step_str: &str) -> Option<String> {
+        let (start, end, step) = (
+            start_str.parse::<i64>().ok()?,
+            end_str.parse::<i64>().ok()?,
+            step_str.parse::<i64>().ok()?
+        );
+        
+        if start > end {
+            return None;
+        }
+        
+        let values: Vec<String> = (start..=end)
+            .step_by(step as usize)
+            .map(|i| {
+                // Preserve leading zeros by formatting with the same width as the original
+                if start_str.starts_with('0') && start_str.len() > 1 {
+                    format!("{:0width$}", i, width = start_str.len())
+                } else {
+                    i.to_string()
+                }
+            })
+            .collect();
+        
+        Some(values.join(" "))
+    }
+
+    /// Optimized brace expansion for literals
+    fn expand_brace_literal(&self, s: &str) -> String {
+        if s.contains("..") {
+            let parts: Vec<&str> = s.split("..").collect();
+            match parts.len() {
+                2 => {
+                    // Simple range like "a..c"
+                    if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), parts[1].chars().next()) {
+                        if let Some(expanded) = self.expand_char_range(start_char, end_char, None) {
+                            return expanded;
+                        }
+                    }
+                }
+                3 => {
+                    if parts[1].contains("..") {
+                        // Character range with step like "a..z..3"
+                        let sub_parts: Vec<&str> = parts[1].split("..").collect();
+                        if sub_parts.len() == 2 {
+                            if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), sub_parts[1].chars().next()) {
+                                if let Ok(step) = parts[2].parse::<usize>() {
+                                    if let Some(expanded) = self.expand_char_range(start_char, end_char, Some(step)) {
+                                        return expanded;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Range with step like "00..04..2"
+                        if let Some(expanded) = self.expand_numeric_range_helper(parts[0], parts[1], parts[2]) {
+                            return expanded;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        } else if s.contains(',') {
+            // Handle comma-separated sequences like "a,b,c"
+            let parts: Vec<&str> = s.split(',').collect();
+            if parts.len() > 1 {
+                return parts.join(" ");
+            }
+        }
+        
+        // Return reference instead of cloning
+        s.to_string()
+    }
+}
