@@ -351,20 +351,20 @@ impl Parser {
 
         // Special handling for Bash single-bracket test: capture everything until closing ']'
         if let Word::Literal(name_str) = &name {
-            println!("DEBUG: Command name is '{}'", name_str);
+//             println!("DEBUG: Command name is '{}'", name_str);
             if name_str == "[" {
-                println!("DEBUG: Found [ command, capturing expression");
+//                 println!("DEBUG: Found [ command, capturing expression");
                 let expr = self.capture_single_bracket_expression()?;
-                println!("DEBUG: Captured expression: '{}'", expr);
+//                 println!("DEBUG: Captured expression: '{}'", expr);
                 // Store the expression in args for postprocessing
                 args.push(Word::Literal(expr));
             }
         }
 
         // Parse arguments and redirects
-        println!("DEBUG: Starting to parse arguments, current token: {:?}", self.lexer.peek());
+//         println!("DEBUG: Starting to parse arguments, current token: {:?}", self.lexer.peek());
         while let Some(token) = self.lexer.peek() {
-            println!("DEBUG: Processing token: {:?}", token);
+//             println!("DEBUG: Processing token: {:?}", token);
             match token {
                 Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString | Token::Source | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString | Token::Star | Token::Range | Token::Slash | Token::Tilde | Token::LongOption => {
                     args.push(self.parse_word()?);
@@ -379,13 +379,13 @@ impl Parser {
                 }
                 Token::Minus => {
                     // Handle arguments starting with minus (like -la, -v, etc.)
-                    println!("DEBUG: Processing Minus token, about to consume it");
+//                     println!("DEBUG: Processing Minus token, about to consume it");
                     self.lexer.next(); // consume the minus
-                    println!("DEBUG: Consumed Minus token, next token: {:?}", self.lexer.peek());
+//                     println!("DEBUG: Consumed Minus token, next token: {:?}", self.lexer.peek());
                     
                     // Check if we have a specific shell option token next
                     if let Some(token_after_minus) = self.lexer.peek() {
-                        println!("DEBUG: Token after minus: {:?}", token_after_minus);
+//                         println!("DEBUG: Token after minus: {:?}", token_after_minus);
                         match token_after_minus {
                             Token::Exists | Token::Readable | Token::Writable | Token::Executable |
                             Token::Size | Token::Symlink | Token::SymlinkH | Token::PipeFile |
@@ -408,7 +408,7 @@ impl Parser {
                             }
                             Token::Space | Token::Tab | Token::Newline | Token::Semicolon | Token::And | Token::Or => {
                                 // Handle standalone minus followed by separator
-                                println!("DEBUG: Found standalone minus followed by separator");
+//                                 println!("DEBUG: Found standalone minus followed by separator");
                                 args.push(Word::Literal("-".to_string()));
                             }
                             _ => {
@@ -418,13 +418,13 @@ impl Parser {
                                     .get_span()
                                     .map(|(s, _)| self.lexer.offset_to_line_col(s))
                                     .unwrap_or((1, 1));
-                                println!("DEBUG: Unexpected token after minus: {:?}", token_after_minus);
+//                                 println!("DEBUG: Unexpected token after minus: {:?}", token_after_minus);
                                 return Err(ParserError::UnexpectedToken { token: Token::Minus, line, col });
                             }
                         }
                     } else {
                         // Handle standalone minus
-                        println!("DEBUG: Found standalone minus with no next token");
+//                         println!("DEBUG: Found standalone minus with no next token");
                         args.push(Word::Literal("-".to_string()));
                     }
                 }
@@ -2556,11 +2556,11 @@ impl Parser {
                     self.lexer.next();
                     break;
                 }
-                Some(token) => {
+                Some(_token) => {
                     if let Some((s, e)) = self.lexer.get_span() {
                         let text = self.lexer.get_text(s, e);
                         expr.push_str(&text);
-                        println!("DEBUG: Captured token {:?}: '{}'", token, text);
+//                         println!("DEBUG: Captured token {:?}: '{}'", token, text);
                     }
                     self.lexer.next();
                     token_count += 1;
@@ -2575,7 +2575,7 @@ impl Parser {
                 }
             }
         }
-        println!("DEBUG: Final expression: '{}'", expr);
+//         println!("DEBUG: Final expression: '{}'", expr);
         Ok(expr.trim().to_string())
     }
 
@@ -2922,4 +2922,4 @@ mod tests {
         
         assert_eq!(commands.len(), 1);
     }
-} 
+} // Close tests module

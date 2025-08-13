@@ -1545,7 +1545,7 @@ impl PerlGenerator {
                                                 output.push_str(&format!("{};\n", executable_code));
                                             } else if let Word::Literal(perl_code) = &cmd.args[1] {
                                             // Debug: print what we're processing
-                                            eprintln!("DEBUG: Processing Word::Literal: {}", perl_code);
+//                                             eprintln!("DEBUG: Processing Word::Literal: {}", perl_code);
                                             
                                             // Check if this literal contains variable interpolation (contains $)
                                             if perl_code.contains('$') {

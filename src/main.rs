@@ -36,7 +36,7 @@ use std::time::Duration;
 use std::thread;
 
 // Use the debug module for controlling DEBUG output
-use debashl::{debug_println, debug::set_debug_enabled};
+use debashl::debug::set_debug_enabled;
 
 #[derive(Debug)]
 struct TestResult {
@@ -124,35 +124,35 @@ fn main() {
                 ast_options.compact = false;
                 ast_options.indent = true;
                 ast_options.newlines = true;
-                debug_println!("DEBUG: Set --ast-pretty: compact={}, indent={}, newlines={}", 
-                        ast_options.compact, ast_options.indent, ast_options.newlines);
+                // debug_println!("DEBUG: Set --ast-pretty: compact={}, indent={}, newlines={}", 
+                //     ast_options.compact, ast_options.indent, ast_options.newlines);
             }
             "--ast-compact" => {
                 ast_options.compact = true;
                 ast_options.indent = false;
                 ast_options.newlines = false;
-                debug_println!("DEBUG: Set --ast-compact: compact={}, indent={}, newlines={}", 
-                        ast_options.compact, ast_options.indent, ast_options.newlines);
+                // debug_println!("DEBUG: Set --ast-compact: compact={}, indent={}, newlines={}", 
+                //     ast_options.compact, ast_options.indent, ast_options.newlines);
             }
             "--ast-indent" => {
                 ast_options.indent = true;
-                debug_println!("DEBUG: Set --ast-indent: compact={}, indent={}, newlines={}", 
-                        ast_options.compact, ast_options.indent, ast_options.newlines);
+                // debug_println!("DEBUG: Set --ast-indent: compact={}, indent={}, newlines={}", 
+                //     ast_options.compact, ast_options.indent, ast_options.newlines);
             }
             "--ast-no-indent" => {
                 ast_options.indent = false;
-                debug_println!("DEBUG: Set --ast-no-indent: compact={}, indent={}, newlines={}", 
-                        ast_options.compact, ast_options.indent, ast_options.newlines);
+                // debug_println!("DEBUG: Set --ast-no-indent: compact={}, indent={}, newlines={}", 
+                //     ast_options.compact, ast_options.indent, ast_options.newlines);
             }
             "--ast-newlines" => {
                 ast_options.newlines = true;
-                debug_println!("DEBUG: Set --ast-newlines: compact={}, indent={}, newlines={}", 
-                        ast_options.compact, ast_options.indent, ast_options.newlines);
+                // debug_println!("DEBUG: Set --ast-newlines: compact={}, indent={}, newlines={}", 
+                //     ast_options.compact, ast_options.indent, ast_options.newlines);
             }
             "--ast-no-newlines" => {
                 ast_options.newlines = false;
-                debug_println!("DEBUG: Set --ast-no-newlines: compact={}, indent={}, newlines={}", 
-                        ast_options.compact, ast_options.indent, ast_options.newlines);
+                // debug_println!("DEBUG: Set --ast-no-newlines: compact={}, indent={}, newlines={}", 
+                //     ast_options.compact, ast_options.indent, ast_options.newlines);
             }
             "-i" => {
                 if i + 1 < args.len() {
@@ -180,8 +180,8 @@ fn main() {
         i += 1;
     }
     
-    debug_println!("DEBUG: Final AST options: compact={}, indent={}, newlines={}", 
-            ast_options.compact, ast_options.indent, ast_options.newlines);
+    // debug_println!("DEBUG: Final AST options: compact={}, indent={}, newlines={}", 
+    //     ast_options.compact, ast_options.indent, ast_options.newlines);
     
     let command = &args[1];
     
@@ -2130,4 +2130,4 @@ mod tests {
         let result = Parser::new(input).parse();
         assert!(result.is_ok());
     }
-} 
+}
