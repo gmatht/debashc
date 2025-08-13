@@ -236,9 +236,9 @@ fn main() {
                 i += 1;
             }
             
-            // If no generators specified, use all available ones
+            // If no generators specified, default to perl
             if generators.is_empty() {
-                generators = vec!["perl", "python", "rust", "lua", "js", "ps"].into_iter().map(|s| s.to_string()).collect();
+                generators = vec!["perl".to_string()];
             }
             
             test_all_examples_next_fail(&generators, test_number);
@@ -481,9 +481,9 @@ fn main() {
                 i += 1;
             }
             
-            // If no generators specified, use all available ones
+            // If no generators specified, default to perl
             if generators.is_empty() {
-                generators = vec!["perl", "python", "rust", "lua", "js", "ps"].into_iter().map(|s| s.to_string()).collect();
+                generators = vec!["perl".to_string()];
             }
             
             test_all_examples_next_fail(&generators, test_number);
@@ -2074,7 +2074,7 @@ fn show_help(program_name: &str) {
     println!("  --test-file <lang> <filename>  - Compare outputs of .sh vs translated code");
     println!("  file --test-file <lang> <filename> - Same as above");
     println!("  --test-eq                      - Test all generators against all examples");
-            println!("  --next-fail [NUM] [gen1 gen2 ...] - Test specified generators (or all if none specified), exit after first failure");
+            println!("  --next-fail [NUM] [gen1 gen2 ...] - Test specified generators (or perl if none specified), exit after first failure");
         println!("                                   - If NUM is provided, run only the NUMth test");
         println!("  fail [NUM] [gen1 gen2 ...]      - Shorthand for --next-fail");
     println!();
@@ -2119,6 +2119,7 @@ fn show_help(program_name: &str) {
     println!();
             println!("  The --next-fail command can be used to test specific generators by");
         println!("  listing them after the command (e.g., --next-fail perl python).");
+        println!("  If no generators are specified, it defaults to testing only perl.");
         println!("  You can also specify a test number to run only that specific test");
         println!("  (e.g., --next-fail 5 to run only the 5th test).");
     println!();

@@ -1418,6 +1418,138 @@ impl PerlGenerator {
                                 }
                             }
                         }
+                    } else if cmd.name == "perl" {
+                        // Debug: print what perl command we're processing
+                        eprintln!("DEBUG: Processing perl command: {:?}", cmd);
+                        
+                        // Special handling for Perl commands - execute Perl code directly instead of using system()
+                        if cmd.args.is_empty() {
+                            // Just "perl" - do nothing
+                            output.push_str("1;\n");
+                        } else {
+                            // Check for -e flag (execute Perl code)
+                            if cmd.args.len() >= 2 {
+                                if let Word::Literal(first_arg) = &cmd.args[0] {
+                                                                            if first_arg == "-e" {
+                                        if let Word::StringInterpolation(interp) = &cmd.args[1] {
+                                            // Handle string interpolation in perl -e command
+                                            // Convert the string interpolation to executable Perl code
+                                            let perl_code = self.convert_string_interpolation_to_perl(interp);
+                                            
+                                            // If the Perl code uses $arg, declare it first
+                                            if perl_code.contains("$arg") {
+                                                output.push_str("my $arg;\n");
+                                            }
+                                            
+                                            // Handle any additional arguments as @ARGV
+                                            if cmd.args.len() > 2 {
+                                                let args: Vec<String> = cmd.args.iter().skip(2)
+                                                    .map(|arg| self.perl_string_literal(arg))
+                                                    .collect();
+                                                if !args.is_empty() {
+                                                    output.push_str(&format!("my @ARGV = ({});\n", args.join(", ")));
+                                                }
+                                            }
+                                            
+                                            // Execute the converted Perl code directly
+                                            output.push_str(&format!("{};\n", perl_code));
+                                        } else if let Word::Literal(perl_code) = &cmd.args[1] {
+                                            // Debug: print what we're processing
+                                            eprintln!("DEBUG: Processing Word::Literal: {}", perl_code);
+                                            
+                                            // Check if this literal contains variable interpolation (contains $)
+                                            if perl_code.contains('$') {
+                                                // This is a double-quoted string with variable interpolation
+                                                // Convert it to executable Perl code by replacing shell variables with Perl equivalents
+                                                let mut processed_code = perl_code.clone();
+                                                
+                                                // Replace $ENV{VAR} with $ENV{VAR} (already in Perl format)
+                                                // Replace other shell variables as needed
+                                                // For now, just execute the code directly since it's already in Perl format
+                                                
+                                                // If the Perl code uses $arg, declare it first
+                                                if processed_code.contains("$arg") {
+                                                    output.push_str("my $arg;\n");
+                                                }
+                                                
+                                                // Handle any additional arguments as @ARGV
+                                                if cmd.args.len() > 2 {
+                                                    let args: Vec<String> = cmd.args.iter().skip(2)
+                                                        .map(|arg| self.perl_string_literal(arg))
+                                                        .collect();
+                                                    if !args.is_empty() {
+                                                        output.push_str(&format!("my @ARGV = ({});\n", args.join(", ")));
+                                                    }
+                                                }
+                                                
+                                                // Execute the processed Perl code directly
+                                                output.push_str(&format!("{};\n", processed_code));
+                                            } else {
+                                                // Regular literal Perl code
+                                                // If the Perl code uses $arg, declare it first
+                                                if perl_code.contains("$arg") {
+                                                    output.push_str("my $arg;\n");
+                                                }
+                                                
+                                                // Handle any additional arguments as @ARGV
+                                                if cmd.args.len() > 2 {
+                                                    let args: Vec<String> = cmd.args.iter().skip(2)
+                                                        .map(|arg| self.perl_string_literal(arg))
+                                                        .collect();
+                                                    if !args.is_empty() {
+                                                        output.push_str(&format!("my @ARGV = ({});\n", args.join(", ")));
+                                                    }
+                                                }
+                                                
+                                                // Execute the Perl code directly
+                                                output.push_str(&format!("{};\n", perl_code));
+                                            }
+                                        } else {
+                                            // Handle non-literal Perl code
+                                            let perl_code = self.word_to_perl(&cmd.args[1]);
+                                            
+                                            // If the Perl code uses $arg, declare it first
+                                            if perl_code.contains("$arg") {
+                                                output.push_str("my $arg;\n");
+                                            }
+                                            
+                                            // Handle any additional arguments as @ARGV
+                                            if cmd.args.len() > 2 {
+                                                let args: Vec<String> = cmd.args.iter().skip(2)
+                                                    .map(|arg| self.perl_string_literal(arg))
+                                                    .collect();
+                                                if !args.is_empty() {
+                                                    output.push_str(&format!("my @ARGV = ({});\n", args.join(", ")));
+                                                }
+                                            }
+                                            
+                                            output.push_str(&format!("{};\n", perl_code));
+                                        }
+                                    } else if first_arg == "-ne" {
+                                        // Handle -ne flag (execute Perl code for each line)
+                                        if let Word::Literal(perl_code) = &cmd.args[1] {
+                                            // For -ne, we need to read from STDIN and process each line
+                                            output.push_str("while (my $line = <STDIN>) {\n");
+                                            output.push_str(&format!("    chomp($line);\n"));
+                                            output.push_str(&format!("    {}\n", perl_code.replace("$_", "$line")));
+                                            output.push_str("}\n");
+                                        }
+                                    } else {
+                                        // Other Perl flags - use system() for now
+                                        let args = cmd.args.iter().map(|arg| self.perl_string_literal(arg)).collect::<Vec<_>>();
+                                        output.push_str(&format!("system({}, {});\n", name, args.join(", ")));
+                                    }
+                                } else {
+                                    // First argument is not a literal - use system()
+                                    let args = cmd.args.iter().map(|arg| self.perl_string_literal(arg)).collect::<Vec<_>>();
+                                    output.push_str(&format!("system({}, {});\n", name, args.join(", ")));
+                                }
+                            } else {
+                                // Single argument - use system()
+                                let args = cmd.args.iter().map(|arg| self.perl_string_literal(arg)).collect::<Vec<_>>();
+                                output.push_str(&format!("system({}, {});\n", name, args.join(", ")));
+                            }
+                        }
                     } else {
                         // Check if any arguments contain glob patterns or brace expansions
                         let has_patterns = cmd.args.iter().any(|arg| {
@@ -1507,13 +1639,18 @@ impl PerlGenerator {
                     // Skip heredoc handling for 'cat' command since it's handled specially in the cat command handler
                     if cmd.name != "cat" {
                         if let Some(body) = &redir.heredoc_body {
-                            // Create a temporary file with the heredoc content
-                            output.push_str(&format!("my $temp_content = {};\n", self.perl_string_literal(body)));
-                            let fh = self.get_unique_file_handle();
-                            output.push_str(&format!("open(my {}, '>', '/tmp/heredoc_temp') or die \"Cannot create temp file: $!\\n\";\n", fh));
-                            output.push_str(&format!("print {} $temp_content;\n", fh));
-                            output.push_str(&format!("close({});\n", fh));
-                            output.push_str("open(STDIN, '<', '/tmp/heredoc_temp') or die \"Cannot open temp file: $!\\n\";\n");
+                            if cmd.name == "perl" {
+                                // For Perl commands with heredocs, execute the Perl code directly
+                                output.push_str(&format!("{}\n", body));
+                            } else {
+                                // Create a temporary file with the heredoc content
+                                output.push_str(&format!("my $temp_content = {};\n", self.perl_string_literal(body)));
+                                let fh = self.get_unique_file_handle();
+                                output.push_str(&format!("open(my {}, '>', '/tmp/heredoc_temp') or die \"Cannot create temp file: $!\\n\";\n", fh));
+                                output.push_str(&format!("print {} $temp_content;\n", fh));
+                                output.push_str(&format!("close({});\n", fh));
+                                output.push_str("open(STDIN, '<', '/tmp/heredoc_temp') or die \"Cannot open temp file: $!\\n\";\n");
+                            }
                         }
                     }
                 }
@@ -2261,9 +2398,9 @@ impl PerlGenerator {
                 }
                 output.push_str("}\n");
             } else {
-                // First command - check if it's a find command and handle specially
-                if let Command::Simple(cmd) = &pipeline.commands[0] {
-                    if cmd.name == "find" {
+                    // First command - check if it's a find command and handle specially
+                    if let Command::Simple(cmd) = &pipeline.commands[0] {
+                        if cmd.name == "find" {
                         // Handle find command with Windows compatibility
                         let mut find_args = Vec::new();
                         for arg in &cmd.args {
@@ -2410,6 +2547,33 @@ impl PerlGenerator {
                             // Remove the print() wrapper and newline for pipeline use
                             let args_clean = args.trim_end_matches(";\n").trim_end_matches("\"\\n\"").trim_end_matches(" . \"\\n\"");
                             output.push_str(&format!("$output_{} = {};\n", pipeline_id, args_clean));
+                        }
+                        
+                        // Check if the next command in the pipeline is perl -ne
+                        if pipeline.commands.len() > 1 {
+                            if let Command::Simple(next_cmd) = &pipeline.commands[1] {
+                                if next_cmd.name == "perl" && next_cmd.args.len() >= 2 {
+                                    if let Word::Literal(first_arg) = &next_cmd.args[0] {
+                                        if first_arg == "-ne" {
+                                            // Special handling for echo | perl -ne pattern
+                                            if let Word::Literal(perl_code) = &next_cmd.args[1] {
+                                                // Process the echo output with the Perl code
+                                                output.push_str(&format!("my @lines_{} = split(/\\n/, $output_{});\n", pipeline_id, pipeline_id));
+                                                output.push_str(&format!("for my $line (@lines_{}) {{\n", pipeline_id));
+                                                output.push_str(&format!("    chomp($line);\n"));
+                                                // Process the perl code to handle chomp without argument and replace $_ with $line
+                                                let processed_code = perl_code
+                                                    .replace("$_", "$line")
+                                                    .replace("chomp;", "chomp($line);");
+                                                output.push_str(&format!("    {};\n", processed_code));
+                                                output.push_str("}\n");
+                                                // Skip the perl command in the subsequent command processing
+                                                return output;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     } else {
                         // First command - capture output using system call
@@ -3811,10 +3975,54 @@ impl PerlGenerator {
                 return self.generate_parameter_expansion(pe);
             }
             
-            // Special case: if we have only one part and it's a literal, return it properly quoted
-            if let StringPart::Literal(s) = &interp.parts[0] {
-                return self.perl_string_literal(s);
+                    // Special case: if we have only one part and it's a literal, return it properly quoted
+        if let StringPart::Literal(s) = &interp.parts[0] {
+            return self.perl_string_literal(s);
+        }
+        
+        // Special case: if we have ENV{variable} pattern (Variable("ENV") followed by Literal("{var}"))
+        if interp.parts.len() == 2 {
+            if let (StringPart::Variable(var), StringPart::Literal(lit)) = (&interp.parts[0], &interp.parts[1]) {
+                if var == "ENV" && lit.starts_with('{') && lit.ends_with('}') {
+                    let env_var = &lit[1..lit.len()-1]; // Remove { and }
+                    return format!("$ENV{{{}}}", env_var);
+                }
             }
+        }
+        
+        // Special case: if we have a print statement with string interpolation, execute it directly
+        if interp.parts.len() >= 2 {
+            if let StringPart::Literal(first_part) = &interp.parts[0] {
+                if first_part.contains("print") {
+                    // This is a print statement, execute it directly
+                    let mut result = String::new();
+                    for part in &interp.parts {
+                        match part {
+                            StringPart::Literal(s) => result.push_str(s),
+                            StringPart::Variable(var) => {
+                                if var == "ENV" {
+                                    result.push_str("$ENV");
+                                } else {
+                                    result.push_str(&format!("${}", var));
+                                }
+                            }
+                            _ => result.push_str(&format!("{:?}", part))
+                        }
+                    }
+                    return result;
+                }
+            }
+        }
+        
+        // Special case: if we have a string that looks like a print statement but is parsed as a single literal
+        if interp.parts.len() == 1 {
+            if let StringPart::Literal(s) = &interp.parts[0] {
+                if s.contains("print") && s.contains("$ENV") {
+                    // This is a print statement with environment variable, execute it directly
+                    return s.to_string();
+                }
+            }
+        }
             
             // Special case: if we have only one part and it's a map access, return it without quotes
             if let StringPart::MapAccess(map_name, key) = &interp.parts[0] {
@@ -3896,6 +4104,10 @@ impl PerlGenerator {
                         result.push_str("$_[7]");
                     } else if var == "9" {
                         result.push_str("$_[8]");
+                    } else if var == "ENV" {
+                        // Special handling for ENV environment variable access
+                        // This will be followed by a literal like "{SHELL_VAR}"
+                        result.push_str("$ENV");
                     } else {
                         // Check for special shell array syntax
                         if var.starts_with('#') && var.ends_with("[@]") {
