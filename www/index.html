@@ -93,6 +93,24 @@
             box-shadow: 0 2px 4px rgba(0, 122, 204, 0.3);
         }
         
+        /* Tiny generator styling */
+        .tiny-generator {
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 10px;
+            margin: 1px;
+            transition: all 0.2s ease;
+        }
+        
+        .tiny-generator:hover {
+            background-color: #c82333;
+            transform: translateY(-1px);
+        }
+        
         /* Auto-update toggle button styling */
         .auto-update-toggle {
             background-color: #28a745 !important;
@@ -309,6 +327,14 @@
                 <!-- Main Generators -->
                 <button id="perl-btn" class="main-generator">To Perl</button>
                 <button id="rust-btn" class="main-generator">To Rust</button>
+                
+                <!-- Additional Generators -->
+                <button id="python-btn" class="tiny-generator">To Python</button>
+                <button id="lua-btn" class="tiny-generator">To Lua</button>
+                <button id="c-btn" class="tiny-generator">To C</button>
+                <button id="js-btn" class="tiny-generator">To JS</button>
+                <button id="batch-btn" class="tiny-generator">To Batch</button>
+                <button id="powershell-btn" class="tiny-generator">To PS</button>
             </div>
             
             <div class="output-section">
@@ -529,6 +555,24 @@
                     case 'rust':
                         result = debashc.to_rust(input);
                         break;
+                    case 'python':
+                        result = debashc.to_python(input);
+                        break;
+                    case 'lua':
+                        result = debashc.to_lua(input);
+                        break;
+                    case 'c':
+                        result = debashc.to_c(input);
+                        break;
+                    case 'js':
+                        result = debashc.to_js(input);
+                        break;
+                    case 'batch':
+                        result = debashc.to_bat(input);
+                        break;
+                    case 'powershell':
+                        result = debashc.to_ps(input);
+                        break;
                     default:
                         throw new Error('Unknown operation');
                 }
@@ -548,6 +592,14 @@
             document.getElementById('parse-btn').addEventListener('click', () => { currentOperation = 'parse'; executeOperation('parse'); });
             document.getElementById('perl-btn').addEventListener('click', () => { currentOperation = 'perl'; executeOperation('perl'); });
             document.getElementById('rust-btn').addEventListener('click', () => { currentOperation = 'rust'; executeOperation('rust'); });
+            
+            // Experimental generators
+            document.getElementById('python-btn').addEventListener('click', () => { currentOperation = 'python'; executeOperation('python'); });
+            document.getElementById('lua-btn').addEventListener('click', () => { currentOperation = 'lua'; executeOperation('lua'); });
+            document.getElementById('c-btn').addEventListener('click', () => { currentOperation = 'c'; executeOperation('c'); });
+            document.getElementById('js-btn').addEventListener('click', () => { currentOperation = 'js'; executeOperation('js'); });
+            document.getElementById('batch-btn').addEventListener('click', () => { currentOperation = 'batch'; executeOperation('batch'); });
+            document.getElementById('powershell-btn').addEventListener('click', () => { currentOperation = 'powershell'; executeOperation('powershell'); });
             
             // Add automatic output updates after typing stops
             setupAutoUpdate();
