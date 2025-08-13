@@ -687,32 +687,98 @@ impl PerlGenerator {
                 }
             }
         } else if cmd.name == "ls" {
-            // Generic handling for ls with glob and brace expansion support
-            if cmd.args.is_empty() {
-                // Default to current directory
-                let dh = self.get_unique_dir_handle();
-                output.push_str(&format!("opendir(my {}, '.') or die \"Cannot open directory: $!\\n\";\n", dh));
-                output.push_str(&format!("while (my $file = readdir({})) {{\n", dh));
-                output.push_str("    print(\"$file\\n\") unless $file =~ /^\\.\\.?$/;\n");
-                output.push_str("}\n");
-                output.push_str(&format!("closedir({});\n", dh));
-            } else {
-                // Filter out flags and use generic pattern expansion
-                let non_flag_args: Vec<Word> = cmd.args.iter()
-                    .filter(|arg| !arg.starts_with('-'))
-                    .cloned()
-                    .collect();
+            // Parse ls flags and arguments
+            let mut long_format = false;
+            let mut show_hidden = false;
+            let mut show_all = false;
+            let mut non_flag_args = Vec::new();
+            
+            for arg in &cmd.args {
+                if let Word::Literal(s) = arg {
+                    if s.starts_with('-') {
+                        // Parse flags
+                        for flag in s.chars().skip(1) {
+                            match flag {
+                                'l' => long_format = true,
+                                'a' => show_hidden = true,
+                                'A' => show_all = true,
+                                _ => {} // Ignore other flags for now
+                            }
+                        }
+                    } else {
+                        non_flag_args.push(arg.clone());
+                    }
+                } else {
+                    non_flag_args.push(arg.clone());
+                }
+            }
+            
+            if long_format {
+                // Implement ls -l format (long listing)
+                let dir = if non_flag_args.is_empty() { "." } else { 
+                    if let Word::Literal(s) = &non_flag_args[0] { s } else { "." }
+                };
                 
+                output.push_str(&format!("my @files;\n"));
+                output.push_str(&format!("my $total_blocks = 0;\n"));
+                output.push_str(&format!("opendir(my $dh, '{}') or die \"Cannot open directory: $!\\n\";\n", dir));
+                output.push_str("while (my $file = readdir($dh)) {\n");
+                if !show_hidden && !show_all {
+                    output.push_str("    next if $file =~ /^\\./;\n");
+                }
+                output.push_str("    push @files, $file;\n");
+                output.push_str("}\n");
+                output.push_str("closedir($dh);\n");
+                output.push_str("foreach my $file (sort @files) {\n");
+                output.push_str("    my $path = $file;\n");
+                output.push_str(&format!("    if ('{}' ne '.') {{\n", dir));
+                output.push_str(&format!("        $path = '{}' . '/' . $file;\n", dir));
+                output.push_str("    }\n");
+                output.push_str("    if (-e $path) {\n");
+                output.push_str("        my ($dev, $ino, $mode, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks) = stat($path);\n");
+                output.push_str("        $total_blocks += $blocks;\n");
+                output.push_str("    }\n");
+                output.push_str("}\n");
+                output.push_str("print \"total $total_blocks\\n\";\n");
+                output.push_str("foreach my $file (sort @files) {\n");
+                output.push_str("    my $path = $file;\n");
+                output.push_str(&format!("    if ('{}' ne '.') {{\n", dir));
+                output.push_str(&format!("        $path = '{}' . '/' . $file;\n", dir));
+                output.push_str("    }\n");
+                output.push_str("    if (-e $path) {\n");
+                output.push_str("        my ($dev, $ino, $mode, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks) = stat($path);\n");
+                output.push_str("        my $perms = sprintf('%04o', $mode & 07777);\n");
+                output.push_str("        my $perms_str = '';\n");
+                output.push_str("        $perms_str .= ($mode & 0400) ? 'r' : '-';\n");
+                output.push_str("        $perms_str .= ($mode & 0200) ? 'w' : '-';\n");
+                output.push_str("        $perms_str .= ($mode & 0100) ? 'x' : '-';\n");
+                output.push_str("        $perms_str .= ($mode & 0040) ? 'r' : '-';\n");
+                output.push_str("        $perms_str .= ($mode & 0020) ? 'w' : '-';\n");
+                output.push_str("        $perms_str .= ($mode & 0010) ? 'x' : '-';\n");
+                output.push_str("        $perms_str .= ($mode & 0004) ? 'r' : '-';\n");
+                output.push_str("        $perms_str .= ($mode & 0002) ? 'w' : '-';\n");
+                output.push_str("        $perms_str .= ($mode & 0001) ? 'x' : '-';\n");
+                output.push_str("        my $type = (-d $path) ? 'd' : (-l $path) ? 'l' : '-';\n");
+                output.push_str("        my ($sec, $min, $hour, $mday, $mon, $year) = (localtime($mtime))[0,1,2,3,4,5];\n");
+                output.push_str("        my $mon_name = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')[$mon];\n");
+                output.push_str("        printf(\"%s%s %2d %s %s %8d %s %2d %02d:%02d %s\\n\", $type, $perms_str, $nlink, 'user', 'group', $size, $mon_name, $mday, $hour, $min, $file);\n");
+                output.push_str("    }\n");
+                output.push_str("}\n");
+            } else {
+                // Simple listing (no -l flag)
                 if non_flag_args.is_empty() {
-                    // No non-flag arguments, default to current directory
+                    // Default to current directory
                     let dh = self.get_unique_dir_handle();
                     output.push_str(&format!("opendir(my {}, '.') or die \"Cannot open directory: $!\\n\";\n", dh));
                     output.push_str(&format!("while (my $file = readdir({})) {{\n", dh));
-                    output.push_str("    print(\"$file\\n\") unless $file =~ /^\\.\\.?$/;\n");
+                    if !show_hidden && !show_all {
+                        output.push_str("    next if $file =~ /^\\./;\n");
+                    }
+                    output.push_str("    print(\"$file\\n\");\n");
                     output.push_str("}\n");
                     output.push_str(&format!("closedir({});\n", dh));
                 } else {
-                    // Use the generic pattern expansion
+                    // Handle arguments with potential brace expansion
                     let expanded_args = self.expand_glob_and_brace_patterns(&non_flag_args);
                     
                     for arg in expanded_args {
@@ -725,7 +791,10 @@ impl PerlGenerator {
                             let dh = self.get_unique_dir_handle();
                             output.push_str(&format!("opendir(my {}, '{}') or die \"Cannot open directory: $!\\n\";\n", dh, clean_arg));
                             output.push_str(&format!("while (my $file = readdir({})) {{\n", dh));
-                            output.push_str("    print(\"$file\\n\") unless $file =~ /^\\.\\.?$/;\n");
+                            if !show_hidden && !show_all {
+                                output.push_str("    next if $file =~ /^\\./;\n");
+                            }
+                            output.push_str("    print(\"$file\\n\");\n");
                             output.push_str("}\n");
                             output.push_str(&format!("closedir({});\n", dh));
                         }
