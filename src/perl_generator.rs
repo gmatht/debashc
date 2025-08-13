@@ -47,51 +47,7 @@ impl PerlGenerator {
         format!("$dh_{}", self.file_handle_counter)
     }
 
-    /// Helper method to efficiently build strings with pre-allocated capacity
-    fn build_string_with_capacity(&self, estimated_size: usize) -> String {
-        String::with_capacity(estimated_size)
-    }
-
-    /// Helper method to efficiently join strings with a separator
-    fn join_strings(&self, strings: &[String], separator: &str) -> String {
-        if strings.is_empty() {
-            return String::new();
-        }
-        if strings.len() == 1 {
-            return strings[0].to_string();
-        }
-        
-        let total_length: usize = strings.iter().map(|s| s.len()).sum::<usize>() + separator.len() * (strings.len() - 1);
-        let mut result = String::with_capacity(total_length);
-        
-        for (i, s) in strings.iter().enumerate() {
-            if i > 0 {
-                result.push_str(separator);
-            }
-            result.push_str(s);
-        }
-        
-        result
-    }
-
-    /// Optimized method to build strings from multiple parts
-    fn build_string_from_parts(&self, parts: &[&str]) -> String {
-        if parts.is_empty() {
-            return String::new();
-        }
-        if parts.len() == 1 {
-            return parts[0].to_string();
-        }
-        
-        let total_length: usize = parts.iter().map(|s| s.len()).sum::<usize>();
-        let mut result = String::with_capacity(total_length);
-        
-        for part in parts {
-            result.push_str(part);
-        }
-        
-        result
-    }
+    // Removed unused helper methods to simplify code
 
     fn extract_array_key<'a>(&self, var: &'a str) -> Option<(&'a str, &'a str)> {
         if var.contains('[') && var.ends_with(']') {
@@ -180,7 +136,7 @@ impl PerlGenerator {
             let expanded_items: Vec<String> = expansion.items.iter()
                 .map(|item| self.expand_single_brace_item(item))
                 .collect();
-            self.join_strings(&expanded_items, " ")
+            expanded_items.join(" ")
         }
     }
 
@@ -301,35 +257,7 @@ impl PerlGenerator {
         all_files
     }
 
-    fn expand_numeric_range(&self, start: i64, end: i64, step: i64, start_str: &str) -> Vec<String> {
-        let count = if step > 0 {
-            ((end - start) / step + 1) as usize
-        } else {
-            ((start - end) / (-step) + 1) as usize
-        };
-        
-        let mut result = Vec::with_capacity(count);
-        
-        if step > 0 {
-            for i in (start..=end).step_by(step as usize) {
-                if start_str.starts_with('0') && start_str.len() > 1 {
-                    result.push(format!("{:0width$}", i, width = start_str.len()));
-                } else {
-                    result.push(i.to_string());
-                }
-            }
-        } else {
-            for i in (end..=start).rev().step_by((-step) as usize) {
-                if start_str.starts_with('0') && start_str.len() > 1 {
-                    result.push(format!("{:0width$}", i, width = start_str.len()));
-                } else {
-                    result.push(i.to_string());
-                }
-            }
-        }
-        
-        result
-    }
+    // Removed unused expand_numeric_range method
 
 
 
@@ -3411,20 +3339,7 @@ impl PerlGenerator {
         output
     }
 
-    fn find_for_loop_variable(&self, command: &Command) -> Option<String> {
-        match command {
-            Command::For(for_loop) => Some(for_loop.variable.clone()),
-            Command::Block(block) => {
-                for cmd in &block.commands {
-                    if let Some(var) = self.find_for_loop_variable(cmd) {
-                        return Some(var);
-                    }
-                }
-                None
-            }
-            _ => None
-        }
-    }
+    // Removed unused find_for_loop_variable method
 
     fn generate_for_loop(&mut self, for_loop: &ForLoop) -> String {
         let variable = &for_loop.variable;
@@ -3651,60 +3566,11 @@ impl PerlGenerator {
         format!("{}{}}}\n", loop_header, body_code)
     }
 
-    fn parse_numeric_brace_range(&self, s: &str) -> Option<(i64, i64)> {
-        SharedUtils::parse_numeric_brace_range(s)
-    }
+    // Removed unused parse_numeric_brace_range method
 
-    fn parse_seq_command(&self, s: &str) -> Option<(i64, i64)> {
-        SharedUtils::parse_seq_command(s)
-    }
+    // Removed unused parse_seq_command method
 
-    fn expand_simple_brace_expression(&self, expr: &str) -> String {
-        // Handle simple numeric ranges like {1..5}
-        if let Some(range) = self.parse_numeric_brace_range(expr) {
-            let (start, end) = range;
-            let values: Vec<String> = (start..=end).map(|i| i.to_string()).collect();
-            return format!("({})", values.join(", "));
-        }
-        
-        // Handle character ranges like {a..c}
-        if expr.contains("..") {
-            let parts: Vec<&str> = expr.split("..").collect();
-            if parts.len() == 2 {
-                if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), parts[1].chars().next()) {
-                                            if start_char.is_ascii_lowercase() && end_char.is_ascii_lowercase() {
-                            let start = start_char as u8;
-                            let end = end_char as u8;
-                            if start <= end {
-                                let values: Vec<String> = (start..=end)
-                                    .map(|c| format!("'{}'", char::from(c)))
-                                    .collect();
-                                return format!("({})", values.join(", "));
-                            }
-                        }
-                }
-            }
-        }
-        
-        // Handle step ranges like {00..04..2}
-        if expr.matches("..").count() == 2 {
-            let parts: Vec<&str> = expr.split("..").collect();
-            if parts.len() == 3 {
-                if let (Ok(start), Ok(end), Ok(step)) = (parts[0].parse::<i64>(), parts[2].parse::<i64>(), parts[1].parse::<i64>()) {
-                    let mut values = Vec::new();
-                    let mut current = start;
-                    while current <= end {
-                        values.push(current.to_string());
-                        current += step;
-                    }
-                    return format!("({})", values.join(", "));
-                }
-            }
-        }
-        
-        // If no expansion possible, return as literal
-        format!("'{}'", expr)
-    }
+    // Removed unused expand_simple_brace_expression method
 
     fn generate_function(&mut self, func: &Function) -> String {
         let mut output = String::new();
@@ -4729,42 +4595,7 @@ impl PerlGenerator {
         }
     }
 
-    fn combine_adjacent_brace_expansions(&mut self, args: &[Word]) -> Vec<String> {
-        let mut result = Vec::new();
-        let mut i = 0;
-        
-        while i < args.len() {
-            if let Word::BraceExpansion(expansion) = &args[i] {
-                // Check if the next argument is also a brace expansion
-                if i + 1 < args.len() {
-                    if let Word::BraceExpansion(next_expansion) = &args[i + 1] {
-                        // We have two adjacent brace expansions - combine them
-                        let left_items = self.expand_brace_expansion_to_strings(expansion);
-                        let right_items = self.expand_brace_expansion_to_strings(next_expansion);
-                        
-                        // Generate cartesian product
-                        for left in &left_items {
-                            for right in &right_items {
-                                result.push(format!("{}{}", left, right));
-                            }
-                        }
-                        i += 2; // Skip both expansions
-                        continue;
-                    }
-                }
-                
-                // Single brace expansion
-                let expanded = self.expand_brace_expansion_to_strings(expansion);
-                result.extend(expanded);
-            } else {
-                // Non-brace expansion word
-                result.push(self.word_to_perl(&args[i]));
-            }
-            i += 1;
-        }
-        
-        result
-    }
+    // Removed unused combine_adjacent_brace_expansions method
 
     fn expand_brace_expansion_to_strings(&self, expansion: &BraceExpansion) -> Vec<String> {
         let mut results = Vec::new();
@@ -5021,19 +4852,7 @@ impl PerlGenerator {
         }
     }
 
-    fn apply_parameter_expansion(&self, base_var: &str, operator: &str) -> String {
-        match operator {
-            "^^" => format!("uc(${})", base_var),
-            ",," => format!("lc(${})", base_var),
-            "^" => format!("ucfirst(${})", base_var),
-            "##*/" => format!("basename(${})", base_var),
-            "%/*" => format!("dirname(${})", base_var),
-            "//" => format!("${} =~ s///g", base_var), // Placeholder for pattern replacement
-            "#" => format!("${} =~ s/^{}//", base_var, ""), // Placeholder for pattern
-            "%" => format!("${} =~ s/{}$//", base_var, ""), // Placeholder for pattern
-            _ => format!("${}", base_var)
-        }
-    }
+    // Removed unused apply_parameter_expansion method
 
     fn generate_parameter_expansion(&self, pe: &ParameterExpansion) -> String {
         match &pe.operator {
@@ -5570,14 +5389,7 @@ impl PerlGenerator {
         }
     }
 
-    fn generate_array_name(&self, array_name: &str) -> String {
-        // Convert shell array name to Perl array name
-        if array_name.starts_with('$') {
-            array_name[1..].to_string()
-        } else {
-            array_name.to_string()
-        }
-    }
+    // Removed unused generate_array_name method
 
     /// Collect variables used in arithmetic expressions within a block
     fn collect_arithmetic_variables(&self, block: &Block, vars: &mut Vec<String>) {
