@@ -71,16 +71,6 @@ impl Default for AstFormatOptions {
 }
 
 impl AstFormatOptions {
-    fn format_ast(&self, commands: &[crate::ast::Command]) -> String {
-        if self.compact {
-            // Use compact format without pretty printing
-            format!("{:?}", commands)
-        } else {
-            // Use pretty format with indentation
-            format!("{:#?}", commands)
-        }
-    }
-    
     fn format_ast_with_options(&self, commands: &[crate::ast::Command]) -> String {
         if self.compact {
             // Use compact format without pretty printing
@@ -1698,19 +1688,7 @@ fn test_all_examples() {
     println!("{}", "=".repeat(80));
 }
 
-/// Truncate output to specified number of lines, adding ellipsis if truncated
-fn truncate_output(output: &str, max_lines: usize) -> String {
-    let lines: Vec<&str> = output.lines().collect();
-    if lines.len() <= max_lines {
-        output.to_string()
-    } else {
-        let mut result = lines[..max_lines].join("\n");
-        result.push_str("\n... (truncated, showing first ");
-        result.push_str(&max_lines.to_string());
-        result.push_str(" lines)");
-        result
-    }
-}
+
 
 /// Generate unified diff format for comparing two strings
 fn generate_unified_diff(expected: &str, actual: &str, expected_label: &str, actual_label: &str) -> String {

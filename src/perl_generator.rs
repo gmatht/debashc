@@ -2319,27 +2319,13 @@ impl PerlGenerator {
             }
             
             match operator.as_str() {
-                "-lt" => {
-                    output.push_str(&format!("{} < {}", operand1, operand2));
-                }
-                "-le" => {
-                    output.push_str(&format!("{} <= {}", operand1, operand2));
-                }
-                "-eq" => {
-                    output.push_str(&format!("{} == {}", operand1, operand2));
-                }
-                "-ne" => {
-                    output.push_str(&format!("{} != {}", operand1, operand2));
-                }
-                "-gt" => {
-                    output.push_str(&format!("{} > {}", operand1, operand2));
-                }
-                "-ge" => {
-                    output.push_str(&format!("{} >= {}", operand1, operand2));
-                }
-                _ => {
-                    output.push_str(&format!("{} {} {}", operand1, operator, operand2));
-                }
+                "-lt" => output.push_str(&format!("{} < {}", operand1, operand2)),
+                "-le" => output.push_str(&format!("{} <= {}", operand1, operand2)),
+                "-eq" => output.push_str(&format!("{} == {}", operand1, operand2)),
+                "-ne" => output.push_str(&format!("{} != {}", operand1, operand2)),
+                "-gt" => output.push_str(&format!("{} > {}", operand1, operand2)),
+                "-ge" => output.push_str(&format!("{} >= {}", operand1, operand2)),
+                _ => output.push_str(&format!("{} {} {}", operand1, operator, operand2)),
             }
         } else if cmd.args.len() >= 2 {
             let operator = &cmd.args[0];
@@ -2353,15 +2339,8 @@ impl PerlGenerator {
                 }
             }
             
-            match operator.as_str() {
-                "-f" | "-d" | "-e" | "-r" | "-w" | "-x" | "-z" | "-n" => {
-                    let perl_op = if operator == "-n" { "-s" } else { operator };
-                    output.push_str(&format!("{} {}", perl_op, self.word_to_perl_for_test(operand)));
-                }
-                _ => {
-                    output.push_str(&format!("{} {} {}", self.word_to_perl_for_test(operand), operator, self.word_to_perl_for_test(operand)));
-                }
-            }
+            let perl_op = if operator == "-n" { "-s" } else { operator };
+            output.push_str(&format!("{} {}", perl_op, self.word_to_perl_for_test(operand)));
         }
     }
 
@@ -3061,13 +3040,7 @@ impl PerlGenerator {
                             for arg in &args_to_process {
                                 if let Word::Literal(s) = arg {
                                     // Convert escape sequences to Perl format
-                                    let processed = s
-                                        .replace("\\n", "\\n")
-                                        .replace("\\t", "\\t")
-                                        .replace("\\r", "\\r")
-                                        .replace("\\b", "\\b")
-                                        .replace("\\a", "\\a")
-                                        .replace("\\v", "\\v");
+                                    let processed = s;
                                     parts.push(format!("\"{}\"", processed));
                                 } else {
                                     parts.push(self.word_to_perl(arg));

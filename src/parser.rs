@@ -1612,41 +1612,7 @@ impl Parser {
         Ok(words)
     }
 
-    fn parse_brace_word(&mut self) -> Result<String, ParserError> {
-        // Capture from '{' to matching '}' and return the exact substring
-        let (start, _end) = self
-            .lexer
-            .get_span()
-            .ok_or(ParserError::UnexpectedEOF)?;
 
-        // consume '{'
-        self.lexer.next();
-        let mut depth: i32 = 1;
-        loop {
-            if self.lexer.is_eof() {
-                return Err(ParserError::InvalidSyntax(
-                    "Unterminated brace expansion".to_string(),
-                ));
-            }
-
-            // capture current token span, then consume
-            if let Some((_, end)) = self.lexer.get_span() {
-                match self.lexer.peek() {
-                    Some(Token::BraceOpen) => depth += 1,
-                    Some(Token::BraceClose) => depth -= 1,
-                    _ => {}
-                }
-                // consume current token
-                self.lexer.next();
-
-                if depth == 0 {
-                    return Ok(self.lexer.get_text(start, end));
-                }
-            } else {
-                return Err(ParserError::UnexpectedEOF);
-            }
-        }
-    }
 
     fn parse_brace_expansion(&mut self) -> Result<Word, ParserError> {
         // Parse brace expansions like {1..5}, {a,b,c}, {prefix,{1..3},suffix}
@@ -2430,42 +2396,7 @@ impl Parser {
         }
     }
 
-    fn capture_arithmetic_text(&mut self) -> Result<String, ParserError> {
-        // We are at $((' start. Capture until matching '))'
-        // The lexer token for start is DollarParen for $( and Arithmetic for $((
-        // Our lexer provides Arithmetic for '$((' specifically.
-        let mut text = String::new();
-        if let Some((start, end)) = self.lexer.get_span() {
-            text.push_str(&self.lexer.get_text(start, end));
-            self.lexer.next(); // consume $(('
-        } else {
-            return Err(ParserError::UnexpectedEOF);
-        }
 
-        // Arithmetic token corresponds to '$((' which is two opening parens
-        let mut depth: i32 = 2;
-        while !self.lexer.is_eof() && depth > 0 {
-            if let Some((start, end)) = self.lexer.get_span() {
-                match self.lexer.peek() {
-                    Some(Token::Arithmetic) => { 
-                        depth += 2; 
-                        text.push_str(&self.lexer.get_text(start, end));
-                    }
-                    Some(Token::ParenClose) => {
-                        depth -= 1;
-                        text.push_str(&self.lexer.get_text(start, end));
-                    }
-                    _ => {
-                        text.push_str(&self.lexer.get_text(start, end));
-                    }
-                }
-                self.lexer.next();
-            } else {
-                break;
-            }
-        }
-        Ok(text)
-    }
 
     fn parse_ansic_quoted_string(&mut self) -> Result<Word, ParserError> {
         // Parse ANSI-C quoting strings like $'line1\nline2\tTabbed'

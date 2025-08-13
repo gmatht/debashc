@@ -477,35 +477,7 @@ impl Word {
         }
     }
 
-    /// Split the word by a delimiter
-    pub fn splitn(&self, n: usize, pat: char) -> Vec<String> {
-        match self {
-            Word::Literal(s) => s.splitn(n, pat).map(|s| s.to_string()).collect(),
-            Word::Variable(var) => var.splitn(n, pat).map(|s| s.to_string()).collect(),
-            Word::ParameterExpansion(pe) => pe.variable.splitn(n, pat).map(|s| s.to_string()).collect(),
-            Word::Array(name, elements) => {
-                let mut result = name.splitn(n, pat).map(|s| s.to_string()).collect::<Vec<_>>();
-                if result.len() < n {
-                    for element in elements {
-                        if result.len() >= n { break; }
-                        result.extend(element.splitn(n - result.len(), pat).map(|s| s.to_string()));
-                    }
-                }
-                result
-            },
-            Word::MapAccess(map_name, key) => {
-                let mut result = map_name.splitn(n, pat).map(|s| s.to_string()).collect::<Vec<_>>();
-                if result.len() < n {
-                    result.extend(key.splitn(n - result.len(), pat).map(|s| s.to_string()));
-                }
-                result
-            }
-            Word::MapKeys(map_name) => map_name.splitn(n, pat).map(|s| s.to_string()).collect(),
-            Word::MapLength(map_name) => map_name.splitn(n, pat).map(|s| s.to_string()).collect(),
-            Word::Arithmetic(expr) => expr.expression.splitn(n, pat).map(|s| s.to_string()).collect(),
-            _ => vec![self.to_string()],
-        }
-    }
+
 
     /// Strip a prefix from the word
     pub fn strip_prefix(&self, prefix: &str) -> Option<String> {
@@ -584,28 +556,7 @@ impl Word {
         }
     }
 
-    /// Replace occurrences of a character in the word
-    pub fn replace_char(&self, from: char, to: &str) -> String {
-        match self {
-            Word::Literal(s) => s.replace(from, to),
-            Word::Variable(var) => var.replace(from, to),
-            Word::ParameterExpansion(pe) => pe.variable.replace(from, to),
-            Word::Array(name, elements) => {
-                let new_name = name.replace(from, to);
-                let new_elements: Vec<String> = elements.iter().map(|e| e.replace(from, to)).collect();
-                format!("{}=({})", new_name, new_elements.join(" "))
-            },
-            Word::MapAccess(map_name, key) => {
-                let new_map_name = map_name.replace(from, to);
-                let new_key = key.replace(from, to);
-                format!("{}[{}]", new_map_name, new_key)
-            }
-            Word::MapKeys(map_name) => map_name.replace(from, to),
-            Word::MapLength(map_name) => map_name.replace(from, to),
-            Word::Arithmetic(expr) => expr.expression.replace(from, to),
-            _ => self.to_string(),
-        }
-    }
+
 }
 
 impl std::ops::Deref for Word {
@@ -645,17 +596,14 @@ impl PartialEq<String> for Word {
     }
 }
 
+
+
 /// Helper trait for converting Vec<Word> to Vec<String>
 pub trait WordVecExt {
-    fn to_strings(&self) -> Vec<String>;
     fn join(&self, separator: &str) -> String;
 }
 
 impl WordVecExt for Vec<Word> {
-    fn to_strings(&self) -> Vec<String> {
-        self.iter().map(|w| w.to_string()).collect()
-    }
-    
     fn join(&self, separator: &str) -> String {
         self.iter().map(|w| w.to_string()).collect::<Vec<_>>().join(separator)
     }

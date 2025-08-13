@@ -205,17 +205,7 @@
             background-color: #e8690b !important; /* Darker orange on hover */
         }
         
-        /* Other "To..." buttons styling */
-        #python-btn, #lua-btn, #c-btn, #js-btn, #english-btn, #french-btn, #bat-btn, #ps-btn {
-            background-color: #dc3545 !important; /* Red */
-            font-size: 11px !important;
-            padding: 6px 10px !important;
-            min-width: 60px !important;
-        }
-        
-        #python-btn:hover, #lua-btn:hover, #c-btn:hover, #js-btn:hover, #english-btn:hover, #french-btn:hover, #bat-btn:hover, #ps-btn:hover {
-            background-color: #c82333 !important; /* Darker red on hover */
-        }
+
         
         .output-section {
             margin-top: 20px;
@@ -319,16 +309,6 @@
                 <!-- Main Generators -->
                 <button id="perl-btn" class="main-generator">To Perl</button>
                 <button id="rust-btn" class="main-generator">To Rust</button>
-                
-                <!-- Experimental Generators -->
-                <button id="python-btn">To Python</button>
-                <button id="lua-btn">To Lua</button>
-                <button id="c-btn">To C</button>
-                <button id="js-btn">To JS</button>
-                <button id="english-btn">To English</button>
-                <button id="french-btn">To French</button>
-                <button id="bat-btn">To Batch</button>
-                <button id="ps-btn">To PowerShell</button>
             </div>
             
             <div class="output-section">
@@ -549,30 +529,6 @@
                     case 'rust':
                         result = debashc.to_rust(input);
                         break;
-                    case 'python':
-                        result = debashc.to_python(input);
-                        break;
-                    case 'lua':
-                        result = debashc.to_lua(input);
-                        break;
-                    case 'c':
-                        result = debashc.to_c(input);
-                        break;
-                    case 'js':
-                        result = debashc.to_js(input);
-                        break;
-                    case 'english':
-                        result = debashc.to_english(input);
-                        break;
-                    case 'french':
-                        result = debashc.to_french(input);
-                        break;
-                    case 'bat':
-                        result = debashc.to_bat(input);
-                        break;
-                    case 'ps':
-                        result = debashc.to_ps(input);
-                        break;
                     default:
                         throw new Error('Unknown operation');
                 }
@@ -592,14 +548,6 @@
             document.getElementById('parse-btn').addEventListener('click', () => { currentOperation = 'parse'; executeOperation('parse'); });
             document.getElementById('perl-btn').addEventListener('click', () => { currentOperation = 'perl'; executeOperation('perl'); });
             document.getElementById('rust-btn').addEventListener('click', () => { currentOperation = 'rust'; executeOperation('rust'); });
-            document.getElementById('python-btn').addEventListener('click', () => executeOperation('python'));
-            document.getElementById('lua-btn').addEventListener('click', () => executeOperation('lua'));
-            document.getElementById('c-btn').addEventListener('click', () => executeOperation('c'));
-            document.getElementById('js-btn').addEventListener('click', () => executeOperation('js'));
-            document.getElementById('english-btn').addEventListener('click', () => { currentOperation = 'english'; executeOperation('english'); });
-            document.getElementById('french-btn').addEventListener('click', () => { currentOperation = 'french'; executeOperation('french'); });
-            document.getElementById('bat-btn').addEventListener('click', () => executeOperation('bat'));
-            document.getElementById('ps-btn').addEventListener('click', () => executeOperation('ps'));
             
             // Add automatic output updates after typing stops
             setupAutoUpdate();
