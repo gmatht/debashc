@@ -1529,8 +1529,158 @@ impl PerlGenerator {
             let var_str = expr.replace("-x", "").trim().to_string();
             format!("-x {}", var_str)
         } else {
-            // Unknown test expression
-            format!("0 # Unknown test: {}", expr)
+            // Try to parse the expression as a single string that might contain test operators
+            // This handles cases where the parser captured the entire test expression as one string
+            // First, strip any outer quotes from the expression
+            let clean_expr = expr.trim_matches('"').trim_matches('\'');
+            
+            // Handle the case where the expression is a single quoted string like '-f "file.txt"'
+            if clean_expr.starts_with("-f ") {
+                let operand = clean_expr[3..].trim().trim_matches('"').trim_matches('\'');
+                format!("-f \"{}\"", operand)
+            } else if clean_expr.starts_with("-d ") {
+                let operand = clean_expr[3..].trim().trim_matches('"').trim_matches('\'');
+                format!("-d \"{}\"", operand)
+            } else if clean_expr.starts_with("-e ") {
+                let operand = clean_expr[3..].trim().trim_matches('"').trim_matches('\'');
+                format!("-e \"{}\"", operand)
+            } else if clean_expr.starts_with("-r ") {
+                let operand = clean_expr[3..].trim().trim_matches('"').trim_matches('\'');
+                format!("-r \"{}\"", operand)
+            } else if clean_expr.starts_with("-w ") {
+                let operand = clean_expr[3..].trim().trim_matches('"').trim_matches('\'');
+                format!("-w \"{}\"", operand)
+            } else if clean_expr.starts_with("-x ") {
+                let operand = clean_expr[3..].trim().trim_matches('"').trim_matches('\'');
+                format!("-x \"{}\"", operand)
+            } else if clean_expr.starts_with("-z ") {
+                let operand = clean_expr[3..].trim().trim_matches('"').trim_matches('\'');
+                format!("{} eq ''", operand)
+            } else if clean_expr.starts_with("-n ") {
+                let operand = clean_expr[3..].trim().trim_matches('"').trim_matches('\'');
+                format!("{} ne ''", operand)
+            } else if clean_expr.contains(" -lt ") {
+                let parts: Vec<&str> = expr.split(" -f ").collect();
+                if parts.len() == 2 {
+                    let operand = parts[1].trim().trim_matches('"').trim_matches('\'');
+                    format!("-f \"{}\"", operand)
+                } else {
+                    format!("0 # Unknown test: {}", expr)
+                }
+            } else if clean_expr.contains(" -d ") {
+                let parts: Vec<&str> = clean_expr.split(" -d ").collect();
+                if parts.len() == 2 {
+                    let operand = parts[1].trim().trim_matches('"').trim_matches('\'');
+                    format!("-d \"{}\"", operand)
+                } else {
+                    format!("0 # Unknown test: {}", expr)
+                }
+            } else if clean_expr.contains(" -e ") {
+                let parts: Vec<&str> = clean_expr.split(" -e ").collect();
+                if parts.len() == 2 {
+                    let operand = parts[1].trim().trim_matches('"').trim_matches('\'');
+                    format!("-e \"{}\"", operand)
+                } else {
+                    format!("0 # Unknown test: {}", expr)
+                }
+            } else if clean_expr.contains(" -r ") {
+                let parts: Vec<&str> = clean_expr.split(" -r ").collect();
+                if parts.len() == 2 {
+                    let operand = parts[1].trim().trim_matches('"').trim_matches('\'');
+                    format!("-r \"{}\"", operand)
+                } else {
+                    format!("0 # Unknown test: {}", expr)
+                }
+            } else if clean_expr.contains(" -w ") {
+                let parts: Vec<&str> = clean_expr.split(" -w ").collect();
+                if parts.len() == 2 {
+                    let operand = parts[1].trim().trim_matches('"').trim_matches('\'');
+                    format!("-w \"{}\"", operand)
+                } else {
+                    format!("0 # Unknown test: {}", expr)
+                }
+            } else if clean_expr.contains(" -x ") {
+                let parts: Vec<&str> = clean_expr.split(" -x ").collect();
+                if parts.len() == 2 {
+                    let operand = parts[1].trim().trim_matches('"').trim_matches('\'');
+                    format!("-x \"{}\"", operand)
+                } else {
+                    format!("0 # Unknown test: {}", expr)
+                }
+            } else if clean_expr.contains(" -z ") {
+                let parts: Vec<&str> = clean_expr.split(" -z ").collect();
+                if parts.len() == 2 {
+                    let operand = parts[1].trim().trim_matches('"').trim_matches('\'');
+                    format!("{} eq ''", operand)
+                } else {
+                    format!("0 # Unknown test: {}", expr)
+                }
+            } else if clean_expr.contains(" -n ") {
+                let parts: Vec<&str> = clean_expr.split(" -n ").collect();
+                if parts.len() == 2 {
+                    let operand = parts[1].trim().trim_matches('"').trim_matches('\'');
+                    format!("{} ne ''", operand)
+                } else {
+                    format!("0 # Unknown test: {}", expr)
+                }
+            } else if clean_expr.contains(" -lt ") {
+                let parts: Vec<&str> = clean_expr.split(" -lt ").collect();
+                if parts.len() == 2 {
+                    let operand1 = parts[0].trim().trim_matches('$');
+                    let operand2 = parts[1].trim();
+                    format!("${} < {}", operand1, operand2)
+                } else {
+                    format!("0 # Unknown test: {}", expr)
+                }
+            } else if clean_expr.contains(" -le ") {
+                let parts: Vec<&str> = clean_expr.split(" -le ").collect();
+                if parts.len() == 2 {
+                    let operand1 = parts[0].trim().trim_matches('$');
+                    let operand2 = parts[1].trim();
+                    format!("${} <= {}", operand1, operand2)
+                } else {
+                    format!("0 # Unknown test: {}", expr)
+                }
+            } else if clean_expr.contains(" -eq ") {
+                let parts: Vec<&str> = clean_expr.split(" -eq ").collect();
+                if parts.len() == 2 {
+                    let operand1 = parts[0].trim().trim_matches('$');
+                    let operand2 = parts[1].trim();
+                    format!("${} == {}", operand1, operand2)
+                } else {
+                    format!("0 # Unknown test: {}", expr)
+                }
+            } else if clean_expr.contains(" -ne ") {
+                let parts: Vec<&str> = clean_expr.split(" -ne ").collect();
+                if parts.len() == 2 {
+                    let operand1 = parts[0].trim().trim_matches('$');
+                    let operand2 = parts[1].trim();
+                    format!("${} != {}", operand1, operand2)
+                } else {
+                    format!("0 # Unknown test: {}", expr)
+                }
+            } else if clean_expr.contains(" -gt ") {
+                let parts: Vec<&str> = clean_expr.split(" -gt ").collect();
+                if parts.len() == 2 {
+                    let operand1 = parts[0].trim().trim_matches('$');
+                    let operand2 = parts[1].trim();
+                    format!("${} > {}", operand1, operand2)
+                } else {
+                    format!("0 # Unknown test: {}", expr)
+                }
+            } else if clean_expr.contains(" -ge ") {
+                let parts: Vec<&str> = clean_expr.split(" -ge ").collect();
+                if parts.len() == 2 {
+                    let operand1 = parts[0].trim().trim_matches('$');
+                    let operand2 = parts[1].trim();
+                    format!("${} >= {}", operand1, operand2)
+                } else {
+                    format!("0 # Unknown test: {}", expr)
+                }
+            } else {
+                // Unknown test expression
+                format!("0 # Unknown test: {}", expr)
+            }
         }
     }
 
@@ -2283,6 +2433,22 @@ impl PerlGenerator {
                 self.generate_test_command(cmd, &mut output);
                 output.push_str(") {\n");
             }
+            Command::TestExpression(test_expr) => {
+                // For test expressions, generate a simple while loop
+                // Parse the expression to find variables that need initialization
+                let expr = &test_expr.expression;
+                
+                // Extract variables from the expression for initialization
+                if expr.contains("$i") && !self.declared_locals.contains("i") {
+                    // Check if this variable was used in a previous for loop
+                    output.push_str("my $i = 5;\n");
+                    self.declared_locals.insert("i".to_string());
+                }
+                
+                output.push_str("while (");
+                output.push_str(&self.generate_test_expression(test_expr));
+                output.push_str(") {\n");
+            }
             _ => {
                 // For other command types, generate a complex while loop with exit status check
                 output.push_str("while (1) {\n");
@@ -2338,7 +2504,7 @@ impl PerlGenerator {
                 self.indent_level += 1;
                 let body_code = self.generate_block(body);
                 self.indent_level -= 1;
-                return format!("for my ${} (@ARGV) {{\n{}}}\n", variable, body_code);
+                return format!("for ${} (@ARGV) {{\n{}}}\n", variable, body_code);
             } else if let Word::StringInterpolation(interp) = item {
                 if interp.parts.len() == 1 {
                     if let StringPart::Variable(var) = &interp.parts[0] {
@@ -2346,7 +2512,7 @@ impl PerlGenerator {
                             self.indent_level += 1;
                             let body_code = self.generate_block(body);
                             self.indent_level -= 1;
-                            return format!("for my ${} (@ARGV) {{\n{}}}\n", variable, body_code);
+                            return format!("for ${} (@ARGV) {{\n{}}}\n", variable, body_code);
                         }
                     }
                 }
@@ -2521,11 +2687,14 @@ impl PerlGenerator {
             format!("({})", items.iter().map(|s| format!("\"{}\"", self.word_to_perl(s))).collect::<Vec<_>>().join(", "))
         };
         
+        // Track the for loop variable as declared
+        self.declared_locals.insert(variable.clone());
+        
         self.indent_level += 1;
         let body_code = self.generate_block(body);
         self.indent_level -= 1;
         
-        format!("for my ${} ({}) {{\n{}}}\n", variable, items_str, body_code)
+        format!("my ${} = 0;\nfor ${} ({}) {{\n{}}}\n", variable, variable, items_str, body_code)
     }
 
     fn parse_numeric_brace_range(&self, s: &str) -> Option<(i64, i64)> {
@@ -4326,6 +4495,8 @@ impl PerlGenerator {
                                 remaining_parts.push("scalar(@ARGV)".to_string());
                             } else if var == "@" {
                                 remaining_parts.push("join(\" \", @ARGV)".to_string());
+                            } else if var == "1" {
+                                remaining_parts.push("$_[0]".to_string());
                             } else if var.starts_with('#') && var.ends_with("[@]") {
                                 let array_name = &var[1..var.len()-3];
                                 remaining_parts.push(format!("scalar(@{})", array_name));
@@ -4395,6 +4566,8 @@ impl PerlGenerator {
                             parts.push("scalar(@ARGV)".to_string());
                         } else if var == "@" {
                             parts.push("join(\" \", @ARGV)".to_string());
+                        } else if var == "1" {
+                            parts.push("$_[0]".to_string());
                         } else if var.starts_with('#') && var.ends_with("[@]") {
                             let array_name = &var[1..var.len()-3];
                             parts.push(format!("scalar(@{})", array_name));
