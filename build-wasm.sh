@@ -2,6 +2,8 @@
 
 # Build script for WASM target with incremental builds
 
+cargo run --bin convert_examples
+
 echo "Checking if WASM rebuild is needed..."
 
 # Check if wasm-pack is installed
