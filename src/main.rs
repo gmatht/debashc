@@ -202,9 +202,18 @@ fn main() {
             // Disable DEBUG output for --next-fail mode
             set_debug_enabled(false);
             
-            // Parse optional generator list after --next-fail
+            // Parse optional test number, generator list, and AST options after --next-fail
+            let mut test_number: Option<usize> = None;
             let mut generators = Vec::new();
             let mut i = 2;
+            
+            // Check if first argument is a number (test number)
+            if i < args.len() {
+                if let Ok(num) = args[i].parse::<usize>() {
+                    test_number = Some(num);
+                    i += 1;
+                }
+            }
             
             // Collect generators until we hit an AST option or run out of args
             while i < args.len() {
@@ -232,7 +241,7 @@ fn main() {
                 generators = vec!["perl", "python", "rust", "lua", "js", "ps"].into_iter().map(|s| s.to_string()).collect();
             }
             
-            test_all_examples_next_fail(&generators);
+            test_all_examples_next_fail(&generators, test_number);
         }
         "lex" => {
             if args.len() < 3 {
@@ -438,9 +447,18 @@ fn main() {
             // Disable DEBUG output for fail mode
             set_debug_enabled(false);
             
-            // Parse optional generator list after fail
+            // Parse optional test number, generator list, and AST options after fail
+            let mut test_number: Option<usize> = None;
             let mut generators = Vec::new();
             let mut i = 2;
+            
+            // Check if first argument is a number (test number)
+            if i < args.len() {
+                if let Ok(num) = args[i].parse::<usize>() {
+                    test_number = Some(num);
+                    i += 1;
+                }
+            }
             
             // Collect generators until we hit an AST option or run out of args
             while i < args.len() {
@@ -468,7 +486,7 @@ fn main() {
                 generators = vec!["perl", "python", "rust", "lua", "js", "ps"].into_iter().map(|s| s.to_string()).collect();
             }
             
-            test_all_examples_next_fail(&generators);
+            test_all_examples_next_fail(&generators, test_number);
         }
         _ => {
             // Handle input file option
@@ -1725,7 +1743,7 @@ fn generate_unified_diff(expected: &str, actual: &str, expected_label: &str, act
     diff
 }
 
-fn test_all_examples_next_fail(generators: &[String]) {
+fn test_all_examples_next_fail(generators: &[String], test_number: Option<usize>) {
     // Filter to only available generators
     let generators: Vec<_> = generators.iter()
         .filter(|g| {
@@ -1766,18 +1784,40 @@ fn test_all_examples_next_fail(generators: &[String]) {
     let mut current_test = 0;
     let total_tests = examples.len() * generators.len();
     
-    if generators.len() == 1 {
-        println!("\nRunning {} tests across {} examples with {} generator", 
-                 total_tests, examples.len(), generators[0]);
+    // If a specific test number is requested, calculate which test to run
+    let target_test = if let Some(num) = test_number {
+        if num < 1 || num > total_tests {
+            println!("Error: Test number {} is out of range. Valid range is 1-{}", num, total_tests);
+            std::process::exit(1);
+        }
+        Some(num)
     } else {
-        println!("\nRunning {} tests across {} examples and {} generators", 
-                 total_tests, examples.len(), generators.len());
+        None
+    };
+    
+    if let Some(target) = target_test {
+        println!("\nRunning only test {} out of {} total tests", target, total_tests);
+    } else {
+        if generators.len() == 1 {
+            println!("\nRunning {} tests across {} examples with {} generator", 
+                     total_tests, examples.len(), generators[0]);
+        } else {
+            println!("\nRunning {} tests across {} examples and {} generators", 
+                     total_tests, examples.len(), generators.len());
+        }
     }
     println!("{}", "=".repeat(50));
     
     for generator in &generators {
     for example in &examples {
             current_test += 1;
+            
+            // Skip tests until we reach the target test number
+            if let Some(target) = target_test {
+                if current_test != target {
+                    continue;
+                }
+            }
             print!("\rTest {}/{}: {} with {:<8} ", 
                   current_test, total_tests, 
                   example.replace("examples/", "").replace("examples\\", ""), 
@@ -1790,6 +1830,32 @@ fn test_all_examples_next_fail(generators: &[String]) {
                     if result.success {
                         passed_tests += 1;
                         print!("✓");
+                        
+                        // If we're running only one specific test and it passed, show results and exit
+                        if let Some(_) = target_test {
+                            println!("\n\n");
+                            println!("{}", "=".repeat(80));
+                            println!("                                    TEST PASSED");
+                            println!("{}", "=".repeat(80));
+                            println!("File: {}", example);
+                            println!("Generator: {}", generator);
+                            println!("Test: {}/{}", current_test, total_tests);
+                            println!("{}", "=".repeat(80));
+                            
+                            // Show original code
+                            println!("\nORIGINAL SHELL SCRIPT:");
+                            println!("{}", result.original_code);
+                            
+                            // Show translated code
+                            println!("\nTRANSLATED {} CODE:", generator.to_uppercase());
+                            println!("{}", result.translated_code);
+                            
+                            // Show AST
+                            println!("\nABSTRACT SYNTAX TREE:");
+                            println!("{}", result.ast);
+                            
+                            std::process::exit(0);
+                        }
                     } else {
                         // Test failed - show diff and exit
                         // Clear entire terminal before showing failure
@@ -1897,11 +1963,13 @@ fn test_all_examples_next_fail(generators: &[String]) {
         }
     }
     
-    // All tests passed
-    println!("\n\n");
-    println!("ALL TESTS PASSED! 🎉");
-    println!("Total tests: {}", total_tests);
-    println!("Passed: {} (100%)", passed_tests);
+    // All tests passed (only reached when running all tests, not a specific test)
+    if target_test.is_none() {
+        println!("\n\n");
+        println!("ALL TESTS PASSED! 🎉");
+        println!("Total tests: {}", total_tests);
+        println!("Passed: {} (100%)", passed_tests);
+    }
 }
 
 fn interactive_mode() {
@@ -2006,8 +2074,9 @@ fn show_help(program_name: &str) {
     println!("  --test-file <lang> <filename>  - Compare outputs of .sh vs translated code");
     println!("  file --test-file <lang> <filename> - Same as above");
     println!("  --test-eq                      - Test all generators against all examples");
-    println!("  --next-fail [gen1 gen2 ...]    - Test specified generators (or all if none specified), exit after first failure");
-    println!("  fail [gen1 gen2 ...]           - Shorthand for --next-fail");
+            println!("  --next-fail [NUM] [gen1 gen2 ...] - Test specified generators (or all if none specified), exit after first failure");
+        println!("                                   - If NUM is provided, run only the NUMth test");
+        println!("  fail [NUM] [gen1 gen2 ...]      - Shorthand for --next-fail");
     println!();
     println!("AST FORMATTING OPTIONS (for --next-fail):");
     println!();
@@ -2027,9 +2096,10 @@ fn show_help(program_name: &str) {
     println!("  {} file --perl examples/simple.sh", program_name);
     println!("  {} --test-file perl examples/simple.sh", program_name);
     println!("  {} --test-eq", program_name);
-    println!("  {} --next-fail", program_name);
-    println!("  {} --next-fail perl python", program_name);
-    println!("  {} --next-fail rust --ast-pretty", program_name);
+            println!("  {} --next-fail", program_name);
+        println!("  {} --next-fail 5", program_name);
+        println!("  {} --next-fail perl python", program_name);
+        println!("  {} --next-fail 10 rust --ast-pretty", program_name);
     println!();
     println!("DIRECT EXECUTION EXAMPLES:");
     println!("  {} examples/simple.sh           - Run shell script directly", program_name);
@@ -2047,8 +2117,10 @@ fn show_help(program_name: &str) {
     println!("  Lua, C, JavaScript, and PowerShell. It can also generate pseudocode");
     println!("  in English and French for educational purposes.");
     println!();
-    println!("  The --next-fail command can be used to test specific generators by");
-    println!("  listing them after the command (e.g., --next-fail perl python).");
+            println!("  The --next-fail command can be used to test specific generators by");
+        println!("  listing them after the command (e.g., --next-fail perl python).");
+        println!("  You can also specify a test number to run only that specific test");
+        println!("  (e.g., --next-fail 5 to run only the 5th test).");
     println!();
     println!("  For more information, visit: https://github.com/your-repo/sh2perl");
     println!();

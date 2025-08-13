@@ -14,6 +14,7 @@ pub mod english_generator;
 pub mod french_generator;
 pub mod batch_generator;
 pub mod powershell_generator;
+pub mod cmd;
 
 pub use lexer::*;
 pub use parser::*;

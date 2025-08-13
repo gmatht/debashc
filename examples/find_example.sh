@@ -6,6 +6,12 @@ find . -name "*.txt" -type f
 # Find files modified in the last 7 days
 find . -mtime -7 -type f
 
+# Find files modified in the last 1 day
+find . -mtime -1 -type f
+
+# Find files modified in the last 1 hour
+find . -mmin -60 -type f
+
 # Find files larger than 1MB
 find . -size +1M -type f
 
