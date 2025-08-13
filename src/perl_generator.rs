@@ -174,7 +174,7 @@ impl PerlGenerator {
                     };
                     
                     // Clean up the command string for system call and properly escape it
-                    let clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
+                    let _clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
                     // Use proper Perl system call syntax with list form to avoid shell interpretation
                     output.push_str(&format!("open(my $fh, '>', ${}) or die \"Cannot create temp file: $!\\n\";\n", temp_var));
                     output.push_str(&format!("close($fh);\n"));
@@ -219,9 +219,9 @@ impl PerlGenerator {
                             output.push_str(&format!("print $fh \"{}\";\n", content.replace("\\n", "\n")));
                             output.push_str(&format!("close($fh);\n"));
                         } else {
-                            // For other commands, use system() with proper escaping
-                            let clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
-                            output.push_str(&format!("system('{} > ${}') == 0 or die \"Process substitution failed: $!\\n\";\n", clean_cmd, temp_var));
+                                                    // For other commands, use system() with proper escaping
+                        let _clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
+                        output.push_str(&format!("system('{} > ${}') == 0 or die \"Process substitution failed: $!\\n\";\n", _clean_cmd, temp_var));
                         }
                         process_sub_files.push((temp_var, temp_file));
                     }
@@ -437,6 +437,8 @@ impl PerlGenerator {
             // Special handling for touch with brace expansion support
             if !cmd.args.is_empty() {
                 // For touch, we need to reconstruct the full filename pattern and expand brace expansion
+
+                
                 let mut all_files = Vec::new();
                 
                 // Check if we have a pattern like "file_" + brace_expansion + ".txt"
@@ -620,7 +622,6 @@ impl PerlGenerator {
             }
         } else if cmd.name == "cd" {
             // Special handling for cd with tilde expansion
-            let empty_word = Word::Literal("".to_string());
             
             if cmd.args.is_empty() {
                 // cd without arguments - no-op
@@ -811,7 +812,7 @@ impl PerlGenerator {
             if cmd.args.len() >= 1 {
                 let mut pattern = None;
                 let mut file = None;
-                let mut max_count = None;
+                let mut _max_count = None;
                 let mut show_byte_offset = false;
                 let mut only_matching = false;
                 let mut quiet_mode = false;
@@ -827,8 +828,8 @@ impl PerlGenerator {
                             // Handle flags
                             if s == "-m" && i + 1 < cmd.args.len() {
                                 // -m flag with count
-                                if let Word::Literal(count_str) = &cmd.args[i + 1] {
-                                    max_count = count_str.parse::<usize>().ok();
+                                if let Word::Literal(_count_str) = &cmd.args[i + 1] {
+                                    _max_count = _count_str.parse::<usize>().ok();
                                     i += 1; // Skip the count argument
                                 }
                             } else if s == "-b" {
@@ -847,19 +848,19 @@ impl PerlGenerator {
                                 // -l flag for listing filenames only
                             } else if s == "-A" && i + 1 < cmd.args.len() {
                                 // -A flag with context count (after)
-                                if let Word::Literal(count_str) = &cmd.args[i + 1] {
+                                if let Word::Literal(_count_str) = &cmd.args[i + 1] {
                                     // Store context count for later use
                                     i += 1; // Skip the count argument
                                 }
                             } else if s == "-B" && i + 1 < cmd.args.len() {
                                 // -B flag with context count (before)
-                                if let Word::Literal(count_str) = &cmd.args[i + 1] {
+                                if let Word::Literal(_count_str) = &cmd.args[i + 1] {
                                     // Store context count for later use
                                     i += 1; // Skip the count argument
                                 }
                             } else if s == "-C" && i + 1 < cmd.args.len() {
                                 // -C flag with context count (both)
-                                if let Word::Literal(count_str) = &cmd.args[i + 1] {
+                                if let Word::Literal(_count_str) = &cmd.args[i + 1] {
                                     // Store context count for later use
                                     i += 1; // Skip the count argument
                                 }
@@ -1567,7 +1568,7 @@ impl PerlGenerator {
                                             if perl_code.contains('$') {
                                                 // This is a double-quoted string with variable interpolation
                                                 // Convert it to executable Perl code by replacing shell variables with Perl equivalents
-                                                let mut processed_code = perl_code.clone();
+                                                let processed_code = perl_code.clone();
                                                 
                                                 // Replace $ENV{VAR} with $ENV{VAR} (already in Perl format)
                                                 // Replace other shell variables as needed
@@ -2353,29 +2354,9 @@ impl PerlGenerator {
             }
             
             match operator.as_str() {
-                "-f" => {
-                    output.push_str(&format!("-f {}", self.word_to_perl_for_test(operand)));
-                }
-                "-d" => {
-                    output.push_str(&format!("-d {}", self.word_to_perl_for_test(operand)));
-                }
-                "-e" => {
-                    output.push_str(&format!("-e {}", self.word_to_perl_for_test(operand)));
-                }
-                "-r" => {
-                    output.push_str(&format!("-r {}", self.word_to_perl_for_test(operand)));
-                }
-                "-w" => {
-                    output.push_str(&format!("-w {}", self.word_to_perl_for_test(operand)));
-                }
-                "-x" => {
-                    output.push_str(&format!("-x {}", self.word_to_perl_for_test(operand)));
-                }
-                "-z" => {
-                    output.push_str(&format!("-z {}", self.word_to_perl_for_test(operand)));
-                }
-                "-n" => {
-                    output.push_str(&format!("-s {}", self.word_to_perl_for_test(operand)));
+                "-f" | "-d" | "-e" | "-r" | "-w" | "-x" | "-z" | "-n" => {
+                    let perl_op = if operator == "-n" { "-s" } else { operator };
+                    output.push_str(&format!("{} {}", perl_op, self.word_to_perl_for_test(operand)));
                 }
                 _ => {
                     output.push_str(&format!("{} {} {}", self.word_to_perl_for_test(operand), operator, self.word_to_perl_for_test(operand)));
@@ -2779,10 +2760,10 @@ impl PerlGenerator {
                     } else if cmd.name == "grep" {
                         // Handle grep command with proper flag parsing
                         let mut pattern = None;
-                        let mut max_count = None;
+                        let mut _max_count = None;
                         let mut show_byte_offset = false;
-                        let mut suppress_filename = false;
-                        let mut show_filename = false;
+                        let mut _suppress_filename = false;
+                        let mut _show_filename = false;
                         let mut quiet_mode = false;
                         let mut literal_mode = false;
                         let mut ignore_case = false;
@@ -2801,15 +2782,15 @@ impl PerlGenerator {
                                     if s == "-m" && i + 1 < cmd.args.len() {
                                         // -m flag with count
                                         if let Word::Literal(count_str) = &cmd.args[i + 1] {
-                                            max_count = count_str.parse::<usize>().ok();
+                                            _max_count = count_str.parse::<usize>().ok();
                                             i += 1; // Skip the count argument
                                         }
                                     } else if s == "-b" {
                                         show_byte_offset = true;
                                     } else if s == "-h" {
-                                        suppress_filename = true;
+                                        _suppress_filename = true;
                                     } else if s == "-H" {
-                                        show_filename = true;
+                                        _show_filename = true;
                                     } else if s == "-q" {
                                         quiet_mode = true;
                                     } else if s == "-F" {
@@ -3029,7 +3010,7 @@ impl PerlGenerator {
                                 output.push_str(&format!("for my $line (split(/\\n/, $output_{})) {{\n", pipeline_id));
                                 
                                 // Check if we've reached max count
-                                if let Some(max) = max_count {
+                                if let Some(max) = _max_count {
                                     output.push_str(&format!("    last if $count_{} >= {};\n", pipeline_id, max));
                                 }
                                 
@@ -4498,22 +4479,6 @@ impl PerlGenerator {
                 }
             }
             Word::CommandSubstitution(_) => "`command`".to_string(),
-            Word::StringInterpolation(interp) => {
-                // For function arguments, we need quoted strings
-                // If it's just a single literal part, wrap it in quotes
-                if interp.parts.len() == 1 {
-                    if let StringPart::Literal(s) = &interp.parts[0] {
-                        return format!("\"{}\"", self.escape_perl_string(s));
-                    }
-                    // If it's just a single parameter expansion part, return it without quotes
-                    if let StringPart::ParameterExpansion(pe) = &interp.parts[0] {
-                        return self.generate_parameter_expansion(pe);
-                    }
-                }
-                // For more complex interpolations, wrap the result in quotes
-                let content = self.convert_string_interpolation_to_perl(interp);
-                format!("\"{}\"", content)
-            },
             Word::Variable(var) => {
                 // First try to extract parameter expansion operators using the helper method
                 if let Some(pe) = self.extract_parameter_expansion(var) {
@@ -5728,7 +5693,7 @@ impl PerlGenerator {
         match command {
             Command::Simple(simple_cmd) => {
                 // Check for arithmetic expressions in environment variables (assignments)
-                for (var, value) in &simple_cmd.env_vars {
+                for (_var, value) in &simple_cmd.env_vars {
                     if let Word::Arithmetic(arithmetic) = value {
                         self.collect_variables_from_arithmetic_expression(&arithmetic.expression, vars);
                     }
@@ -5741,7 +5706,7 @@ impl PerlGenerator {
             }
             Command::BuiltinCommand(builtin_cmd) => {
                 // Check for arithmetic expressions in environment variables (assignments)
-                for (var, value) in &builtin_cmd.env_vars {
+                for (_var, value) in &builtin_cmd.env_vars {
                     if let Word::Arithmetic(arithmetic) = value {
                         self.collect_variables_from_arithmetic_expression(&arithmetic.expression, vars);
                     }

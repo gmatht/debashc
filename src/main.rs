@@ -36,7 +36,7 @@ use std::time::Duration;
 use std::thread;
 
 // Use the debug module for controlling DEBUG output
-use debashl::{debug_println, debug_eprintln, debug::set_debug_enabled};
+use debashl::{debug_println, debug::set_debug_enabled};
 
 #[derive(Debug)]
 struct TestResult {
@@ -822,7 +822,7 @@ fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
     let trans_stdout = String::from_utf8_lossy(&translated_output.stdout).to_string().replace("\r\n", "\n").trim().to_string();
     let trans_stderr = String::from_utf8_lossy(&translated_output.stderr).to_string().replace("\r\n", "\n").trim().to_string();
     let shell_success = shell_output.status.success();
-    let trans_success = translated_output.status.success();
+    let _trans_success = translated_output.status.success();
 
     // Limit output to first 200 characters for readability
     let truncate_output = |s: &str| -> String {
@@ -1059,12 +1059,12 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
     let trans_stdout = String::from_utf8_lossy(&translated_output.stdout).to_string().replace("\r\n", "\n").trim().to_string();
     let trans_stderr = String::from_utf8_lossy(&translated_output.stderr).to_string().replace("\r\n", "\n").trim().to_string();
     let shell_success = shell_output.status.success();
-    let trans_success = translated_output.status.success();
+    let _trans_success = translated_output.status.success();
 
     // Determine success based on exit status matching
     // If both programs have the same exit status, that's success
     // If both failed (exit status != 0), that's also success since behavior matches
-    let success = shell_success == trans_success;
+    let success = shell_success == _trans_success;
 
     // Cleanup WSL script file
     let _ = fs::remove_file("__wsl_script.sh");

@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-use std::collections::HashMap;
+// use std::collections::HashMap;
 
 fn escape_js(content: &str) -> String {
     let mut result = String::new();

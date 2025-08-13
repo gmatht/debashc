@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::shared_utils::SharedUtils;
+// use crate::shared_utils::SharedUtils;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Static counter for generating unique temp file names
@@ -115,7 +115,7 @@ impl<T: SimpleCommandHandler> SimpleCommandHandler for T {
                     };
                     
                     // Clean up the command string for system call and properly escape it
-                    let clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
+                    let _clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
                     // Use proper Perl system call syntax with list form to avoid shell interpretation
                     output.push_str(&format!("open(my $fh, '>', ${}) or die \"Cannot create temp file: $!\\n\";\n", temp_var));
                     output.push_str(&format!("close($fh);\n"));
@@ -161,8 +161,8 @@ impl<T: SimpleCommandHandler> SimpleCommandHandler for T {
                             output.push_str(&format!("close($fh);\n"));
                         } else {
                             // For other commands, use system() with proper escaping
-                            let clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
-                            output.push_str(&format!("system('{} > ${}') == 0 or die \"Process substitution failed: $!\\n\";\n", clean_cmd, temp_var));
+                            let _clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
+                            output.push_str(&format!("system('{} > ${}') == 0 or die \"Process substitution failed: $!\\n\";\n", _clean_cmd, temp_var));
                         }
                         process_sub_files.push((temp_var, temp_file));
                     }
