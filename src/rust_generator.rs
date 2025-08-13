@@ -345,12 +345,50 @@ impl RustGenerator {
             let dur = cmd.args.get(0).cloned().unwrap_or_else(|| Word::Literal("1".to_string()));
             output.push_str(&format!("thread::sleep(Duration::from_secs_f64({}f64));\n", dur));
         } else if cmd.name == "cd" {
-            // Special handling for cd
-            let dir = if cmd.args.is_empty() { "." } else { &cmd.args[0] };
-            output.push_str(&format!("if let Err(_) = env::set_current_dir(\"{}\") {{\n", dir));
-            output.push_str(&self.indent());
-            output.push_str("    return std::process::ExitCode::FAILURE;\n");
-            output.push_str("}\n");
+            // Special handling for cd with tilde expansion
+            let dir = if cmd.args.is_empty() { Word::Literal(".".to_string()) } else { cmd.args[0].clone() };
+            let dir_str = self.word_to_string(&dir);
+            
+            if dir_str == "~" {
+                // Handle tilde expansion for home directory
+                output.push_str("let home = env::var(\"HOME\").or_else(|_| env::var(\"USERPROFILE\"));\n");
+                output.push_str("if let Ok(home_path) = home {\n");
+                output.push_str(&self.indent());
+                output.push_str("    if let Err(_) = env::set_current_dir(home_path) {\n");
+                output.push_str(&self.indent());
+                output.push_str(&self.indent());
+                output.push_str("        return std::process::ExitCode::FAILURE;\n");
+                output.push_str(&self.indent());
+                output.push_str("    }\n");
+                output.push_str("} else {\n");
+                output.push_str(&self.indent());
+                output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                output.push_str("}\n");
+            } else if dir_str.starts_with("~/") {
+                // Handle tilde expansion with subdirectory
+                let subdir = &dir_str[2..]; // Remove "~/"
+                output.push_str("let home = env::var(\"HOME\").or_else(|_| env::var(\"USERPROFILE\"));\n");
+                output.push_str("if let Ok(home_path) = home {\n");
+                output.push_str(&self.indent());
+                output.push_str(&format!("    let full_path = format!(\"{{}}/{}\", home_path);\n", subdir));
+                output.push_str(&self.indent());
+                output.push_str("    if let Err(_) = env::set_current_dir(full_path) {\n");
+                output.push_str(&self.indent());
+                output.push_str(&self.indent());
+                output.push_str("        return std::process::ExitCode::FAILURE;\n");
+                output.push_str(&self.indent());
+                output.push_str("    }\n");
+                output.push_str("} else {\n");
+                output.push_str(&self.indent());
+                output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                output.push_str("}\n");
+            } else {
+                // Regular directory change
+                output.push_str(&format!("if let Err(_) = env::set_current_dir(\"{}\") {{\n", dir_str));
+                output.push_str(&self.indent());
+                output.push_str("    return std::process::ExitCode::FAILURE;\n");
+                output.push_str("}\n");
+            }
         } else if cmd.name == "ls" {
             // Special handling for ls with brace expansion support
             if cmd.args.is_empty() {

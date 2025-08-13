@@ -349,8 +349,22 @@ impl Parser {
             }));
         }
 
+        // Special handling for Bash single-bracket test: capture everything until closing ']'
+        if let Word::Literal(name_str) = &name {
+            println!("DEBUG: Command name is '{}'", name_str);
+            if name_str == "[" {
+                println!("DEBUG: Found [ command, capturing expression");
+                let expr = self.capture_single_bracket_expression()?;
+                println!("DEBUG: Captured expression: '{}'", expr);
+                // Store the expression in args for postprocessing
+                args.push(Word::Literal(expr));
+            }
+        }
+
         // Parse arguments and redirects
+        println!("DEBUG: Starting to parse arguments, current token: {:?}", self.lexer.peek());
         while let Some(token) = self.lexer.peek() {
+            println!("DEBUG: Processing token: {:?}", token);
             match token {
                 Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString | Token::Source | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString | Token::Star | Token::Range | Token::Slash | Token::Tilde => {
                     args.push(self.parse_word()?);
@@ -366,10 +380,13 @@ impl Parser {
                 Token::Minus => {
                     // Handle arguments starting with minus (like -la, -v, etc.)
                     let token_clone = token.clone();
+                    println!("DEBUG: Processing Minus token, about to consume it");
                     self.lexer.next(); // consume the minus
+                    println!("DEBUG: Consumed Minus token, next token: {:?}", self.lexer.peek());
                     
                     // Check if we have a specific shell option token next
                     if let Some(token_after_minus) = self.lexer.peek() {
+                        println!("DEBUG: Token after minus: {:?}", token_after_minus);
                         match token_after_minus {
                             Token::Exists | Token::Readable | Token::Writable | Token::Executable |
                             Token::Size | Token::Symlink | Token::SymlinkH | Token::PipeFile |
@@ -390,6 +407,11 @@ impl Parser {
                                 let num = self.get_number_text()?;
                                 args.push(Word::Literal(format!("-{}", num)));
                             }
+                            Token::Space | Token::Tab | Token::Newline | Token::Semicolon | Token::And | Token::Or => {
+                                // Handle standalone minus followed by separator
+                                println!("DEBUG: Found standalone minus followed by separator");
+                                args.push(Word::Literal("-".to_string()));
+                            }
                             _ => {
                                 // Get the actual line and column for better error reporting
                                 let (line, col) = self
@@ -397,11 +419,13 @@ impl Parser {
                                     .get_span()
                                     .map(|(s, _)| self.lexer.offset_to_line_col(s))
                                     .unwrap_or((1, 1));
+                                println!("DEBUG: Unexpected token after minus: {:?}", token_after_minus);
                                 return Err(ParserError::UnexpectedToken { token: token_clone, line, col });
                             }
                         }
                     } else {
                         // Handle standalone minus
+                        println!("DEBUG: Found standalone minus with no next token");
                         args.push(Word::Literal("-".to_string()));
                     }
                 }
@@ -514,19 +538,11 @@ impl Parser {
                 Token::RedirectAppend | Token::RedirectInOut | Token::Heredoc | Token::HeredocTabs | Token::HereString => {
                     redirects.push(self.parse_redirect()?);
                 }
-                Token::Newline | Token::Semicolon | Token::CarriageReturn => {
+                Token::Newline | Token::Semicolon | Token::CarriageReturn | Token::And | Token::Or => {
                     // Stop parsing arguments when we hit a command separator
                     break;
                 }
-                Token::TestBracketClose => {
-                    // Handle closing bracket for test commands
-                    self.lexer.next(); // consume the ]
-                    if is_double_bracket {
-                        if let Some(Token::TestBracketClose) = self.lexer.peek() { self.lexer.next(); }
-                    }
-                    // Don't add "]" to args - it's just a syntax marker
-                    break;
-                }
+
                 Token::Space | Token::Tab => {
                     // Skip whitespace but continue parsing arguments
                     self.lexer.next();
@@ -535,28 +551,7 @@ impl Parser {
             }
         }
 
-        // If this was a [[ ... ]] and nothing captured into args, greedily capture raw text
-        if is_double_bracket && args.is_empty() {
-            let mut expr = String::new();
-            loop {
-                match self.lexer.peek() {
-                    Some(Token::TestBracketClose) if matches!(self.lexer.peek_n(1), Some(Token::TestBracketClose)) => {
-                        self.lexer.next();
-                        self.lexer.next();
-                        break;
-                    }
-                    Some(_) => {
-                        if let Some((s, e)) = self.lexer.get_span() {
-                            expr.push_str(&self.lexer.get_text(s, e));
-                        }
-                        self.lexer.next();
-                    }
-                    None => break,
-                }
-            }
-            let trimmed = expr.trim().to_string();
-            if !trimmed.is_empty() { args.push(Word::Literal(trimmed)); }
-        }
+
         
         // Postprocess: convert shopt commands to ShoptCommand AST nodes
         if name == "shopt" && args.len() >= 2 {
@@ -600,16 +595,20 @@ impl Parser {
                 _ => {}
             }
         }
-        
-        // Postprocess: convert [[ ... ]] test expressions to TestExpression AST nodes
-        if name == "[[".to_string() && !args.is_empty() {
-            if let Some(Word::Literal(expr)) = args.first() {
-                return Ok(Command::TestExpression(TestExpression {
-                    expression: expr.clone(),
-                    modifiers: self.get_current_shopt_state(),
-                }));
+
+        // Postprocess: convert [ ... ] test commands to TestExpression AST nodes
+        if let Word::Literal(name_str) = &name {
+            if name_str == "[" && !args.is_empty() {
+                if let Some(Word::Literal(expr)) = args.first() {
+                    return Ok(Command::TestExpression(TestExpression {
+                        expression: expr.clone(),
+                        modifiers: self.get_current_shopt_state(),
+                    }));
+                }
             }
         }
+        
+
         
         Ok(Command::Simple(SimpleCommand {
             name,
@@ -2577,6 +2576,40 @@ impl Parser {
                 }
             }
         }
+        Ok(expr.trim().to_string())
+    }
+
+    fn capture_single_bracket_expression(&mut self) -> Result<String, ParserError> {
+        // Capture raw text until we encounter a closing ']'.
+        let mut expr = String::new();
+        let mut token_count = 0;
+        loop {
+            match self.lexer.peek() {
+                Some(Token::TestBracketClose) => {
+                    // consume the closing ']' and stop
+                    self.lexer.next();
+                    break;
+                }
+                Some(token) => {
+                    if let Some((s, e)) = self.lexer.get_span() {
+                        let text = self.lexer.get_text(s, e);
+                        expr.push_str(&text);
+                        println!("DEBUG: Captured token {:?}: '{}'", token, text);
+                    }
+                    self.lexer.next();
+                    token_count += 1;
+                    if token_count > 100 {
+                        // Safety guard to prevent infinite loops
+                        break;
+                    }
+                }
+                None => {
+                    // Unterminated [ ...  ; treat as whatever we collected
+                    break;
+                }
+            }
+        }
+        println!("DEBUG: Final expression: '{}'", expr);
         Ok(expr.trim().to_string())
     }
 

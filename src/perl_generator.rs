@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::shared_utils::SharedUtils;
 use std::collections::HashSet;
-// HashMap import removed as it's not used
+// HashMap import removbed as it's not used
 
 //We NEED this. Do not remove it.
 // use crate::debug::*;
@@ -568,10 +568,61 @@ impl PerlGenerator {
                 }
             }
         } else if cmd.name == "cd" {
-            // Special handling for cd
+            // Special handling for cd with tilde expansion
             let empty_word = Word::Literal("".to_string());
-            let dir = cmd.args.first().unwrap_or(&empty_word);
-            output.push_str(&format!("chdir('{}') or die \"Cannot change to directory: $!\\n\";\n", dir));
+            
+            if cmd.args.is_empty() {
+                // cd without arguments - no-op
+                output.push_str("# cd to current directory (no-op)\n");
+            } else if cmd.args.len() == 1 {
+                // Single argument
+                let dir = &cmd.args[0];
+                let dir_str = self.word_to_perl(dir);
+                
+                if dir_str == "~" {
+                    // Handle tilde expansion for home directory
+                    output.push_str("my $home = $ENV{HOME} // $ENV{USERPROFILE} // die \"Cannot determine home directory\\n\";\n");
+                    output.push_str("chdir($home) or die \"Cannot change to directory: $!\\n\";\n");
+                } else if dir_str.starts_with("~/") {
+                    // Handle tilde expansion with subdirectory
+                    let subdir = &dir_str[2..]; // Remove "~/"
+                    output.push_str("my $home = $ENV{HOME} // $ENV{USERPROFILE} // die \"Cannot determine home directory\\n\";\n");
+                    output.push_str(&format!("chdir(\"$home/{}\") or die \"Cannot change to directory: $!\\n\";\n", subdir));
+                } else {
+                    // Regular directory change
+                    output.push_str(&format!("chdir('{}') or die \"Cannot change to directory: $!\\n\";\n", dir_str));
+                }
+            } else {
+                // Multiple arguments - check if they form a tilde path
+                let first_arg = &cmd.args[0];
+                let first_str = self.word_to_perl(first_arg);
+                
+                if first_str == "~" {
+                    // Build the full path from multiple arguments
+                    let mut path_parts = Vec::new();
+                    for arg in &cmd.args[1..] {
+                        let arg_str = self.word_to_perl(arg);
+                        if arg_str != "/" { // Skip slash tokens
+                            path_parts.push(arg_str);
+                        }
+                    }
+                    
+                    if path_parts.is_empty() {
+                        // Just "~" - go to home directory
+                        output.push_str("my $home = $ENV{HOME} // $ENV{USERPROFILE} // die \"Cannot determine home directory\\n\";\n");
+                        output.push_str("chdir($home) or die \"Cannot change to directory: $!\\n\";\n");
+                    } else {
+                        // Build path like "~/Documents"
+                        let subpath = path_parts.join("/");
+                        output.push_str("my $home = $ENV{HOME} // $ENV{USERPROFILE} // die \"Cannot determine home directory\\n\";\n");
+                        output.push_str(&format!("chdir(\"$home/{}\") or die \"Cannot change to directory: $!\\n\";\n", subpath));
+                    }
+                } else {
+                    // Regular directory change with multiple arguments
+                    let path = cmd.args.iter().map(|arg| self.word_to_perl(arg)).collect::<Vec<_>>().join("");
+                    output.push_str(&format!("chdir('{}') or die \"Cannot change to directory: $!\\n\";\n", path));
+                }
+            }
         } else if cmd.name == "rm" {
             // Generic handling for rm with glob and brace expansion support
             if !cmd.args.is_empty() {
@@ -4244,13 +4295,13 @@ impl PerlGenerator {
             // Generate cartesian product
             self.generate_cartesian_product(&expansion_values, &mut all_combinations, 0, &mut Vec::new());
             
-                                        // Convert combinations to Perl strings and join with spaces
-                            let combination_strings: Vec<String> = all_combinations.iter()
-                                .map(|combo| format!("\"{}\"", combo.join("")))
-                                .collect();
-                            
-                            // Join with spaces between combinations
-                            format!("{} . \"\\n\"", combination_strings.join(" . \" \" . "))
+            // Convert combinations to Perl strings and join with spaces
+            let combination_strings: Vec<String> = all_combinations.iter()
+                .map(|combo| format!("\"{}\"", combo.join("")))
+                .collect();
+            
+            // Join with spaces between combinations
+            format!("{} . \"\\n\"", combination_strings.join(" . \" \" . "))
         } else {
             // Single brace expansion or no brace expansions - handle normally
             let mut parts = Vec::new();
@@ -4340,8 +4391,17 @@ impl PerlGenerator {
             
             // Join all parts with concatenation and add newline
             if parts.len() == 1 {
-                format!("{} . \"\\n\"", parts[0])
+                // For single parts, add the newline inside the quotes if it's a literal string
+                if parts[0].starts_with('"') && parts[0].ends_with('"') {
+                    // It's a quoted string, add newline inside the quotes
+                    let content = &parts[0][1..parts[0].len()-1]; // Remove the quotes
+                    format!("\"{}\\n\"", content)
+                } else {
+                    // It's not a quoted string (e.g., a variable), concatenate with newline
+                    format!("{} . \"\\n\"", parts[0])
+                }
             } else {
+                // Multiple parts need concatenation, add newline at the end
                 format!("{} . \"\\n\"", parts.join(" . "))
             }
         }

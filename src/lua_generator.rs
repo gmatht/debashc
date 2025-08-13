@@ -105,7 +105,24 @@ impl LuaGenerator {
             }
             "cd" => {
                 if let Some(arg) = cmd.args.first() {
-                    lua_code.push_str(&format!("os.execute('cd {}')\n", arg.replace("'", "\\'")));
+                    let arg_str = arg.as_str();
+                    if arg_str == "~" {
+                        // Handle tilde expansion for home directory
+                        lua_code.push_str("local home = os.getenv('HOME') or os.getenv('USERPROFILE')\n");
+                        lua_code.push_str("if home then\n");
+                        lua_code.push_str("    os.execute('cd ' .. home)\n");
+                        lua_code.push_str("end\n");
+                    } else if arg_str.starts_with("~/") {
+                        // Handle tilde expansion with subdirectory
+                        let subdir = &arg_str[2..]; // Remove "~/"
+                        lua_code.push_str("local home = os.getenv('HOME') or os.getenv('USERPROFILE')\n");
+                        lua_code.push_str(&format!("if home then\n"));
+                        lua_code.push_str(&format!("    os.execute('cd ' .. home .. '/{}')\n", subdir));
+                        lua_code.push_str("end\n");
+                    } else {
+                        // Regular directory change
+                        lua_code.push_str(&format!("os.execute('cd {}')\n", arg_str.replace("'", "\\'")));
+                    }
                 }
             }
             "ls" => {

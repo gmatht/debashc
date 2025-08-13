@@ -168,10 +168,24 @@ impl PythonGenerator {
             let dur = cmd.args.get(0).cloned().unwrap_or_else(|| Word::Literal("1".to_string()));
             output.push_str(&format!("time.sleep({})\n", dur));
         } else if cmd.name.is_literal("cd") {
-            // Special handling for cd
+            // Special handling for cd with tilde expansion
             let empty_word = Word::Literal("".to_string());
             let dir = cmd.args.first().unwrap_or(&empty_word);
-            output.push_str(&format!("os.chdir('{}')\n", dir));
+            let dir_str = self.word_to_string(dir);
+            
+            if dir_str == "'~'" {
+                // Handle tilde expansion for home directory
+                output.push_str("home = os.path.expanduser('~')\n");
+                output.push_str("os.chdir(home)\n");
+            } else if dir_str.starts_with("'~/") && dir_str.ends_with("'") {
+                // Handle tilde expansion with subdirectory
+                let subdir = &dir_str[2..dir_str.len()-1]; // Remove "'~/" and "'"
+                output.push_str("home = os.path.expanduser('~')\n");
+                output.push_str(&format!("os.chdir(os.path.join(home, '{}'))\n", subdir));
+            } else {
+                // Regular directory change
+                output.push_str(&format!("os.chdir({})\n", dir_str));
+            }
         } else if cmd.name.is_literal("ls") {
             // Special handling for ls (use Python stdlib; ignore flags)
             let dir_expr = if cmd.args.is_empty() { ".".to_string() } else { cmd.args[0].to_string() };

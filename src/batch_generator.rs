@@ -120,6 +120,26 @@ impl BatchGenerator {
     fn generate_simple(&self, cmd: &SimpleCommand) -> String {
         if cmd.name == "echo" {
             if cmd.args.is_empty() { "echo.\n".to_string() } else { format!("echo {}\n", cmd.args.join(" ")) }
+        } else if cmd.name == "cd" {
+            // Special handling for cd with tilde expansion
+            if cmd.args.is_empty() {
+                "REM cd to current directory (no-op)\n".to_string()
+            } else {
+                let dir = &cmd.args[0];
+                let dir_str = dir.as_str();
+                
+                if dir_str == "~" {
+                    // Handle tilde expansion for home directory
+                    "if defined USERPROFILE (\n    cd /d \"%USERPROFILE%\"\n) else (\n    echo Cannot determine home directory\n    exit /b 1\n)\n".to_string()
+                } else if dir_str.starts_with("~/") {
+                    // Handle tilde expansion with subdirectory
+                    let subdir = &dir_str[2..]; // Remove "~/"
+                    format!("if defined USERPROFILE (\n    cd /d \"%USERPROFILE%\\{}\"\n) else (\n    echo Cannot determine home directory\n    exit /b 1\n)\n", subdir)
+                } else {
+                    // Regular directory change
+                    format!("cd /d \"{}\"\n", dir_str)
+                }
+            }
         } else if cmd.name == "shopt" {
             // Builtin: ignore
             "REM builtin\n".to_string()

@@ -42,6 +42,26 @@ impl JsGenerator {
                 let args = cmd.args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>().join(" ");
                 return format!("console.log({});\n", self.escape_js_string(&args));
             }
+        } else if cmd.name == "cd" {
+            // Special handling for cd with tilde expansion
+            if cmd.args.is_empty() {
+                return String::from("// cd to current directory (no-op)\n");
+            } else {
+                let dir = &cmd.args[0];
+                let dir_str = self.word_to_string(dir);
+                
+                if dir_str == "~" {
+                    // Handle tilde expansion for home directory
+                    return String::from("const home = process.env.HOME || process.env.USERPROFILE;\nif (home) {\n    process.chdir(home);\n} else {\n    console.error('Cannot determine home directory');\n    process.exit(1);\n}\n");
+                } else if dir_str.starts_with("~/") {
+                    // Handle tilde expansion with subdirectory
+                    let subdir = &dir_str[2..]; // Remove "~/"
+                    return format!("const home = process.env.HOME || process.env.USERPROFILE;\nif (home) {{\n    const path = require('path');\n    process.chdir(path.join(home, '{}'));\n}} else {{\n    console.error('Cannot determine home directory');\n    process.exit(1);\n}}\n", subdir);
+                } else {
+                    // Regular directory change
+                    return format!("process.chdir('{}');\n", dir_str);
+                }
+            }
         } else if cmd.name == "shopt" {
             return String::from("// builtin\n");
         }
@@ -188,6 +208,14 @@ impl JsGenerator {
             format!("'{}'", s.replace("'", "\\'"))
         } else {
             format!("\"{}\"", s.replace("\"", "\\\""))
+        }
+    }
+
+    fn word_to_string(&self, word: &Word) -> String {
+        match word {
+            Word::Literal(s) => s.clone(),
+            Word::Variable(var) => format!("${}", var),
+            _ => word.to_string(),
         }
     }
 

@@ -105,6 +105,46 @@ impl CGenerator {
                     line.push_str(");\n");
                 }
             }
+        } else if cmd.name == "cd" {
+            // Special handling for cd with tilde expansion
+            if cmd.args.is_empty() {
+                line.push_str("/* cd to current directory (no-op) */\n");
+            } else {
+                let dir = &cmd.args[0];
+                let dir_str = self.word_to_string(dir);
+                
+                if dir_str == "~" {
+                    // Handle tilde expansion for home directory
+                    line.push_str("char *home = getenv(\"HOME\");\n");
+                    line.push_str("if (!home) home = getenv(\"USERPROFILE\");\n");
+                    line.push_str("if (home && chdir(home) != 0) {\n");
+                    line.push_str("    perror(\"chdir failed\");\n");
+                    line.push_str("    return 1;\n");
+                    line.push_str("}\n");
+                } else if dir_str.starts_with("~/") {
+                    // Handle tilde expansion with subdirectory
+                    let subdir = &dir_str[2..]; // Remove "~/"
+                    line.push_str("char *home = getenv(\"HOME\");\n");
+                    line.push_str("if (!home) home = getenv(\"USERPROFILE\");\n");
+                    line.push_str("if (home) {\n");
+                    line.push_str(&format!("    char path[1024];\n"));
+                    line.push_str(&format!("    snprintf(path, sizeof(path), \"%s/{}\", home);\n", subdir));
+                    line.push_str(&format!("    if (chdir(path) != 0) {{\n"));
+                    line.push_str(&format!("        perror(\"chdir failed\");\n"));
+                    line.push_str(&format!("        return 1;\n"));
+                    line.push_str(&format!("    }}\n"));
+                    line.push_str("} else {\n");
+                    line.push_str("    fprintf(stderr, \"Cannot determine home directory\\n\");\n");
+                    line.push_str("    return 1;\n");
+                    line.push_str("}\n");
+                } else {
+                    // Regular directory change
+                    line.push_str(&format!("if (chdir(\"{}\") != 0) {{\n", dir_str));
+                    line.push_str("    perror(\"chdir failed\");\n");
+                    line.push_str("    return 1;\n");
+                    line.push_str("}\n");
+                }
+            }
         } else if cmd.name == "shopt" {
             // Builtin: ignore
             line.push_str("/* builtin */\n");
@@ -316,6 +356,14 @@ impl CGenerator {
 
     fn indent(&self) -> String {
         "    ".repeat(self.indent_level)
+    }
+
+    fn word_to_string(&self, word: &Word) -> String {
+        match word {
+            Word::Literal(s) => s.clone(),
+            Word::Variable(var) => format!("${}", var),
+            _ => word.to_string(),
+        }
     }
 
     fn escape_c_string(&self, s: &str) -> String {

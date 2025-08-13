@@ -113,6 +113,26 @@ impl PowerShellGenerator {
     fn simple(&self, cmd: &SimpleCommand) -> String {
         if cmd.name == "echo" {
             if cmd.args.is_empty() { "Write-Output \"\"\n".to_string() } else { format!("Write-Output {}\n", self.quote_join(&cmd.args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>())) }
+        } else if cmd.name == "cd" {
+            // Special handling for cd with tilde expansion
+            if cmd.args.is_empty() {
+                return String::from("# cd to current directory (no-op)\n");
+            } else {
+                let dir = &cmd.args[0];
+                let dir_str = dir.as_str();
+                
+                if dir_str == "~" {
+                    // Handle tilde expansion for home directory
+                    return String::from("$home = $env:USERPROFILE; if ($home) { Set-Location $home } else { Write-Error 'Cannot determine home directory'; exit 1 }\n");
+                } else if dir_str.starts_with("~/") {
+                    // Handle tilde expansion with subdirectory
+                    let subdir = &dir_str[2..]; // Remove "~/"
+                    return format!("$home = $env:USERPROFILE; if ($home) {{ Set-Location (Join-Path $home '{}') }} else {{ Write-Error 'Cannot determine home directory'; exit 1 }}\n", subdir);
+                } else {
+                    // Regular directory change
+                    return format!("Set-Location '{}'\n", dir_str);
+                }
+            }
         } else if cmd.name == "shopt" {
             // Builtin: ignore
             return String::from("# builtin\n");

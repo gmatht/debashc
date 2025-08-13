@@ -1,15 +1,15 @@
-use debashc::lexer::{Lexer, Token};
-use debashc::parser::Parser;
-use debashc::perl_generator::PerlGenerator;
-use debashc::rust_generator::RustGenerator;
-use debashc::python_generator::PythonGenerator;
-use debashc::c_generator::CGenerator;
-use debashc::js_generator::JsGenerator;
-use debashc::lua_generator::LuaGenerator;
-use debashc::english_generator::EnglishGenerator;
-use debashc::french_generator::FrenchGenerator;
-use debashc::batch_generator::BatchGenerator;
-use debashc::powershell_generator::PowerShellGenerator;
+use debashl::lexer::{Lexer, Token};
+use debashl::parser::Parser;
+use debashl::perl_generator::PerlGenerator;
+use debashl::rust_generator::RustGenerator;
+use debashl::python_generator::PythonGenerator;
+use debashl::c_generator::CGenerator;
+use debashl::js_generator::JsGenerator;
+use debashl::lua_generator::LuaGenerator;
+use debashl::english_generator::EnglishGenerator;
+use debashl::french_generator::FrenchGenerator;
+use debashl::batch_generator::BatchGenerator;
+use debashl::powershell_generator::PowerShellGenerator;
 // duplicate imports removed
 use std::fs;
 use std::process::{Command, Stdio};
@@ -19,7 +19,7 @@ use std::sync::mpsc;
 use std::path::PathBuf;
 
 // Use the debug macros from the debug module
-use debashc::debug_println;
+use debashl::debug_println;
 
 fn list_sh_examples() -> Vec<PathBuf> {
     let mut examples: Vec<PathBuf> = Vec::new();
