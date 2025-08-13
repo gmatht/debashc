@@ -1402,6 +1402,67 @@ impl PerlGenerator {
             } else {
                 "0".to_string()
             }
+        } else if expr.contains(" = ") {
+            // String equality: [[ $var = value ]]
+            let parts: Vec<&str> = expr.split(" = ").collect();
+            if parts.len() == 2 {
+                let var = parts[0].trim();
+                let value = parts[1].trim();
+                
+                // Handle tilde expansion for home directory
+                if var == "~" {
+                    // Remove quotes from value if it's a shell variable reference
+                    let clean_value = if value.starts_with('"') && value.ends_with('"') && value.contains('$') {
+                        let unquoted = value[1..value.len()-1].to_string();
+                        // Convert shell variables to Perl environment variables
+                        if unquoted == "$HOME" {
+                            "$ENV{'HOME'}".to_string()
+                        } else {
+                            unquoted
+                        }
+                    } else {
+                        value.to_string()
+                    };
+                    format!("($ENV{{'HOME'}} eq {})", clean_value)
+                } else if var.starts_with("~/") {
+                    let path = var[2..].to_string();
+                    // Remove quotes from value if it's a shell variable reference
+                    let clean_value = if value.starts_with('"') && value.ends_with('"') && value.contains('$') {
+                        let unquoted = value[1..value.len()-1].to_string();
+                        // Convert shell variables to Perl environment variables
+                        if unquoted == "$HOME" {
+                            "$ENV{'HOME'}".to_string()
+                        } else {
+                            unquoted
+                        }
+                    } else {
+                        value.to_string()
+                    };
+                    
+                    // Handle the case where the value is a path that should be concatenated
+                    if clean_value.contains('/') && clean_value.starts_with('$') {
+                        // Convert $HOME/Documents to $ENV{'HOME'} . '/Documents'
+                        let clean_path = clean_value.replace("$HOME", "$ENV{'HOME'}");
+                        // Split the path and reconstruct it properly
+                        if clean_path.contains('/') {
+                            let path_parts: Vec<&str> = clean_path.split('/').collect();
+                            if path_parts.len() == 2 && path_parts[0] == "$ENV{'HOME'}" {
+                                format!("($ENV{{'HOME'}} . '/{}') eq ($ENV{{'HOME'}} . '/{}')", path, path_parts[1])
+                            } else {
+                                format!("($ENV{{'HOME'}} . '/{}') eq {}", path, clean_path)
+                            }
+                        } else {
+                            format!("($ENV{{'HOME'}} . '/{}') eq {}", path, clean_path)
+                        }
+                    } else {
+                        format!("($ENV{{'HOME'}} . '/{}') eq {}", path, clean_value)
+                    }
+                } else {
+                    format!("({} eq {})", var, value)
+                }
+            } else {
+                "0".to_string()
+            }
         } else if expr.contains(" != ") {
             // Pattern matching: [[ $var != pattern ]]
             let parts: Vec<&str> = expr.split(" != ").collect();
