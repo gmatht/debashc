@@ -93,6 +93,28 @@
             box-shadow: 0 2px 4px rgba(0, 122, 204, 0.3);
         }
         
+        /* Auto-update toggle button styling */
+        .auto-update-toggle {
+            background-color: #28a745 !important;
+            color: white !important;
+            border: none !important;
+            padding: 8px 12px !important;
+            border-radius: 4px !important;
+            cursor: pointer !important;
+            font-size: 12px !important;
+            margin-left: 10px !important;
+            transition: background-color 0.2s ease, transform 0.1s ease !important;
+        }
+        
+        .auto-update-toggle:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+        }
+        
+        .auto-update-toggle:active {
+            transform: translateY(0);
+        }
+        
         .workspace {
             background: white;
             border-radius: 8px;
@@ -324,6 +346,10 @@
         let debashc;
         let currentOperation = 'parse';
         let currentExample = null;
+        
+        // Auto-update functionality
+        let autoUpdateTimeout = null;
+        let isAutoUpdateEnabled = true;
 
         async function initialize() {
             try {
@@ -352,6 +378,70 @@
 
         function setOutput(content) {
             document.getElementById('output').value = content;
+        }
+
+        // Auto-update functionality
+        function setupAutoUpdate() {
+            const input = document.getElementById('input');
+            
+            // Add input event listener for real-time updates
+            input.addEventListener('input', () => {
+                if (!isAutoUpdateEnabled || !currentOperation) return;
+                
+                // Clear existing timeout
+                if (autoUpdateTimeout) {
+                    clearTimeout(autoUpdateTimeout);
+                }
+                
+                const inputValue = input.value.trim();
+                if (!inputValue) {
+                    showStatus('Input cleared. Enter text to see auto-updates.', 'info');
+                    return;
+                }
+                
+                // Show typing indicator
+                showStatus('Typing... (auto-update in 100ms)', 'info');
+                
+                // Set new timeout for 100ms after typing stops
+                autoUpdateTimeout = setTimeout(() => {
+                    if (isAutoUpdateEnabled && currentOperation && input.value.trim()) {
+                        console.log('Auto-updating output for operation:', currentOperation);
+                        executeOperation(currentOperation, true);
+                    }
+                }, 100);
+            });
+            
+            // Add a toggle button for auto-update
+            addAutoUpdateToggle();
+        }
+
+        function addAutoUpdateToggle() {
+            const controls = document.querySelector('.controls');
+            const toggleButton = document.createElement('button');
+            toggleButton.id = 'auto-update-toggle';
+            toggleButton.textContent = 'Auto-update: ON';
+            toggleButton.className = 'auto-update-toggle';
+            toggleButton.style.cssText = 'background-color: #28a745; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; margin-left: 10px;';
+            
+            toggleButton.addEventListener('click', () => {
+                isAutoUpdateEnabled = !isAutoUpdateEnabled;
+                toggleButton.textContent = `Auto-update: ${isAutoUpdateEnabled ? 'ON' : 'OFF'}`;
+                toggleButton.style.backgroundColor = isAutoUpdateEnabled ? '#28a745' : '#dc3545';
+                
+                if (isAutoUpdateEnabled) {
+                    showStatus('Auto-update enabled. Output will update 100ms after typing stops.', 'info');
+                } else {
+                    showStatus('Auto-update disabled. Click buttons manually to update output.', 'info');
+                }
+                
+                // Clear any pending timeout when disabling
+                if (!isAutoUpdateEnabled && autoUpdateTimeout) {
+                    clearTimeout(autoUpdateTimeout);
+                    autoUpdateTimeout = null;
+                }
+            });
+            
+            controls.appendChild(toggleButton);
         }
 
         function populateExamples() {
@@ -402,6 +492,11 @@
             event.target.classList.add('active');
             
             currentExample = exampleName;
+            
+            // Temporarily disable auto-update to prevent unnecessary executions
+            const wasAutoUpdateEnabled = isAutoUpdateEnabled;
+            isAutoUpdateEnabled = false;
+            
             document.getElementById('input').value = exampleContent;
             
             // Update description
@@ -415,13 +510,16 @@
             document.getElementById('output').value = '';
             document.getElementById('status').style.display = 'none';
             
+            // Re-enable auto-update
+            isAutoUpdateEnabled = wasAutoUpdateEnabled;
+            
             // Auto-execute current operation
             if (currentOperation) {
                 executeOperation(currentOperation);
             }
         }
 
-        async function executeOperation(operation) {
+        async function executeOperation(operation, isAutoUpdate = false) {
             const input = document.getElementById('input').value.trim();
             if (!input) {
                 showStatus('Please enter a shell script first.', 'error');
@@ -434,8 +532,8 @@
             }
 
             try {
-                console.log('Executing operation:', operation, 'with input:', input);
-                showStatus('Processing...', 'info');
+                console.log('Executing operation:', operation, 'with input:', input, 'auto-update:', isAutoUpdate);
+                showStatus(isAutoUpdate ? 'Auto-updating...' : 'Processing...', 'info');
                 let result;
                 
                 switch (operation) {
@@ -481,7 +579,7 @@
 
                 console.log('Operation successful, result:', result);
                 setOutput(result);
-                showStatus('Operation completed successfully!', 'success');
+                showStatus(isAutoUpdate ? 'Auto-update completed successfully!' : 'Operation completed successfully!', 'success');
             } catch (error) {
                 console.error('Exception caught:', error);
                 setOutput('Error: ' + error.message);
@@ -502,6 +600,9 @@
             document.getElementById('french-btn').addEventListener('click', () => { currentOperation = 'french'; executeOperation('french'); });
             document.getElementById('bat-btn').addEventListener('click', () => executeOperation('bat'));
             document.getElementById('ps-btn').addEventListener('click', () => executeOperation('ps'));
+            
+            // Add automatic output updates after typing stops
+            setupAutoUpdate();
         }
 
         // Initialize the application
