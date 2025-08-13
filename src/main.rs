@@ -50,7 +50,7 @@ struct TestResult {
     original_code: String,
     translated_code: String,
     ast: String,
-    lexer_output: String,
+    _lexer_output: String, // Unused field, prefixed with underscore
 }
 
 #[derive(Debug, Clone)]
@@ -1070,7 +1070,7 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
         original_code: shell_content,
         translated_code,
         ast,
-        lexer_output: String::new(), // No lexer output for detailed test
+        _lexer_output: String::new(), // No lexer output for detailed test
     })
 }
 

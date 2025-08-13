@@ -12,7 +12,7 @@ pub enum ParserError {
     #[error("Unexpected token: {token:?} at {line}:{col}")]
     UnexpectedToken { token: Token, line: usize, col: usize },
     #[error("Expected token: {0:?}")]
-    ExpectedToken(Token),
+    _ExpectedToken(Token), // Unused variant, prefixed with underscore
     #[error("Unexpected end of input")]
     UnexpectedEOF,
     #[error("Invalid syntax: {0}")]

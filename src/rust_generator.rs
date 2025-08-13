@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::shared_utils::SharedUtils;
+// Removed unused import
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Static counter for generating unique temp file names
@@ -885,7 +885,7 @@ impl RustGenerator {
                 output.push_str("buffer.clear();\n");
                 output.push_str("}\n");
                 
-                if let Some(fh) = file_handle {
+                if let Some(_fh) = file_handle {
                     // No need to close file handle in Rust, it's automatically closed when dropped
                 }
             }
@@ -2594,7 +2594,7 @@ impl RustGenerator {
         // Convert shell printf format strings like "%-10s %-10s %s" to Rust format strings like "{:<10} {:<10} {}"
         let mut result = String::new();
         let mut chars = format_str.chars().peekable();
-        let mut arg_index = 0;
+        let mut _arg_index = 0;
         
         while let Some(ch) = chars.next() {
             if ch == '%' {
@@ -2625,7 +2625,7 @@ impl RustGenerator {
                                     'o' => result.push_str(&format!("{{:<{}}}", width)),
                                     _ => result.push_str(&format!("{{:<{}}}", width)), // default to string
                                 }
-                                arg_index += 1;
+                                _arg_index += 1;
                             }
                         }
                         '0'..='9' => {
@@ -2650,38 +2650,38 @@ impl RustGenerator {
                                     'o' => result.push_str(&format!("{{:>{}}}", width)),
                                     _ => result.push_str(&format!("{{:>{}}}", width)), // default to string
                                 }
-                                arg_index += 1;
+                                _arg_index += 1;
                             }
                         }
                         's' => {
                             result.push_str("{}");
                             chars.next(); // consume the 's'
-                            arg_index += 1;
+                            _arg_index += 1;
                         }
                         'd' => {
                             result.push_str("{}");
                             chars.next(); // consume the 'd'
-                            arg_index += 1;
+                            _arg_index += 1;
                         }
                         'f' => {
                             result.push_str("{:.2}");
                             chars.next(); // consume the 'f'
-                            arg_index += 1;
+                            _arg_index += 1;
                         }
                         'x' => {
                             result.push_str("{:x}");
                             chars.next(); // consume the 'x'
-                            arg_index += 1;
+                            _arg_index += 1;
                         }
                         'X' => {
                             result.push_str("{:X}");
                             chars.next(); // consume the 'X'
-                            arg_index += 1;
+                            _arg_index += 1;
                         }
                         'o' => {
                             result.push_str("{:o}");
                             chars.next(); // consume the 'o'
-                            arg_index += 1;
+                            _arg_index += 1;
                         }
                         'n' => {
                             result.push_str("\\n");
@@ -3124,7 +3124,7 @@ impl RustGenerator {
                         }
                     }
                 }
-                Word::BraceExpansion(expansion) => {
+                Word::BraceExpansion(_expansion) => {
                     // Use the helper method to expand brace expansions
                     let expanded = self.expand_brace_expansions_in_args(&[arg.clone()]);
                     parts.push(format!("\"{}\"", expanded.join(" ")));

@@ -170,7 +170,7 @@ pub enum Token {
     DollarStarSimple,
     // Backtick token not currently used
     #[token("`", priority = 1)]
-    Backtick,
+    _Backtick, // Unused variant, prefixed with underscore
     #[token("${#")]
     DollarBraceHash,
     #[token("${!")]
@@ -291,7 +291,7 @@ pub enum Token {
     #[token("!")]
     Bang,
     #[token("#", priority = 1)]
-    Hash,
+    _Hash, // Unused variant, prefixed with underscore
     #[token("%")]
     Percent,
     #[token("^")]
@@ -307,7 +307,7 @@ pub enum Token {
     #[token("/", priority = 2)]
     Slash,
     #[token("\\", priority = 1)]
-    Backslash,
+    _Backslash, // Unused variant, prefixed with underscore
     #[token("?")]
     Question,
     #[token(":")]
@@ -343,9 +343,9 @@ pub enum LexerError {
     #[error("Unexpected character: {ch} at {line}:{col}")]
     UnexpectedChar { ch: char, line: usize, col: usize },
     #[error("Unterminated string")]
-    UnterminatedString,
+    _UnterminatedString, // Unused variant, prefixed with underscore
     #[error("Invalid escape sequence")]
-    InvalidEscape,
+    _InvalidEscape, // Unused variant, prefixed with underscore
 }
 
 pub struct Lexer {
