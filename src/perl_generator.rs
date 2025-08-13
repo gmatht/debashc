@@ -1,6 +1,7 @@
 use crate::ast::*;
 use crate::shared_utils::SharedUtils;
 use std::collections::HashSet;
+
 // HashMap import removbed as it's not used
 
 //We NEED this. Do not remove it.
@@ -851,7 +852,7 @@ impl PerlGenerator {
                                 if let Word::Literal(count_str) = &cmd.args[i + 1] {
                                     // Store context count for later use
                                     i += 1; // Skip the count argument
-                                        }
+                                }
                             } else if s == "-C" && i + 1 < cmd.args.len() {
                                 // -C flag with context count (both)
                                 if let Word::Literal(count_str) = &cmd.args[i + 1] {
@@ -2624,13 +2625,7 @@ impl PerlGenerator {
                             for arg in &args_to_process {
                                 if let Word::Literal(s) = arg {
                                     // Convert escape sequences to Perl format
-                                    let processed = s
-                                        .replace("\\n", "\\n")
-                                        .replace("\\t", "\\t")
-                                        .replace("\\r", "\\r")
-                                        .replace("\\b", "\\b")
-                                        .replace("\\a", "\\a")
-                                        .replace("\\v", "\\v");
+                                    let processed = s;
                                     parts.push(format!("\"{}\"", processed));
                                 } else {
                                     parts.push(self.word_to_perl(arg));
@@ -3131,6 +3126,9 @@ impl PerlGenerator {
                                     "".to_string()
                                 };
                                 
+                                // Use the new grep handler for xargs grep
+                                // GrepHandler::generate_xargs_grep_perl(&pattern, &mut output, pipeline_id, false);
+                                // For now, use the original implementation
                                 output.push_str(&format!("my @xargs_files_{};\n", pipeline_id));
                                 output.push_str(&format!("for my $file (split(/\\n/, $output_{})) {{\n", pipeline_id));
                                 output.push_str(&format!("    if ($file ne '') {{\n"));

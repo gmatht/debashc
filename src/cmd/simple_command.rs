@@ -1,6 +1,7 @@
 use crate::ast::*;
 use crate::shared_utils::SharedUtils;
 
+
 pub trait SimpleCommandHandler {
     fn generate_simple_command(&mut self, cmd: &SimpleCommand) -> String;
     fn generate_test_command(&mut self, cmd: &SimpleCommand, output: &mut String);
@@ -416,10 +417,10 @@ impl<T: SimpleCommandHandler> SimpleCommandHandler for T {
                 }
             } else if pattern.is_none() {
                 pattern = Some(self.word_to_perl(arg));
-                            } else if recursive && search_path == "." {
-                    // Second non-flag argument is the search path for recursive grep
-                    search_path = self.word_to_perl(arg);
-                }
+            } else if recursive && search_path == "." {
+                // Second non-flag argument is the search path for recursive grep
+                search_path = self.word_to_perl(arg);
+            }
             i += 1;
         }
         
