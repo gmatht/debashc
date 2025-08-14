@@ -92,6 +92,69 @@ impl AstFormatOptions {
     }
 }
 
+fn find_uses_of_system() {
+    println!("Scanning examples/* for shell scripts and finding 'system' usage in Perl translations...");
+    
+    // Get all .sh files in the examples directory
+    let examples_dir = "examples";
+    let entries = match fs::read_dir(examples_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            println!("Error reading examples directory: {}", e);
+            return;
+        }
+    };
+    
+    let mut found_system_uses = Vec::new();
+    
+    for entry in entries {
+        if let Ok(entry) = entry {
+            let path = entry.path();
+            if path.is_file() && path.extension().map_or(false, |ext| ext == "sh") {
+                let filename = path.file_name().unwrap().to_string_lossy();
+                println!("Processing: {}", filename);
+                
+                // Read the shell script
+                match fs::read_to_string(&path) {
+                    Ok(content) => {
+                        // Parse and translate to Perl
+                        let mut parser = Parser::new(&content);
+                        match parser.parse() {
+                            Ok(commands) => {
+                                let mut generator = PerlGenerator::new();
+                                let perl_code = generator.generate(&commands);
+                                
+                                // Find lines containing "system"
+                                let lines: Vec<&str> = perl_code.lines().collect();
+                                for (line_num, line) in lines.iter().enumerate() {
+                                    if line.contains("system") {
+                                        found_system_uses.push(format!("{}:{}: {}", filename, line_num + 1, line.trim()));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                println!("  Parse error: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("  Read error: {}", e);
+                    }
+                }
+            }
+        }
+    }
+    
+    if found_system_uses.is_empty() {
+        println!("No 'system' usage found in any Perl translations.");
+    } else {
+        println!("\nFound {} lines containing 'system' in Perl translations:\n", found_system_uses.len());
+        for usage in found_system_uses {
+            println!("{}", usage);
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     let program_name = &args[0];
@@ -126,6 +189,7 @@ fn main() {
                 ast_options.newlines = true;
                 // debug_println!("DEBUG: Set --ast-pretty: compact={}, indent={}, newlines={}", 
                 //     ast_options.compact, ast_options.indent, ast_options.newlines);
+
             }
             "--ast-compact" => {
                 ast_options.compact = true;
@@ -188,6 +252,9 @@ fn main() {
     match command.as_str() {
         "--test-eq" => {
             test_all_examples();
+        }
+        "--uses-of-system" => {
+            find_uses_of_system();
         }
         "--next-fail" => {
             // Disable DEBUG output for --next-fail mode
@@ -2053,6 +2120,7 @@ fn show_help(program_name: &str) {
     println!("  --test-file <lang> <filename>  - Compare outputs of .sh vs translated code");
     println!("  file --test-file <lang> <filename> - Same as above");
     println!("  --test-eq                      - Test all generators against all examples");
+    println!("  --uses-of-system               - Translate all examples/*.sh to Perl and find lines containing 'system'");
             println!("  --next-fail [NUM] [gen1 gen2 ...] - Test specified generators (or perl if none specified), exit after first failure");
         println!("                                   - If NUM is provided, run only the NUMth test");
         println!("  fail [NUM] [gen1 gen2 ...]      - Shorthand for --next-fail");

@@ -353,7 +353,7 @@ This project is licensed under the GPLv3 License - see the LICENSE file for deta
 ## Roadmap
 
 - [ ] Support for more shell features (case statements etc.)
-- [ ] Support for more builtins (build in awk, sed etc.)
+- [ ] Support for more builtins (build in awk, sed, sleep etc.)
 - [ ] Shell script to other language converters
 - [ ] Test more examples
 
