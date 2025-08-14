@@ -271,7 +271,7 @@ pub enum Token {
     DollarDoubleQuotedString,
 
     // Long options (must come before Identifier to avoid conflicts)
-    #[regex(r"--[a-zA-Z][a-zA-Z0-9_*?.-]*=.*", priority = 3)]
+    #[regex(r"--[a-zA-Z][a-zA-Z0-9_*?.-]*=[^ \t\n\r|&;(){}]*", priority = 3)]
     LongOption,
     
     // Identifiers and words

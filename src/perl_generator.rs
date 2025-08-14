@@ -265,6 +265,10 @@ impl PerlGenerator {
         // First pass: scan all commands to determine if File::Find is needed
         self.scan_for_file_find_usage(commands);
         
+        // Second pass: collect all variables that need to be declared at the beginning
+        let mut global_vars = Vec::new();
+        self.collect_global_variables(commands, &mut global_vars);
+        
         // Estimate output size: header + commands + some buffer
         let estimated_size = 200 + commands.len() * 100; // Rough estimate
         let mut output = String::with_capacity(estimated_size);
@@ -280,6 +284,15 @@ impl PerlGenerator {
         }
         
         output.push_str("\n");
+        
+        // Add global variable declarations
+        for var in &global_vars {
+            output.push_str(&format!("my ${};\n", var));
+        }
+        
+        if !global_vars.is_empty() {
+            output.push_str("\n");
+        }
 
         for command in commands {
             output.push_str(&self.generate_command(command));
@@ -801,6 +814,8 @@ impl PerlGenerator {
                 let mut quiet_mode = false;
                 let mut literal_mode = false;
                 let mut ignore_case = false;
+                let mut suppress_filename = false;
+                let mut show_filename = false;
                 
                 // Parse grep arguments to handle flags properly
                 let mut i = 0;
@@ -829,6 +844,10 @@ impl PerlGenerator {
                                 // -Z flag for null-terminated output
                             } else if s == "-l" {
                                 // -l flag for listing filenames only
+                            } else if s == "-h" {
+                                suppress_filename = true;
+                            } else if s == "-H" {
+                                show_filename = true;
                             } else if s == "-A" && i + 1 < cmd.args.len() {
                                 // -A flag with context count (after)
                                 if let Word::Literal(_count_str) = &cmd.args[i + 1] {
@@ -1026,6 +1045,50 @@ impl PerlGenerator {
                             output.push_str("}\n");
                             output.push_str("exit($found ? 0 : 1);\n");
                         }
+                    } else if suppress_filename || show_filename {
+                        // Handle -h (suppress filename) and -H (show filename) flags
+                        if &file == "STDIN" {
+                            // For stdin, we can't really suppress/show filenames meaningfully
+                            // Just search through the input
+                            output.push_str("my @grep_lines;\n");
+                            output.push_str("while (my $line = <STDIN>) {\n");
+                            if literal_mode {
+                                output.push_str(&format!("    if (index($line, \"{}\") != -1) {{\n", pattern));
+                            } else {
+                                let regex_flags = if ignore_case { "i" } else { "" };
+                                output.push_str(&format!("    if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                            }
+                            if show_byte_offset {
+                                output.push_str("        my $offset = index($line, \"pattern\");\n");
+                                output.push_str("        print \"$offset:$line\";\n");
+                            } else {
+                                output.push_str("        print $line;\n");
+                            }
+                            output.push_str("    }\n");
+                            output.push_str("}\n");
+                        } else {
+                            // For a single file, handle filename display based on flags
+                            let fh = self.get_unique_file_handle();
+                            output.push_str(&format!("if (open(my {}, '<', '{}')) {{\n", fh, file));
+                            output.push_str(&format!("    while (my $line = <{}>) {{\n", fh));
+                            if literal_mode {
+                                output.push_str(&format!("        if (index($line, \"{}\") != -1) {{\n", pattern));
+                            } else {
+                                let regex_flags = if ignore_case { "i" } else { "" };
+                                output.push_str(&format!("        if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
+                            }
+                            if show_filename {
+                                output.push_str(&format!("            print \"{}:$line\";\n", file));
+                            } else if !suppress_filename {
+                                output.push_str(&format!("            print \"{}:$line\";\n", file));
+                            } else {
+                                output.push_str("            print $line;\n");
+                            }
+                            output.push_str("        }\n");
+                            output.push_str("    }\n");
+                            output.push_str(&format!("    close({});\n", fh));
+                            output.push_str("}\n");
+                        }
                     } else {
                         // Normal mode
                         if only_matching {
@@ -1081,12 +1144,8 @@ impl PerlGenerator {
                                         let regex_flags = if ignore_case { "i" } else { "" };
                                         output.push_str(&format!("    if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
                                     }
-                                    if show_byte_offset {
-                                        output.push_str(&format!("        my $offset = index($line, \"{}\");\n", pattern));
-                                        output.push_str("        print \"$offset:$line\";\n");
-                                    } else {
-                                        output.push_str("        print \"$line\";\n");
-                                    }
+                                    output.push_str("        $found = 1;\n");
+                                    output.push_str("        last;\n");
                                     output.push_str("    }\n");
                                     output.push_str("}\n");
                                 } else {
@@ -1097,12 +1156,8 @@ impl PerlGenerator {
                                         let regex_flags = if ignore_case { "i" } else { "" };
                                         output.push_str(&format!("    if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
                                     }
-                                    if show_byte_offset {
-                                        output.push_str(&format!("        my $offset = index($line, \"{}\");\n", pattern));
-                                        output.push_str("        print \"$offset:$line\";\n");
-                                    } else {
-                                        output.push_str("        print \"$line\";\n");
-                                    }
+                                    output.push_str("        $found = 1;\n");
+                                    output.push_str("        last;\n");
                                     output.push_str("    }\n");
                                     output.push_str("}\n");
                                 }
@@ -1116,12 +1171,8 @@ impl PerlGenerator {
                                     let regex_flags = if ignore_case { "i" } else { "" };
                                     output.push_str(&format!("        if ($line =~ /{}/{}) {{\n", pattern, regex_flags));
                                 }
-                                if show_byte_offset {
-                                    output.push_str(&format!("            my $offset = index($line, \"{}\");\n", pattern));
-                                    output.push_str("            print \"$offset:$line\";\n");
-                                } else {
-                                    output.push_str("            print \"$line\";\n");
-                                }
+                                output.push_str("            $found = 1;\n");
+                                output.push_str("            last;\n");
                                 output.push_str("        }\n");
                                 output.push_str("    }\n");
                                 output.push_str(&format!("    close({});\n", fh));
@@ -3159,8 +3210,22 @@ impl PerlGenerator {
                         output.push_str(&format!("({})", self.generate_test_expression(test_expr)));
                     }
                     _ => {
-                        // For non-test expressions, use system() calls
-                        output.push_str(&format!("system('{}') == 0", self.command_to_string(first)));
+                        // Check if this is a builtin command that should be handled differently
+                        if let Command::Simple(simple_cmd) = first {
+                            if simple_cmd.name == "echo" {
+                                // Handle echo as a builtin - generate the echo command and check if it succeeds
+                                let echo_code = self.generate_simple_command(simple_cmd);
+                                // Remove the newline and add success check
+                                let clean_echo_code = echo_code.trim_end_matches('\n');
+                                output.push_str(&format!("({})", clean_echo_code));
+                            } else {
+                                // For other non-test expressions, use system() calls
+                                output.push_str(&format!("system('{}') == 0", self.command_to_string(first)));
+                            }
+                        } else {
+                            // For other non-test expressions, use system() calls
+                                output.push_str(&format!("system('{}') == 0", self.command_to_string(first)));
+                        }
                     }
                 }
             }
@@ -3178,11 +3243,41 @@ impl PerlGenerator {
                     }
                     (PipeOperator::And, _) => {
                         output.push_str(" && ");
-                        output.push_str(&format!("system('{}') == 0", self.command_to_string(cmd)));
+                        // Check if this is a builtin command that should be handled differently
+                        if let Command::Simple(simple_cmd) = cmd {
+                            if simple_cmd.name == "echo" {
+                                // Handle echo as a builtin - generate the echo command and check if it succeeds
+                                let echo_code = self.generate_simple_command(simple_cmd);
+                                // Remove the newline and semicolon for boolean context
+                                let clean_echo_code = echo_code.trim_end_matches('\n').trim_end_matches(';');
+                                output.push_str(&format!("({})", clean_echo_code));
+                            } else {
+                                // For other commands, use system() calls
+                                output.push_str(&format!("system('{}') == 0", self.command_to_string(cmd)));
+                            }
+                        } else {
+                            // For other commands, use system() calls
+                                output.push_str(&format!("system('{}') == 0", self.command_to_string(cmd)));
+                        }
                     }
                     (PipeOperator::Or, _) => {
                         output.push_str(" || ");
-                        output.push_str(&format!("system('{}') == 0", self.command_to_string(cmd)));
+                        // Check if this is a builtin command that should be handled differently
+                        if let Command::Simple(simple_cmd) = cmd {
+                            if simple_cmd.name == "echo" {
+                                // Handle echo as a builtin - generate the echo command and check if it succeeds
+                                let echo_code = self.generate_simple_command(simple_cmd);
+                                // Remove the newline and semicolon for boolean context
+                                let clean_echo_code = echo_code.trim_end_matches('\n').trim_end_matches(';');
+                                output.push_str(&format!("({})", clean_echo_code));
+                            } else {
+                                // For other commands, use system() calls
+                                output.push_str(&format!("system('{}') == 0", self.command_to_string(cmd)));
+                            }
+                        } else {
+                            // For other commands, use system() calls
+                                output.push_str(&format!("system('{}') == 0", self.command_to_string(cmd)));
+                        }
                     }
                     (PipeOperator::Pipe, _) => {}
                 }
@@ -3558,9 +3653,9 @@ impl PerlGenerator {
         };
         
         let loop_header = if init_code.is_empty() {
-            format!("my ${} = 0;\nfor ${} ({}) {{\n", variable, variable, items_str)
+            format!("for ${} ({}) {{\n", variable, items_str)
         } else {
-            format!("{}\nmy ${} = 0;\nfor ${} ({}) {{\n", init_code, variable, variable, items_str)
+            format!("{}\nfor ${} ({}) {{\n", init_code, variable, items_str)
         };
         
         format!("{}{}}}\n", loop_header, body_code)
@@ -5491,11 +5586,137 @@ impl PerlGenerator {
         
         for part in parts {
             let part = part.trim();
-            if !part.is_empty() && SharedUtils::is_variable_name(part) {
-                if !vars.contains(&part.to_string()) {
-                    vars.push(part.to_string());
+            if !part.is_empty() {
+                // Handle variables with $ prefix
+                let var_name = if part.starts_with('$') {
+                    &part[1..]
+                } else {
+                    part
+                };
+                
+                if SharedUtils::is_variable_name(var_name) {
+                    if !vars.contains(&var_name.to_string()) {
+                        vars.push(var_name.to_string());
+                    }
                 }
             }
+        }
+    }
+
+    /// Collect all variables that need to be declared globally (before any loops)
+    fn collect_global_variables(&self, commands: &[Command], vars: &mut Vec<String>) {
+        for command in commands {
+            self.collect_global_variables_from_command(command, vars);
+        }
+    }
+
+    /// Collect variables that need to be declared globally from a command
+    fn collect_global_variables_from_command(&self, command: &Command, vars: &mut Vec<String>) {
+        match command {
+            Command::Simple(simple_cmd) => {
+                // Check for variables in environment variables (assignments)
+                for (var, _value) in &simple_cmd.env_vars {
+                    // Skip array access patterns like map[foo]
+                    if !var.contains('[') && !vars.contains(var) {
+                        vars.push(var.clone());
+                    }
+                }
+                
+                // Check for variables in arguments (like $i in test expressions)
+                for arg in &simple_cmd.args {
+                    self.collect_variables_from_word_for_global(arg, vars);
+                }
+            }
+            Command::BuiltinCommand(builtin_cmd) => {
+                // Check for variables in environment variables (assignments)
+                for (var, _value) in &builtin_cmd.env_vars {
+                    // Skip array access patterns like map[foo]
+                    if !var.contains('[') && !vars.contains(var) {
+                        vars.push(var.clone());
+                    }
+                }
+                
+                // Check for variables in arguments
+                for arg in &builtin_cmd.args {
+                    self.collect_variables_from_word_for_global(arg, vars);
+                }
+            }
+            Command::For(for_loop) => {
+                // Add the for loop variable to global vars
+                if !vars.contains(&for_loop.variable) {
+                    vars.push(for_loop.variable.clone());
+                }
+                // Recursively check the for loop body
+                self.collect_global_variables_from_block(&for_loop.body, vars);
+            }
+            Command::While(while_loop) => {
+                // Recursively check the while loop body
+                self.collect_global_variables_from_block(&while_loop.body, vars);
+            }
+            Command::If(if_stmt) => {
+                // Recursively check both branches
+                self.collect_global_variables_from_command(&if_stmt.then_branch, vars);
+                if let Some(else_branch) = &if_stmt.else_branch {
+                    self.collect_global_variables_from_command(else_branch, vars);
+                }
+            }
+            Command::Block(block) => {
+                // Recursively check the block
+                self.collect_global_variables_from_block(block, vars);
+            }
+            Command::Pipeline(pipeline) => {
+                // Check all commands in the pipeline
+                for cmd in &pipeline.commands {
+                    self.collect_global_variables_from_command(cmd, vars);
+                }
+            }
+            Command::Subshell(sub_cmd) => {
+                // Recursively check the subshell command
+                self.collect_global_variables_from_command(sub_cmd, vars);
+            }
+            Command::Background(bg_cmd) => {
+                // Recursively check the background command
+                self.collect_global_variables_from_command(bg_cmd, vars);
+            }
+            _ => {
+                // For other command types, we don't need to check for variables
+            }
+        }
+    }
+
+    /// Collect variables that need to be declared globally from a block
+    fn collect_global_variables_from_block(&self, block: &Block, vars: &mut Vec<String>) {
+        for command in &block.commands {
+            self.collect_global_variables_from_command(command, vars);
+        }
+    }
+
+    /// Collect variables from a word for global declaration
+    fn collect_variables_from_word_for_global(&self, word: &Word, vars: &mut Vec<String>) {
+        match word {
+            Word::Variable(var_name) => {
+                // Skip special Perl variables that can't be declared with 'my'
+                if var_name == "#" || var_name == "@" || var_name == "*" || var_name == "?" || var_name == "!" {
+                    return;
+                }
+                if !vars.contains(var_name) {
+                    vars.push(var_name.clone());
+                }
+            }
+            Word::StringInterpolation(interp) => {
+                for part in &interp.parts {
+                    if let StringPart::Variable(var_name) = part {
+                        // Skip special Perl variables that can't be declared with 'my'
+                        if var_name == "#" || var_name == "@" || var_name == "*" || var_name == "?" || var_name == "!" {
+                            continue;
+                        }
+                        if !vars.contains(var_name) {
+                            vars.push(var_name.clone());
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
