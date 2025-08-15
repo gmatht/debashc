@@ -368,193 +368,15 @@ impl Word {
         }
     }
 
-    /// Check if this word is a literal with the given value
-    pub fn is_literal(&self, value: &str) -> bool {
-        matches!(self, Word::Literal(s) if s == value)
-    }
-
-    /// Extract the variable name if this is a variable
-    pub fn as_variable(&self) -> Option<&str> {
-        match self {
-            Word::Variable(var) => Some(var),
-            Word::Array(name, _) => Some(name),
-            Word::ParameterExpansion(pe) => Some(&pe.variable),
-            Word::MapAccess(map_name, _) => Some(map_name),
-            Word::MapKeys(map_name) => Some(map_name),
-            Word::MapLength(map_name) => Some(map_name),
-            _ => None,
-        }
-    }
-
-    /// Check if this word contains a specific character
-    pub fn contains(&self, ch: char) -> bool {
-        match self {
-            Word::Literal(s) => s.contains(ch),
-            Word::Variable(var) => var.contains(ch),
-            Word::ParameterExpansion(pe) => {
-                if pe.variable.contains(ch) {
-                    return true;
-                }
-                match &pe.operator {
-                    ParameterExpansionOperator::RemoveLongestPrefix(pattern) => pattern.contains(ch),
-                    ParameterExpansionOperator::RemoveShortestPrefix(pattern) => pattern.contains(ch),
-                    ParameterExpansionOperator::RemoveLongestSuffix(pattern) => pattern.contains(ch),
-                    ParameterExpansionOperator::RemoveShortestSuffix(pattern) => pattern.contains(ch),
-                    ParameterExpansionOperator::SubstituteAll(pattern, replacement) => pattern.contains(ch) || replacement.contains(ch),
-                    ParameterExpansionOperator::DefaultValue(default) => default.contains(ch),
-                    ParameterExpansionOperator::AssignDefault(default) => default.contains(ch),
-                    ParameterExpansionOperator::ErrorIfUnset(error) => error.contains(ch),
-                    _ => false,
-                }
-            },
-            Word::Array(name, elements) => {
-                if name.contains(ch) { return true; }
-                for element in elements {
-                    if element.contains(ch) { return true; }
-                }
-                false
-            },
-            Word::MapAccess(map_name, key) => map_name.contains(ch) || key.contains(ch),
-            Word::MapKeys(map_name) => map_name.contains(ch),
-            Word::MapLength(map_name) => map_name.contains(ch),
-            Word::Arithmetic(expr) => expr.expression.contains(ch),
-            Word::BraceExpansion(expansion) => {
-                if let Some(ref prefix) = expansion.prefix {
-                    if prefix.contains(ch) { return true; }
-                }
-                if let Some(ref suffix) = expansion.suffix {
-                    if suffix.contains(ch) { return true; }
-                }
-                for item in &expansion.items {
-                    match item {
-                        BraceItem::Literal(s) => if s.contains(ch) { return true; },
-                        BraceItem::Range(range) => {
-                            if range.start.contains(ch) || range.end.contains(ch) { return true; }
-                            if let Some(ref step) = range.step {
-                                if step.contains(ch) { return true; }
-                            }
-                        }
-                        BraceItem::Sequence(seq) => {
-                            for s in seq {
-                                if s.contains(ch) { return true; }
-                            }
-                        }
-                    }
-                }
-                false
-            }
-            Word::CommandSubstitution(_) => false,
-            Word::StringInterpolation(interp) => {
-                for part in &interp.parts {
-                    match part {
-                        StringPart::Literal(s) => { if s.contains(ch) { return true; } }
-                        StringPart::Variable(var) => { if var.contains(ch) { return true; } }
-                        StringPart::ParameterExpansion(pe) => {
-                            if pe.variable.contains(ch) {
-                                return true;
-                            }
-                            match &pe.operator {
-                                ParameterExpansionOperator::RemoveLongestPrefix(pattern) => if pattern.contains(ch) { return true; },
-                                ParameterExpansionOperator::RemoveShortestPrefix(pattern) => if pattern.contains(ch) { return true; },
-                                ParameterExpansionOperator::RemoveLongestSuffix(pattern) => if pattern.contains(ch) { return true; },
-                                ParameterExpansionOperator::RemoveShortestSuffix(pattern) => if pattern.contains(ch) { return true; },
-                                ParameterExpansionOperator::SubstituteAll(pattern, replacement) => if pattern.contains(ch) || replacement.contains(ch) { return true; },
-                                ParameterExpansionOperator::DefaultValue(default) => if default.contains(ch) { return true; },
-                                ParameterExpansionOperator::AssignDefault(default) => if default.contains(ch) { return true; },
-                                ParameterExpansionOperator::ErrorIfUnset(error) => if error.contains(ch) { return true; },
-                                _ => {},
-                            }
-                        }
-                        StringPart::MapAccess(map_name, key) => { if map_name.contains(ch) || key.contains(ch) { return true; } }
-                        StringPart::MapKeys(map_name) => { if map_name.contains(ch) { return true; } }
-                        StringPart::MapLength(map_name) => { if map_name.contains(ch) { return true; } }
-                        StringPart::Arithmetic(expr) => { if expr.expression.contains(ch) { return true; } }
-                        StringPart::CommandSubstitution(_) => { return false; }
-                    }
-                }
-                false
-            }
-        }
-    }
 
 
 
-    /// Strip a prefix from the word
-    pub fn strip_prefix(&self, prefix: &str) -> Option<String> {
-        match self {
-            Word::Literal(s) => s.strip_prefix(prefix).map(|s| s.to_string()),
-            Word::Variable(var) => var.strip_prefix(prefix).map(|s| s.to_string()),
-            Word::ParameterExpansion(pe) => pe.variable.strip_prefix(prefix).map(|s| s.to_string()),
-            Word::Array(name, elements) => {
-                if let Some(stripped) = name.strip_prefix(prefix) {
-                    Some(format!("{}=({})", stripped, elements.join(" ")))
-                } else {
-                    None
-                }
-            },
-            Word::MapAccess(map_name, key) => {
-                if let Some(stripped) = map_name.strip_prefix(prefix) {
-                    Some(format!("{}[{}]", stripped, key))
-                } else {
-                    None
-                }
-            }
-            Word::MapKeys(map_name) => map_name.strip_prefix(prefix).map(|s| s.to_string()),
-            Word::MapLength(map_name) => map_name.strip_prefix(prefix).map(|s| s.to_string()),
-            Word::Arithmetic(expr) => expr.expression.strip_prefix(prefix).map(|s| s.to_string()),
-            _ => None,
-        }
-    }
 
-    /// Strip a prefix from the word (char version)
-    pub fn strip_prefix_char(&self, prefix: char) -> Option<String> {
-        match self {
-            Word::Literal(s) => s.strip_prefix(prefix).map(|s| s.to_string()),
-            Word::Variable(var) => var.strip_prefix(prefix).map(|s| s.to_string()),
-            Word::ParameterExpansion(pe) => pe.variable.strip_prefix(prefix).map(|s| s.to_string()),
-            Word::Array(name, elements) => {
-                if let Some(stripped) = name.strip_prefix(prefix) {
-                    Some(format!("{}=({})", stripped, elements.join(" ")))
-                } else {
-                    None
-                }
-            },
-            Word::MapAccess(map_name, key) => {
-                if let Some(stripped) = map_name.strip_prefix(prefix) {
-                    Some(format!("{}[{}]", stripped, key))
-                } else {
-                    None
-                }
-            }
-            Word::MapKeys(map_name) => map_name.strip_prefix(prefix).map(|s| s.to_string()),
-            Word::MapLength(map_name) => map_name.strip_prefix(prefix).map(|s| s.to_string()),
-            Word::Arithmetic(expr) => expr.expression.strip_prefix(prefix).map(|s| s.to_string()),
-            _ => None,
-        }
-    }
 
-    /// Replace occurrences of a pattern in the word
-    pub fn replace(&self, from: &str, to: &str) -> String {
-        match self {
-            Word::Literal(s) => s.replace(from, to),
-            Word::Variable(var) => var.replace(from, to),
-            Word::ParameterExpansion(pe) => pe.variable.replace(from, to),
-            Word::Array(name, elements) => {
-                let new_name = name.replace(from, to);
-                let new_elements: Vec<String> = elements.iter().map(|e| e.replace(from, to)).collect();
-                format!("{}=({})", new_name, new_elements.join(" "))
-            },
-            Word::MapAccess(map_name, key) => {
-                let new_map_name = map_name.replace(from, to);
-                let new_key = key.replace(from, to);
-                format!("{}[{}]", new_map_name, new_key)
-            }
-            Word::MapKeys(map_name) => map_name.replace(from, to),
-            Word::MapLength(map_name) => map_name.replace(from, to),
-            Word::Arithmetic(expr) => expr.expression.replace(from, to),
-            _ => self.to_string(),
-        }
-    }
+
+
+
+
 
 
 }
@@ -598,16 +420,7 @@ impl PartialEq<String> for Word {
 
 
 
-/// Helper trait for converting Vec<Word> to Vec<String>
-pub trait WordVecExt {
-    fn join(&self, separator: &str) -> String;
-}
 
-impl WordVecExt for Vec<Word> {
-    fn join(&self, separator: &str) -> String {
-        self.iter().map(|w| w.to_string()).collect::<Vec<_>>().join(separator)
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArithmeticExpression {
@@ -632,6 +445,7 @@ pub struct BraceExpansion {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum BraceItem {
     Literal(String),
     Range(BraceRange),
@@ -652,6 +466,7 @@ pub struct StringInterpolation {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum StringPart {
     Literal(String),
     Variable(String),

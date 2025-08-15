@@ -2,6 +2,7 @@
 
 /// Represents the parsed options and arguments for a grep command
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct GrepOptions {
     pub pattern: Option<String>,
     pub file: Option<String>,
