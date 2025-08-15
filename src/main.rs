@@ -3,30 +3,12 @@ mod parser;
 mod ast;
 mod shared_utils;
 mod perl_generator;
-mod rust_generator;
-mod python_generator;
-mod lua_generator;
-mod c_generator;
-mod js_generator;
-mod english_generator;
-mod french_generator;
-mod batch_generator;
-mod powershell_generator;
 mod cmd;
 
 use lexer::*;
 use parser::*;
 // use ast::*; // not needed at top-level
 use perl_generator::*;
-use rust_generator::*;
-use python_generator::*;
-use lua_generator::*;
-use c_generator::*;
-use js_generator::*;
-use english_generator::*;
-use french_generator::*;
-use batch_generator::*;
-use powershell_generator::*;
 
 use std::env;
 use std::fs;
@@ -282,12 +264,11 @@ fn main() {
                         break;
                     }
                     generator => {
-                        // Validate that it's a known generator
-                        let valid_generators = vec!["perl", "python", "rust", "lua", "js", "ps", "c", "english", "french", "bat"];
-                        if valid_generators.contains(&generator) {
+                        // Only perl generator is supported
+                        if generator == "perl" {
                             generators.push(generator.to_string());
                         } else {
-                            println!("Warning: Unknown generator '{}', skipping", generator);
+                            println!("Warning: Only 'perl' generator is supported, skipping '{}'", generator);
                         }
                     }
                 }
@@ -335,64 +316,30 @@ fn main() {
                 }
                 let input = &args[3];
                 parse_to_perl(input);
-            } else if args.len() >= 3 && args[2] == "--rust" {
-                if args.len() < 4 {
-                    println!("Error: parse --rust command requires input");
-                    return;
-                }
-                let input = &args[3];
-                parse_to_rust(input);
-            } else if args.len() >= 3 && args[2] == "--python" {
-                if args.len() < 4 {
-                    println!("Error: parse --python command requires input");
-                    return;
-                }
-                let input = &args[3];
-                parse_to_python(input);
-            } else if args.len() >= 3 && args[2] == "--lua" {
-                if args.len() < 4 {
-                    println!("Error: parse --lua command requires input");
-                    return;
-                }
-                let input = &args[3];
-                parse_to_lua(input);
-            } else if args.len() >= 3 && args[2] == "--c" {
-                if args.len() < 4 { println!("Error: parse --c command requires input"); return; }
-                let input = &args[3];
-                parse_to_c(input);
-            } else if args.len() >= 3 && args[2] == "--js" {
-                if args.len() < 4 { println!("Error: parse --js command requires input"); return; }
-                let input = &args[3];
-                parse_to_js(input);
-            } else if args.len() >= 3 && args[2] == "--english" {
-                if args.len() < 4 { println!("Error: parse --english command requires input"); return; }
-                let input = &args[3];
-                parse_to_english(input);
-            } else if args.len() >= 3 && args[2] == "--french" {
-                if args.len() < 4 { println!("Error: parse --french command requires input"); return; }
-                let input = &args[3];
-                parse_to_french(input);
-            } else if args.len() >= 3 && args[2] == "--comment" {
-                if args.len() < 4 { println!("Error: parse --comment command requires input"); return; }
-                let input = &args[3];
-                parse_to_commented_shell(input);
-            } else if args.len() >= 3 && args[2] == "--bat" {
-                if args.len() < 4 { println!("Error: parse --bat command requires input"); return; }
-                let input = &args[3];
-                parse_to_batch(input);
-            } else if args.len() >= 3 && args[2] == "--ps" {
-                if args.len() < 4 { println!("Error: parse --ps command requires input"); return; }
-                let input = &args[3];
-                parse_to_powershell(input);
+
+
+
+
+
+
+
+
+
+
             } else if args.len() >= 3 && args[2] == "--run" {
                 // parse --run <lang> <input>
                 if args.len() < 5 {
-                    println!("Error: parse --run <perl|python|rust|lua|js|ps> <input>");
+                    println!("Error: parse --run <perl> <input>");
                     return;
                 }
                 let lang = &args[3];
                 let input = &args[4];
-                run_generated(lang, input);
+                if lang == "perl" {
+                    run_generated(lang, input);
+                } else {
+                    println!("Error: Only 'perl' language is supported");
+                    return;
+                }
             } else {
                 let input = &args[2];
                 // If looks like a filename or the path exists, treat as file
@@ -418,71 +365,42 @@ fn main() {
                 }
                 let filename = &args[3];
                 parse_file_to_perl(filename);
-            } else if args.len() >= 3 && args[2] == "--rust" {
-                if args.len() < 4 {
-                    println!("Error: file --rust command requires filename");
-                    return;
-                }
-                let filename = &args[3];
-                parse_file_to_rust(filename);
-            } else if args.len() >= 3 && args[2] == "--python" {
-                if args.len() < 4 {
-                    println!("Error: file --python command requires filename");
-                    return;
-                }
-                let filename = &args[3];
-                parse_file_to_python(filename);
-            } else if args.len() >= 3 && args[2] == "--lua" {
-                if args.len() < 4 {
-                    println!("Error: file --lua command requires filename");
-                    return;
-                }
-                let filename = &args[3];
-                parse_file_to_lua(filename);
-            } else if args.len() >= 3 && args[2] == "--c" {
-                if args.len() < 4 { println!("Error: file --c command requires filename"); return; }
-                let filename = &args[3];
-                parse_file_to_c(filename);
-            } else if args.len() >= 3 && args[2] == "--js" {
-                if args.len() < 4 { println!("Error: file --js command requires filename"); return; }
-                let filename = &args[3];
-                parse_file_to_js(filename);
-            } else if args.len() >= 3 && args[2] == "--english" {
-                if args.len() < 4 { println!("Error: file --english command requires filename"); return; }
-                let filename = &args[3];
-                parse_file_to_english(filename);
-            } else if args.len() >= 3 && args[2] == "--french" {
-                if args.len() < 4 { println!("Error: file --french command requires filename"); return; }
-                let filename = &args[3];
-                parse_file_to_french(filename);
-            } else if args.len() >= 3 && args[2] == "--comment" {
-                if args.len() < 4 { println!("Error: file --comment command requires filename"); return; }
-                let filename = &args[3];
-                parse_file_to_commented_shell(filename);
-            } else if args.len() >= 3 && args[2] == "--bat" {
-                if args.len() < 4 { println!("Error: file --bat command requires filename"); return; }
-                let filename = &args[3];
-                parse_file_to_batch(filename);
-            } else if args.len() >= 3 && args[2] == "--ps" {
-                if args.len() < 4 { println!("Error: file --ps command requires filename"); return; }
-                let filename = &args[3];
-                parse_file_to_powershell(filename);
+
+
+
+
+
+
+
+
+
+
             } else if args.len() >= 3 && args[2] == "--test-file" {
                 if args.len() < 5 {
-                    println!("Error: file --test-file <perl|python|rust|lua|js|ps> <filename>");
+                    println!("Error: file --test-file <perl> <filename>");
                     return;
                 }
                 let lang = &args[3];
                 let filename = &args[4];
-                let _ = test_file_equivalence(lang, filename);
+                if lang == "perl" {
+                    let _ = test_file_equivalence(lang, filename);
+                } else {
+                    println!("Error: Only 'perl' language is supported");
+                    return;
+                }
             } else if args.len() >= 3 && args[2] == "--run" {
                 if args.len() < 5 {
-                    println!("Error: file --run <perl|python|rust|lua|js|ps> <filename>");
+                    println!("Error: file --run <perl> <filename>");
                     return;
                 }
                 let lang = &args[3];
                 let filename = &args[4];
-                run_generated(lang, filename);
+                if lang == "perl" {
+                    run_generated(lang, filename);
+                } else {
+                    println!("Error: Only 'perl' language is supported");
+                    return;
+                }
             } else {
                 let filename = &args[2];
                 parse_file(filename);
@@ -490,12 +408,17 @@ fn main() {
         }
         "--test-file" | "test-file" => {
             if args.len() < 4 {
-                println!("Error: --test-file <perl|python|rust|lua|js|ps> <filename>");
+                println!("Error: --test-file <perl> <filename>");
                 return;
             }
             let lang = &args[2];
             let filename = &args[3];
-            let _ = test_file_equivalence(lang, filename);
+            if lang == "perl" {
+                let _ = test_file_equivalence(lang, filename);
+            } else {
+                println!("Error: Only 'perl' language is supported");
+                return;
+            }
         }
         "interactive" => {
             interactive_mode();
@@ -527,12 +450,11 @@ fn main() {
                         break;
                     }
                     generator => {
-                        // Validate that it's a known generator
-                        let valid_generators = vec!["perl", "python", "rust", "lua", "js", "ps", "c", "english", "french", "bat"];
-                        if valid_generators.contains(&generator) {
+                        // Only perl generator is supported
+                        if generator == "perl" {
                             generators.push(generator.to_string());
                         } else {
-                            println!("Warning: Unknown generator '{}', skipping", generator);
+                            println!("Warning: Only 'perl' generator is supported, skipping '{}'", generator);
                         }
                     }
                 }
@@ -655,71 +577,6 @@ fn run_generated(lang: &str, input: &str) {
                 let _ = fs::remove_file(tmp);
             }
         }
-        "python" => {
-            let mut gen = PythonGenerator::new();
-            let code = gen.generate(&commands);
-            let tmp = "__tmp_run.py";
-            if fs::write(tmp, &code).is_ok() {
-                let _ = std::process::Command::new("python3").arg(tmp).status();
-                let _ = fs::remove_file(tmp);
-            }
-        }
-        "rust" => {
-            let mut gen = RustGenerator::new();
-            let code = gen.generate(&commands);
-            let tmp = "__tmp_run.rs";
-            if fs::write(tmp, &code).is_ok() {
-                let out = "__tmp_run_bin";
-                let compile = std::process::Command::new("rustc")
-                    .arg("--edition=2021").arg(tmp).arg("-o").arg(out)
-                    .status();
-                if compile.map(|s| s.success()).unwrap_or(false) {
-                    let abs = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
-                        .join(out);
-                    match std::process::Command::new(&abs).output() {
-                        Ok(child_out) => {
-                            if !child_out.stdout.is_empty() { let _ = std::io::stdout().write_all(&child_out.stdout); }
-                            if !child_out.stderr.is_empty() { let _ = std::io::stderr().write_all(&child_out.stderr); }
-                        }
-                        Err(e) => { eprintln!("Failed to run compiled Rust binary: {}", e); }
-                    }
-                    let _ = fs::remove_file(out);
-                    if cfg!(windows) {
-                        let _ = fs::remove_file(format!("{}.exe", out));
-                        let _ = fs::remove_file(format!("{}.pdb", out));
-                    }
-                }
-                let _ = fs::remove_file(tmp);
-            }
-        }
-        "lua" => {
-            let mut gen = LuaGenerator::new();
-            let code = gen.generate(&commands);
-            let tmp = "__tmp_run.lua";
-            if fs::write(tmp, &code).is_ok() {
-                let _ = std::process::Command::new(get_lua_executable()).arg(tmp).status();
-                let _ = fs::remove_file(tmp);
-            }
-        }
-        "js" => {
-            let mut gen = JsGenerator::new();
-            let code = gen.generate(&commands);
-            let tmp = "__tmp_run.js";
-            if fs::write(tmp, &code).is_ok() {
-                let _ = std::process::Command::new("node").arg(tmp).status();
-                let _ = fs::remove_file(tmp);
-            }
-        }
-        "ps" => {
-            let mut gen = PowerShellGenerator::new();
-            let code = gen.generate(&commands);
-            let tmp = "__tmp_run.ps1";
-            if fs::write(tmp, &code).is_ok() {
-                let shell = if cfg!(windows) { "powershell" } else { "pwsh" };
-                let _ = std::process::Command::new(shell).arg("-File").arg(tmp).status();
-                let _ = fs::remove_file(tmp);
-            }
-        }
         _ => println!("Unsupported language for --run: {}", lang),
     }
 }
@@ -744,55 +601,6 @@ fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
             let tmp = "__tmp_test_output.pl";
             if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Perl temp file: {}", e)); }
             (tmp.to_string(), vec![if cfg!(windows) { "perl" } else { "perl" }, tmp])
-        }
-        "python" => {
-            let mut gen = PythonGenerator::new();
-            let code = gen.generate(&commands);
-            let tmp = "__tmp_test_output.py";
-            if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Python temp file: {}", e)); }
-            (tmp.to_string(), vec!["python3", tmp])
-        }
-        "lua" => {
-            let mut gen = LuaGenerator::new();
-            let code = gen.generate(&commands);
-            let tmp = "__tmp_test_output.lua";
-            if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Lua temp file: {}", e)); }
-            (tmp.to_string(), vec![get_lua_executable(), tmp])
-        }
-        "js" => {
-            let mut gen = JsGenerator::new();
-            let code = gen.generate(&commands);
-            let tmp = "__tmp_test_output.js";
-            if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write JS temp file: {}", e)); }
-            (tmp.to_string(), vec!["node", tmp])
-        }
-        "ps" => {
-            let mut gen = PowerShellGenerator::new();
-            let code = gen.generate(&commands);
-            let tmp = "__tmp_test_output.ps1";
-            if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write PowerShell temp file: {}", e)); }
-            let shell = if cfg!(windows) { "powershell" } else { "pwsh" };
-            // Add -ExecutionPolicy Bypass to allow running unsigned scripts
-            (tmp.to_string(), vec![shell, "-ExecutionPolicy", "Bypass", "-File", tmp])
-        }
-        "rust" => {
-            let mut gen = RustGenerator::new();
-            let code = gen.generate(&commands);
-            let tmp_src = "__tmp_test_output.rs";
-            if let Err(e) = fs::write(tmp_src, &code) { return Err(format!("Failed to write Rust temp file: {}", e)); }
-            // compile
-            let out = if cfg!(windows) { "__tmp_test_bin.exe" } else { "__tmp_test_bin" };
-            let out_path = std::env::current_dir().unwrap_or_default().join(out);
-            let compile_status = Command::new("rustc")
-                .arg("--edition=2021").arg(tmp_src).arg("-o").arg(&out_path)
-                .status();
-            match compile_status {
-                Ok(s) if s.success() => {}
-                Ok(_) => { return Err("Rust compilation failed".to_string()); }
-                Err(e) => { return Err(format!("Failed to run rustc: {}", e)); }
-            }
-            // We'll run compiled binary; remember to cleanup later
-            (tmp_src.to_string(), vec![out])
         }
         _ => { return Err(format!("Unsupported language for --test-file: {}", lang)); }
     };
@@ -981,55 +789,6 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
             let tmp = "__tmp_test_output.pl";
             if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Perl temp file: {}", e)); }
             (tmp.to_string(), vec![if cfg!(windows) { "perl" } else { "perl" }, tmp], code)
-        }
-        "python" => {
-            let mut gen = PythonGenerator::new();
-            let code = gen.generate(&commands);
-            let tmp = "__tmp_test_output.py";
-            if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Python temp file: {}", e)); }
-            (tmp.to_string(), vec!["python3", tmp], code)
-        }
-        "lua" => {
-            let mut gen = LuaGenerator::new();
-            let code = gen.generate(&commands);
-            let tmp = "__tmp_test_output.lua";
-            if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Lua temp file: {}", e)); }
-            (tmp.to_string(), vec!["lua", tmp], code)
-        }
-        "js" => {
-            let mut gen = JsGenerator::new();
-            let code = gen.generate(&commands);
-            let tmp = "__tmp_test_output.js";
-            if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write JS temp file: {}", e)); }
-            (tmp.to_string(), vec!["node", tmp], code)
-        }
-        "ps" => {
-            let mut gen = PowerShellGenerator::new();
-            let code = gen.generate(&commands);
-            let tmp = "__tmp_test_output.ps1";
-            if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write PowerShell temp file: {}", e)); }
-            let shell = if cfg!(windows) { "powershell" } else { "pwsh" };
-            // Add -ExecutionPolicy Bypass to allow running unsigned scripts
-            (tmp.to_string(), vec![shell, "-ExecutionPolicy", "Bypass", "-File", tmp], code)
-        }
-        "rust" => {
-            let mut gen = RustGenerator::new();
-            let code = gen.generate(&commands);
-            let tmp_src = "__tmp_test_output.rs";
-            if let Err(e) = fs::write(tmp_src, &code) { return Err(format!("Failed to write Rust temp file: {}", e)); }
-            // compile
-            let out = if cfg!(windows) { "__tmp_test_bin.exe" } else { "__tmp_test_bin" };
-            let out_path = std::env::current_dir().unwrap_or_default().join(out);
-            let compile_status = Command::new("rustc")
-                .arg("--edition=2021").arg(tmp_src).arg("-o").arg(&out_path)
-                .status();
-            match compile_status {
-                Ok(s) if s.success() => {}
-                Ok(_) => { return Err("Rust compilation failed".to_string()); }
-                Err(e) => { return Err(format!("Failed to run rustc: {}", e)); }
-            }
-            // We'll run compiled binary; remember to cleanup later
-            (tmp_src.to_string(), vec![out], code)
         }
         _ => { return Err(format!("Unsupported language for --test-file: {}", lang)); }
     };
@@ -1251,293 +1010,13 @@ fn parse_file_to_perl(filename: &str) {
     }
 }
 
-fn parse_to_rust(input: &str) {
-    // Check if input looks like a filename and read it if so
-    let content = if input.ends_with(".sh") || std::path::Path::new(input).exists() {
-        match fs::read_to_string(input) {
-            Ok(content) => content,
-            Err(_) => input.to_string(),
-        }
-    } else {
-        input.to_string()
-    };
-    
-    println!("Converting to Rust: {}", input);
-    println!("Rust Code:");
-    println!("{}", "=".repeat(50));
-    
-    match Parser::new(&content).parse() {
-        Ok(commands) => {
-            let mut generator = RustGenerator::new();
-            let rust_code = generator.generate(&commands);
-            println!("{}", rust_code);
-        }
-        Err(e) => {
-            println!("Parse error: {}", e);
-        }
-    }
-    
-    println!("{}", "=".repeat(50));
-}
 
-fn parse_file_to_rust(filename: &str) {
-    println!("Converting file to Rust: {}", filename);
-    
-    match fs::read_to_string(filename) {
-        Ok(content) => {
-            parse_to_rust(&content);
-        }
-        Err(e) => {
-            println!("Error reading file: {}", e);
-        }
-    }
-}
 
-fn parse_to_python(input: &str) {
-    // Check if input looks like a filename and read it if so
-    let content = if input.ends_with(".sh") || std::path::Path::new(input).exists() {
-        match fs::read_to_string(input) {
-            Ok(content) => content,
-            Err(_) => input.to_string(),
-        }
-    } else {
-        input.to_string()
-    };
-    
-    println!("Converting to Python: {}", input);
-    println!("Python Code:");
-    println!("{}", "=".repeat(50));
-    
-    let mut parser = Parser::new(&content);
-    match parser.parse() {
-        Ok(commands) => {
-            let mut generator = PythonGenerator::new();
-            let python_code = generator.generate(&commands);
-            println!("{}", python_code);
-        }
-        Err(e) => {
-            if let Some((line, col)) = extract_line_col(&e) {
-                println!("Parse error at {}:{}: {:?}", line, col, e);
-                if let Some(snippet) = caret_snippet(&content, line, col) {
-                    println!("{}", snippet);
-                }
-            } else {
-                println!("Parse error: {:?}", e);
-            }
-        }
-    }
-}
 
-fn parse_file_to_python(filename: &str) {
-    match fs::read_to_string(filename) {
-        Ok(content) => {
-            println!("Converting file to Python: {}", filename);
-            println!("Python Code:");
-            println!("{}", "=".repeat(50));
-            
-            let mut parser = Parser::new(&content);
-            match parser.parse() {
-                Ok(commands) => {
-                    let mut generator = PythonGenerator::new();
-                    let python_code = generator.generate(&commands);
-                    println!("{}", python_code);
-                }
-                Err(e) => {
-                    println!("Parse error: {:?}", e);
-                }
-            }
-        }
-        Err(e) => {
-            println!("Error reading file: {}", e);
-        }
-    }
-}
 
-fn parse_to_lua(input: &str) {
-    println!("Converting to Lua: {}", input);
-    println!("Lua Code:");
-    println!("{}", "=".repeat(50));
-    
-    let mut parser = Parser::new(input);
-    match parser.parse() {
-        Ok(commands) => {
-            let mut generator = LuaGenerator::new();
-            let lua_code = generator.generate(&commands);
-            println!("{}", lua_code);
-        }
-        Err(e) => {
-            println!("Parse error: {:?}", e);
-        }
-    }
-}
 
-fn parse_file_to_lua(filename: &str) {
-    match fs::read_to_string(filename) {
-        Ok(content) => {
-            println!("Converting file to Lua: {}", filename);
-            println!("Lua Code:");
-            println!("{}", "=".repeat(50));
-            
-            let mut parser = Parser::new(&content);
-            match parser.parse() {
-                Ok(commands) => {
-                    let mut generator = LuaGenerator::new();
-                    let lua_code = generator.generate(&commands);
-                    println!("{}", lua_code);
-                }
-                Err(e) => {
-                    println!("Parse error: {:?}", e);
-                }
-            }
-        }
-        Err(e) => {
-            println!("Error reading file: {}", e);
-        }
-    }
-}
 
-fn parse_to_c(input: &str) {
-    println!("Converting to C: {}", input);
-    println!("C Code:");
-    println!("{}", "=".repeat(50));
-    match Parser::new(input).parse() {
-        Ok(commands) => {
-            let mut generator = CGenerator::new();
-            let code = generator.generate(&commands);
-            println!("{}", code);
-        }
-        Err(e) => {
-            if let Some((line, col)) = extract_line_col(&e) {
-                println!("Parse error at {}:{}: {:?}", line, col, e);
-            } else {
-                println!("Parse error: {:?}", e);
-            }
-        },
-    }
-}
 
-fn parse_file_to_c(filename: &str) {
-    match fs::read_to_string(filename) {
-        Ok(content) => parse_to_c(&content),
-        Err(e) => println!("Error reading file: {}", e),
-    }
-}
-
-fn parse_to_js(input: &str) {
-    println!("Converting to JavaScript: {}", input);
-    println!("JavaScript Code:");
-    println!("{}", "=".repeat(50));
-    match Parser::new(input).parse() {
-        Ok(commands) => {
-            let mut generator = JsGenerator::new();
-            let code = generator.generate(&commands);
-            println!("{}", code);
-        }
-        Err(e) => println!("Parse error: {:?}", e),
-    }
-}
-
-fn parse_file_to_js(filename: &str) {
-    match fs::read_to_string(filename) {
-        Ok(content) => parse_to_js(&content),
-        Err(e) => println!("Error reading file: {}", e),
-    }
-}
-
-fn parse_to_english(input: &str) {
-    println!("English Pseudocode for: {}", input);
-    println!("{}", "=".repeat(50));
-    match Parser::new(input).parse() {
-        Ok(commands) => {
-            let mut generator = EnglishGenerator::new();
-            let code = generator.generate(&commands);
-            println!("{}", code);
-        }
-        Err(e) => println!("Parse error: {:?}", e),
-    }
-}
-
-fn parse_file_to_english(filename: &str) {
-    match fs::read_to_string(filename) {
-        Ok(content) => parse_to_english(&content),
-        Err(e) => println!("Error reading file: {}", e),
-    }
-}
-
-fn parse_to_french(input: &str) {
-    println!("Pseudo-code français pour: {}", input);
-    println!("{}", "=".repeat(50));
-    match Parser::new(input).parse() {
-        Ok(commands) => {
-            let mut generator = FrenchGenerator::new();
-            let code = generator.generate(&commands);
-            println!("{}", code);
-        }
-        Err(e) => println!("Parse error: {:?}", e),
-    }
-}
-
-fn parse_file_to_french(filename: &str) {
-    match fs::read_to_string(filename) {
-        Ok(content) => parse_to_french(&content),
-        Err(e) => println!("Error reading file: {}", e),
-    }
-}
-
-fn parse_to_commented_shell(input: &str) {
-    println!("Original shell with English pseudocode comments:");
-    println!("{}", "=".repeat(50));
-    let mut parser = Parser::new(input);
-    match parser.parse() {
-        Ok(commands) => {
-            let mut generator = EnglishGenerator::new();
-            let commentary = generator.generate(&commands);
-            println!("# {}", commentary.replace('\n', "\n# "));
-            println!("{}", input);
-        }
-        Err(e) => println!("Parse error: {:?}", e),
-    }
-}
-
-fn parse_file_to_commented_shell(filename: &str) {
-    match fs::read_to_string(filename) {
-        Ok(content) => parse_to_commented_shell(&content),
-        Err(e) => println!("Error reading file: {}", e),
-    }
-}
-
-fn parse_to_batch(input: &str) {
-    println!("Windows Batch for: {}", input);
-    println!("{}", "=".repeat(50));
-    match Parser::new(input).parse() {
-        Ok(commands) => {
-            let mut generator = BatchGenerator::new();
-            let code = generator.generate(&commands);
-            println!("{}", code);
-        }
-        Err(e) => println!("Parse error: {:?}", e),
-    }
-}
-
-fn parse_file_to_batch(filename: &str) {
-    match fs::read_to_string(filename) {
-        Ok(content) => parse_to_batch(&content),
-        Err(e) => println!("Error reading file: {}", e),
-    }
-}
-
-fn parse_to_powershell(input: &str) {
-    println!("PowerShell for: {}", input);
-    println!("{}", "=".repeat(50));
-    match Parser::new(input).parse() {
-        Ok(commands) => {
-            let mut generator = PowerShellGenerator::new();
-            let code = generator.generate(&commands);
-            println!("{}", code);
-        }
-        Err(e) => println!("Parse error: {:?}", e),
-    }
-}
 
 fn extract_line_col(e: &dyn std::error::Error) -> Option<(usize, usize)> {
     let msg = e.to_string();
@@ -1572,39 +1051,19 @@ fn caret_snippet(input: &str, line: usize, col: usize) -> Option<String> {
     Some(caret)
 }
 
-fn parse_file_to_powershell(filename: &str) {
-    match fs::read_to_string(filename) {
-        Ok(content) => parse_to_powershell(&content),
-        Err(e) => println!("Error reading file: {}", e),
-    }
-}
 
-fn get_lua_executable() -> &'static str {
-    // Try lua first, then lua54 if lua doesn't exist
-    if Command::new("lua").arg("-v").output().is_ok() {
-        "lua"
-    } else {
-        "lua54"
-    }
-}
+
+
 
 fn check_generator_available(generator: &str) -> bool {
     match generator {
         "perl" => Command::new("perl").arg("--version").output().is_ok(),
-        "python" => Command::new("python3").arg("--version").output().is_ok() || Command::new("python").arg("--version").output().is_ok(),
-        "rust" => Command::new("rustc").arg("--version").output().is_ok(),
-        "lua" => Command::new(get_lua_executable()).arg("-v").output().is_ok(),
-        "js" => Command::new("node").arg("--version").output().is_ok(),
-        "ps" => {
-            let shell = if cfg!(windows) { "powershell" } else { "pwsh" };
-            Command::new(shell).arg("-Command").arg("$PSVersionTable").output().is_ok()
-        },
         _ => false
     }
 }
 
 fn test_all_examples() {
-    let all_generators = vec!["perl", "python", "rust", "lua", "js", "ps"];
+    let all_generators = vec!["perl"];
     
     // Filter to only available generators
     let generators: Vec<_> = all_generators.into_iter()
@@ -1618,7 +1077,7 @@ fn test_all_examples() {
         .collect();
     
     if generators.is_empty() {
-        println!("No supported generators found. Please install at least one of: perl, python3, rustc, lua, node, powershell/pwsh");
+        println!("No supported generators found. Please install perl");
         std::process::exit(1);
     }
     
@@ -1802,7 +1261,7 @@ fn test_all_examples_next_fail(generators: &[String], test_number: Option<usize>
         .collect();
     
     if generators.is_empty() {
-        println!("No supported generators found. Please install at least one of: perl, python3, rustc, lua, node, powershell/pwsh");
+        println!("No supported generators found. Please install perl");
         std::process::exit(1);
     }
     
@@ -2079,34 +1538,16 @@ fn show_help(program_name: &str) {
     println!("TRANSLATION OPTIONS:");
     println!();
     println!("  parse --perl <input>           - Convert shell script to Perl");
-    println!("  parse --rust <input>           - Convert shell script to Rust");
-    println!("  parse --python <input>         - Convert shell script to Python");
-    println!("  parse --lua <input>            - Convert shell script to Lua");
-    println!("  parse --c <input>              - Convert shell script to C");
-    println!("  parse --js <input>             - Convert shell script to JavaScript (Node.js)");
-    println!("  parse --english <input>        - Generate English pseudocode");
-    println!("  parse --french <input>         - Générer du pseudo-code en français");
-    println!("  parse --comment <input>        - Output original SH with English pseudocode comments");
-    println!("  parse --bat <input>            - Convert shell script to Windows Batch");
-    println!("  parse --ps <input>             - Convert shell script to PowerShell");
+    
     println!();
     println!("  file --perl <filename>         - Convert shell script file to Perl");
-    println!("  file --rust <filename>         - Convert shell script file to Rust");
-    println!("  file --python <filename>       - Convert shell script file to Python");
-    println!("  file --lua <filename>          - Convert shell script file to Lua");
-    println!("  file --c <filename>            - Convert shell script file to C");
-    println!("  file --js <filename>           - Convert shell script file to JavaScript (Node.js)");
-    println!("  file --english <filename>      - Generate English pseudocode from file");
-    println!("  file --french <filename>       - Générer du pseudo-code en français (fichier)");
-    println!("  file --comment <filename>      - Output original SH with English pseudocode comments");
-    println!("  file --bat <filename>          - Convert shell script file to Windows Batch");
-    println!("  file --ps <filename>           - Convert shell script file to PowerShell");
+    
     println!();
     println!("EXECUTION OPTIONS:");
     println!();
     println!("  parse --run <lang> <input>     - Generate and run code in specified language");
     println!("  file --run <lang> <filename>   - Generate and run code from file");
-    println!("  Supported languages: perl, python, rust, lua, js, ps");
+            println!("  Supported languages: perl");
     println!();
     println!("INPUT/OUTPUT OPTIONS:");
     println!();
@@ -2145,8 +1586,8 @@ fn show_help(program_name: &str) {
     println!("  {} --test-eq", program_name);
             println!("  {} --next-fail", program_name);
         println!("  {} --next-fail 5", program_name);
-        println!("  {} --next-fail perl python", program_name);
-        println!("  {} --next-fail 10 rust --ast-pretty", program_name);
+        println!("  {} --next-fail perl", program_name);
+        println!("  {} --next-fail 10 perl --ast-pretty", program_name);
     println!();
     println!("DIRECT EXECUTION EXAMPLES:");
     println!("  {} examples/simple.sh           - Run shell script directly", program_name);
@@ -2155,20 +1596,17 @@ fn show_help(program_name: &str) {
     println!("  {} -i script.txt                - Convert input file and run generated Perl", program_name);
     println!();
     println!("DESCRIPTION:");
-    println!("  sh2perl is a tool that translates shell scripts to various programming");
-    println!("  languages. It can parse shell syntax, generate equivalent code in the");
-    println!("  target language, and optionally run the generated code to verify");
+    println!("  sh2perl is a tool that translates shell scripts to Perl. It can parse shell syntax,");
+    println!("  generate equivalent Perl code, and optionally run the generated code to verify");
     println!("  correctness against the original shell script.");
     println!();
-    println!("  The tool supports multiple target languages including Perl, Python, Rust,");
-    println!("  Lua, C, JavaScript, and PowerShell. It can also generate pseudocode");
-    println!("  in English and French for educational purposes.");
+        println!("  The tool supports Perl as the target language. It can also generate pseudocode");
+    println!("  in English for educational purposes.");
     println!();
-            println!("  The --next-fail command can be used to test specific generators by");
-        println!("  listing them after the command (e.g., --next-fail perl python).");
-        println!("  If no generators are specified, it defaults to testing only perl.");
-        println!("  You can also specify a test number to run only that specific test");
-        println!("  (e.g., --next-fail 5 to run only the 5th test).");
+    println!("  The --next-fail command can be used to test the Perl generator.");
+    println!("  If no generators are specified, it defaults to testing only perl.");
+    println!("  You can also specify a test number to run only that specific test");
+    println!("  (e.g., --next-fail 5 to run only the 5th test).");
     println!();
     println!("  For more information, visit: https://github.com/your-repo/sh2perl");
     println!();

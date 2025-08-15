@@ -3,6 +3,28 @@
 // Generated automatically from examples/ directory
 
 export const examples = {
+  '001_cd_dot_dot.sh': `cd ..
+ls
+`,
+  '002_subprocess.sh': `(sleep 1; echo a)&
+echo b`,
+  '003_local.sh': `a=1
+echo \$a
+(a=2; echo \$a)
+(echo \$a)
+echo \$a`,
+  '004_for_arithmetic.sh': `for i in {1..5}
+do
+	j=\$((\$j*\$i))
+done
+echo \$j
+`,
+  '005_test_ls_star_dot_sh.sh': `\#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Testing ls * .sh:"
+ls * .sh
+`,
   'ansi_quoting.sh': `\#!/usr/bin/env bash
 
 \# ANSI-C quoting and special character examples
@@ -315,6 +337,12 @@ find . -type f -ls
 
 \# Find files excluding certain directories
 find . -type f -not -path "./.git/*" -not -path "./node_modules/*"
+`,
+  'for_arithematic.sh': `for i in {1..5}
+do
+	j=\$((\$j*\$i))
+done
+echo \$j
 `,
   'grep_advanced.sh': `\#!/bin/bash
 

@@ -1,5 +1,5 @@
 use wasm_bindgen::prelude::*;
-use crate::{Lexer, Parser, PerlGenerator, RustGenerator, LuaGenerator, PythonGenerator, BatchGenerator, PowerShellGenerator, CGenerator, JsGenerator};
+use crate::{Lexer, Parser, PerlGenerator};
 
 #[wasm_bindgen]
 pub struct Debashc;
@@ -70,89 +70,7 @@ impl Debashc {
         }
     }
 
-    /// Convert shell script to Rust
-    pub fn to_rust(&mut self, input: &str) -> Result<String, JsValue> {
-        let mut parser = Parser::new(input);
-        match parser.parse() {
-            Ok(commands) => {
-                let mut generator = RustGenerator::new();
-                Ok(generator.generate(&commands))
-            }
-            Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
-        }
-    }
 
-    /// Convert shell script to Python
-    pub fn to_python(&mut self, input: &str) -> Result<String, JsValue> {
-        let mut parser = Parser::new(input);
-        match parser.parse() {
-            Ok(commands) => {
-                let mut generator = PythonGenerator::new();
-                Ok(generator.generate(&commands))
-            }
-            Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
-        }
-    }
-
-    /// Convert shell script to Lua
-    pub fn to_lua(&mut self, input: &str) -> Result<String, JsValue> {
-        let mut parser = Parser::new(input);
-        match parser.parse() {
-            Ok(commands) => {
-                let mut generator = LuaGenerator::new();
-                Ok(generator.generate(&commands))
-            }
-            Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
-        }
-    }
-
-    /// Convert shell script to Windows Batch
-    pub fn to_bat(&mut self, input: &str) -> Result<String, JsValue> {
-        let mut parser = Parser::new(input);
-        match parser.parse() {
-            Ok(commands) => {
-                let mut generator = BatchGenerator::new();
-                Ok(generator.generate(&commands))
-            }
-            Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
-        }
-    }
-
-    /// Convert shell script to PowerShell
-    pub fn to_ps(&mut self, input: &str) -> Result<String, JsValue> {
-        let mut parser = Parser::new(input);
-        match parser.parse() {
-            Ok(commands) => {
-                let mut generator = PowerShellGenerator::new();
-                Ok(generator.generate(&commands))
-            }
-            Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
-        }
-    }
-
-    /// Convert shell script to C
-    pub fn to_c(&mut self, input: &str) -> Result<String, JsValue> {
-        let mut parser = Parser::new(input);
-        match parser.parse() {
-            Ok(commands) => {
-                let mut generator = CGenerator::new();
-                Ok(generator.generate(&commands))
-            }
-            Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
-        }
-    }
-
-    /// Convert shell script to JavaScript
-    pub fn to_js(&mut self, input: &str) -> Result<String, JsValue> {
-        let mut parser = Parser::new(input);
-        match parser.parse() {
-            Ok(commands) => {
-                let mut generator = JsGenerator::new();
-                Ok(generator.generate(&commands))
-            }
-            Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
-        }
-    }
 }
 
 #[wasm_bindgen]
