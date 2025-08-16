@@ -57,10 +57,20 @@ impl BashOutputCache {
         }
     }
 
-    fn save(&self) {
+    fn save(&self) -> Result<(), String> {
         let cache_file = "bash_output_cache.json";
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            let _ = fs::write(cache_file, json);
+            // Check cache size before writing
+            if json.len() > 64 * 1024 { // 64KB limit
+                return Err("Cache file would exceed 64KB limit".to_string());
+            }
+            
+            if let Err(e) = fs::write(cache_file, json) {
+                return Err(format!("Failed to write cache file: {}", e));
+            }
+            Ok(())
+        } else {
+            Err("Failed to serialize cache to JSON".to_string())
         }
     }
 
@@ -81,7 +91,14 @@ impl BashOutputCache {
         false
     }
 
-    fn update_cache(&mut self, filename: &str, stdout: String, stderr: String, exit_code: i32) {
+    fn update_cache(&mut self, filename: &str, stdout: String, stderr: String, exit_code: i32) -> Result<(), String> {
+        // Check output size before storing in memory (64KB limit)
+        let total_output_size = stdout.len() + stderr.len();
+        if total_output_size > 64 * 1024 { // 64KB limit
+            return Err(format!("Output size exceeds 64KB limit: stdout={} bytes, stderr={} bytes, total={} bytes", 
+                stdout.len(), stderr.len(), total_output_size));
+        }
+        
         let last_modified = if let Ok(metadata) = fs::metadata(filename) {
             if let Ok(modified) = metadata.modified() {
                 if let Ok(modified_timestamp) = modified.duration_since(SystemTime::UNIX_EPOCH) {
@@ -102,11 +119,13 @@ impl BashOutputCache {
             exit_code,
             last_modified,
         });
+        
+        Ok(())
     }
 
     fn invalidate_cache(&mut self, filename: &str) {
         self.outputs.remove(filename);
-        self.save();
+        let _ = self.save(); // Ignore save errors during invalidation
     }
 }
 
@@ -1059,12 +1078,27 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
             out
         };
         
-        // Cache the output
+        // Check output size before caching (64KB limit)
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let total_output_size = stdout.len() + stderr.len();
+        
+        if total_output_size > 64 * 1024 { // 64KB limit
+            return Err(format!("Output size exceeds 64KB limit: stdout={} bytes, stderr={} bytes, total={} bytes", 
+                stdout.len(), stderr.len(), total_output_size));
+        }
+        
         let exit_code = output.status.code().unwrap_or(-1);
-        cache.update_cache(filename, stdout, stderr, exit_code);
-        cache.save();
+        
+        // Update cache (size already checked above)
+        if let Err(e) = cache.update_cache(filename, stdout, stderr, exit_code) {
+            return Err(format!("Failed to update cache: {}", e));
+        }
+        
+        // Save cache (should succeed now since we checked size)
+        if let Err(e) = cache.save() {
+            return Err(format!("Failed to save cache: {}", e));
+        }
         
         output
     };
@@ -1681,10 +1715,21 @@ fn test_all_examples_next_fail(generators: &[String], test_number: Option<usize>
                                 
                                 if fresh_stdout == result.translated_stdout && fresh_stderr == result.translated_stderr {
                                     println!("✅ Test now passes with fresh Bash output! Updating cache...");
-                                    // Update cache with fresh output
-                                    cache.update_cache(example, fresh_stdout, fresh_stderr, output.status.code().unwrap_or(-1));
-                                    cache.save();
-                                    println!("Cache updated successfully.");
+                                    
+                                    // Check output size before caching (64KB limit)
+                                    let total_output_size = fresh_stdout.len() + fresh_stderr.len();
+                                    if total_output_size > 64 * 1024 { // 64KB limit
+                                        println!("❌ Cannot cache: Output size exceeds 64KB limit ({} bytes)", total_output_size);
+                                    } else {
+                                        // Update cache with fresh output
+                                        if let Err(e) = cache.update_cache(example, fresh_stdout, fresh_stderr, output.status.code().unwrap_or(-1)) {
+                                            println!("❌ Failed to update cache: {}", e);
+                                        } else if let Err(e) = cache.save() {
+                                            println!("❌ Failed to save cache: {}", e);
+                                        } else {
+                                            println!("Cache updated successfully.");
+                                        }
+                                    }
                                 } else {
                                     println!("❌ Test still fails with fresh output - issue confirmed");
                                     println!("Fresh stdout: '{}'", fresh_stdout);
