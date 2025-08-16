@@ -143,6 +143,20 @@ impl Parser {
             Some(Token::While) => self.parse_while_loop(),
             Some(Token::For) => self.parse_for_loop(),
             Some(Token::Function) => self.parse_function(),
+            // POSIX-style function definition: name() { ... }
+            Some(Token::Identifier) if matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) 
+                && matches!(self.lexer.peek_n(2), Some(Token::ParenClose)) => {
+                // Check if the next non-whitespace token is a brace
+                let mut pos = 3;
+                while pos < 10 && matches!(self.lexer.peek_n(pos), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+                    pos += 1;
+                }
+                if matches!(self.lexer.peek_n(pos), Some(Token::BraceOpen)) {
+                    self.parse_posix_function()
+                } else {
+                    self.parse_pipeline()
+                }
+            }
             // Bash arithmetic evaluation: (( ... ))
             Some(Token::ParenOpen) if matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) => {
                 self.parse_double_paren_command()
@@ -218,59 +232,137 @@ impl Parser {
         while let Some(token) = self.lexer.peek() {
             match token {
                 Token::Identifier => {
-                                    if let Some(Token::Assign) = self.lexer.peek_n(1) {
-                    if matches!(self.lexer.peek_n(2), Some(Token::ParenOpen)) {
-                        // Handle array declaration like: arr=(one two three)
-                        let var_name = self.get_identifier_text()?;
-                        self.lexer.next(); // consume =
-                        self.lexer.next(); // consume (
-                        let elements = self.parse_array_elements()?;
-                        let array_word = Word::Array(var_name.clone(), elements);
-                        env_vars.insert(var_name, array_word);
-                        self.skip_whitespace_and_comments();
-                    } else {
-                        // Handle regular assignment like: var=value
-                        let var_name = self.get_identifier_text()?;
-                        self.lexer.next(); // consume =
-                        // Parse the value as a Word (which can be a string, arithmetic expression, etc.)
-                        let value_word = self.parse_environment_variable_value()?;
-                        env_vars.insert(var_name, value_word);
-                        
-                        // Skip whitespace after the environment variable
-                        self.skip_whitespace_and_comments();
-                    }
-                } else if matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) {
-                        let var_name = self.get_identifier_text()?;
-                        self.lexer.next(); // consume =
-                        // Parse the value as a Word (which can be a string, arithmetic expression, etc.)
-                        let value_word = self.parse_environment_variable_value()?;
-                        env_vars.insert(var_name, value_word);
-                        
-                        // Skip whitespace after the environment variable
-                        self.skip_whitespace_and_comments();
-                    } else if matches!(self.lexer.peek_n(1), Some(Token::TestBracket)) {
-                        // Handle associative/indexed array assignment like: map[foo]=bar
-                        let (start, _) = self.lexer.get_span().ok_or(ParserError::UnexpectedEOF)?;
-                        let mut bracket_depth: i32 = 0;
-                        loop {
-                            if let Some((_, end)) = self.lexer.get_span() {
-                                match self.lexer.peek() {
-                                    Some(Token::TestBracket) => { bracket_depth += 1; }
-                                    Some(Token::TestBracketClose) => { bracket_depth -= 1; }
-                                    _ => {}
-                                }
-                                let done = bracket_depth == 0 && matches!(self.lexer.peek_n(1), Some(Token::Assign));
-                                self.lexer.next();
-                                if done {
-                                    let name_text = self.lexer.get_text(start, end);
-                                    let _eq = self.lexer.next();
+                    // Check for compound assignment operators
+                    let compound_op = self.lexer.peek_n(1).cloned();
+                    if let Some(compound_op) = compound_op {
+                        match compound_op {
+                            Token::PlusAssign => {
+                                // Check if this is array append (var+=(...)) or compound assignment (var+=value)
+                                if matches!(self.lexer.peek_n(2), Some(Token::ParenOpen)) {
+                                    // Handle array append like: var+=(value)
+                                    let var_name = self.get_identifier_text()?;
+                                    self.lexer.next(); // consume +=
+                                    self.lexer.next(); // consume (
+                                    let elements = self.parse_array_elements()?;
+                                    
+                                    // For array append, we need to create a special operation
+                                    // This would ideally be handled by the AST, but for now we'll treat it as a regular assignment
+                                    let array_word = Word::Array(var_name.clone(), elements);
+                                    env_vars.insert(var_name, array_word);
                                     self.skip_whitespace_and_comments();
+                                } else {
+                                    // Handle compound assignment like: var+=value
+                                    let var_name = self.get_identifier_text()?;
+                                    self.lexer.next(); // consume +=
+                                    
+                                    // Parse the value as a Word
                                     let value_word = self.parse_environment_variable_value()?;
-                                    env_vars.insert(name_text, value_word);
+                                    
+                                    // Create arithmetic expression: var=var+value
+                                    let arithmetic_expr = format!("{}+{}", var_name, value_word.to_string());
+                                    let compound_word = Word::Arithmetic(ArithmeticExpression {
+                                        expression: arithmetic_expr,
+                                        tokens: vec![], // We'll leave tokens empty for now
+                                    });
+                                    
+                                    env_vars.insert(var_name, compound_word);
                                     self.skip_whitespace_and_comments();
+                                }
+                            }
+                            Token::MinusAssign | Token::StarAssign | Token::SlashAssign |
+                            Token::PercentAssign | Token::StarStarAssign | Token::LeftShiftAssign | 
+                            Token::RightShiftAssign | Token::AndAssign | Token::CaretAssign | Token::OrAssign => {
+                                // Handle compound assignment like: var-=value, var*=value, etc.
+                                let var_name = self.get_identifier_text()?;
+                                let op = match compound_op {
+                                    Token::MinusAssign => "-",
+                                    Token::StarAssign => "*",
+                                    Token::SlashAssign => "/",
+                                    Token::PercentAssign => "%",
+                                    Token::StarStarAssign => "**",
+                                    Token::LeftShiftAssign => "<<",
+                                    Token::RightShiftAssign => ">>",
+                                    Token::AndAssign => "&",
+                                    Token::CaretAssign => "^",
+                                    Token::OrAssign => "|",
+                                    _ => unreachable!(),
+                                };
+                                
+                                self.lexer.next(); // consume the compound assignment operator
+                                
+                                // Parse the value as a Word
+                                let value_word = self.parse_environment_variable_value()?;
+                                
+                                // Create arithmetic expression: var=var+value
+                                let arithmetic_expr = format!("{}{}{}", var_name, op, value_word.to_string());
+                                let compound_word = Word::Arithmetic(ArithmeticExpression {
+                                    expression: arithmetic_expr,
+                                    tokens: vec![], // We'll leave tokens empty for now
+                                });
+                                
+                                env_vars.insert(var_name, compound_word);
+                                self.skip_whitespace_and_comments();
+                            }
+                            Token::Assign => {
+                                if matches!(self.lexer.peek_n(2), Some(Token::ParenOpen)) {
+                                    // Handle array declaration like: arr=(one two three)
+                                    let var_name = self.get_identifier_text()?;
+                                    self.lexer.next(); // consume =
+                                    self.lexer.next(); // consume (
+                                    let elements = self.parse_array_elements()?;
+                                    let array_word = Word::Array(var_name.clone(), elements);
+                                    env_vars.insert(var_name, array_word);
+                                    self.skip_whitespace_and_comments();
+                                } else {
+                                    // Handle regular assignment like: var=value
+                                    let var_name = self.get_identifier_text()?;
+                                    self.lexer.next(); // consume =
+                                    // Parse the value as a Word (which can be a string, arithmetic expression, etc.)
+                                    let value_word = self.parse_environment_variable_value()?;
+                                    env_vars.insert(var_name, value_word);
+                                    
+                                    // Skip whitespace after the environment variable
+                                    self.skip_whitespace_and_comments();
+                                }
+                            }
+                            _ => {
+                                if matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) {
+                                    let var_name = self.get_identifier_text()?;
+                                    self.lexer.next(); // consume =
+                                    // Parse the value as a Word (which can be a string, arithmetic expression, etc.)
+                                    let value_word = self.parse_environment_variable_value()?;
+                                    env_vars.insert(var_name, value_word);
+                                    
+                                    // Skip whitespace after the environment variable
+                                    self.skip_whitespace_and_comments();
+                                } else if matches!(self.lexer.peek_n(1), Some(Token::TestBracket)) {
+                                    // Handle associative/indexed array assignment like: map[foo]=bar
+                                    let (start, _) = self.lexer.get_span().ok_or(ParserError::UnexpectedEOF)?;
+                                    let mut bracket_depth: i32 = 0;
+                                    loop {
+                                        if let Some((_, end)) = self.lexer.get_span() {
+                                            match self.lexer.peek() {
+                                                Some(Token::TestBracket) => { bracket_depth += 1; }
+                                                Some(Token::TestBracketClose) => { bracket_depth -= 1; }
+                                                _ => {}
+                                            }
+                                            let done = bracket_depth == 0 && matches!(self.lexer.peek_n(1), Some(Token::Assign));
+                                            self.lexer.next();
+                                            if done {
+                                                let name_text = self.lexer.get_text(start, end);
+                                                let _eq = self.lexer.next();
+                                                self.skip_whitespace_and_comments();
+                                                let value_word = self.parse_environment_variable_value()?;
+                                                env_vars.insert(name_text, value_word);
+                                                self.skip_whitespace_and_comments();
+                                                break;
+                                            }
+                                        } else { return Err(ParserError::UnexpectedEOF); }
+                                    }
+                                } else {
                                     break;
                                 }
-                            } else { return Err(ParserError::UnexpectedEOF); }
+                            }
                         }
                     } else {
                         break;
@@ -368,6 +460,35 @@ impl Parser {
             match token {
                 Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString | Token::Source | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString | Token::Star | Token::Range | Token::Slash | Token::Tilde | Token::LongOption => {
                     args.push(self.parse_word()?);
+                }
+                Token::Assign => {
+                    // Handle assignment in built-in commands like: local n=$1
+                    // This should be parsed as a single argument: "n=$1"
+                    let mut assignment_text = String::new();
+                    
+                    // Get the variable name (should be the previous token)
+                    if let Some(prev_arg) = args.last_mut() {
+                        if let Word::Literal(var_name) = prev_arg {
+                            assignment_text.push_str(var_name);
+                            assignment_text.push('=');
+                            
+                            // Consume the = token
+                            self.lexer.next();
+                            
+                            // Parse the value
+                            let value_word = self.parse_environment_variable_value()?;
+                            assignment_text.push_str(&value_word.to_string());
+                            
+                            // Replace the previous argument with the complete assignment
+                            *prev_arg = Word::Literal(assignment_text);
+                        } else {
+                            // Fallback: just parse as a word
+                            args.push(self.parse_word()?);
+                        }
+                    } else {
+                        // No previous argument, this shouldn't happen
+                        return Err(ParserError::InvalidSyntax("Unexpected assignment token".to_string()));
+                    }
                 }
                 Token::Dollar | Token::DollarBrace | Token::DollarParen | Token::DollarHashSimple | Token::DollarAtSimple | Token::DollarStarSimple
                 | Token::DollarBraceHash | Token::DollarBraceBang | Token::DollarBraceStar | Token::DollarBraceAt
@@ -995,6 +1116,92 @@ impl Parser {
         };
         
         Ok(Command::Function(Function { name, body }))
+    }
+
+        fn parse_posix_function(&mut self) -> Result<Command, ParserError> {
+        // Get the function name
+        let name = self.get_identifier_text()?;
+        
+        // Consume the opening parenthesis
+        self.lexer.consume(Token::ParenOpen)?;
+        
+        // Consume the closing parenthesis
+        self.lexer.consume(Token::ParenClose)?;
+        
+        // Skip whitespace/newlines after parentheses
+        while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+            self.lexer.next();
+        }
+        
+        // Consume the opening brace
+        self.lexer.consume(Token::BraceOpen)?;
+        
+        // Allow whitespace/newlines after opening brace
+        while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+            self.lexer.next();
+        }
+        
+        // For now, capture everything until the closing brace as a single command
+        // This is a temporary fix to get the function parsing working
+        let mut brace_depth = 1;
+        let mut body_content = String::new();
+        
+        while let Some(token) = self.lexer.peek() {
+            match token {
+                Token::BraceOpen => {
+                    brace_depth += 1;
+                    body_content.push('{');
+                    self.lexer.next();
+                }
+                Token::BraceClose => {
+                    brace_depth -= 1;
+                    if brace_depth == 0 {
+                        self.lexer.next();
+                        break;
+                    }
+                    body_content.push('}');
+                    self.lexer.next();
+                }
+                _ => {
+                    // Get the text of the current token
+                    if let Some((start, end)) = self.lexer.get_span() {
+                        let text = self.lexer.get_text(start, end);
+                        body_content.push_str(&text);
+                    }
+                    self.lexer.next();
+                }
+            }
+        }
+        
+        // Parse body commands into a Block
+        let mut body_commands = Vec::new();
+        
+        // Parse first command
+        body_commands.push(self.parse_command()?);
+
+        // Parse additional commands inside the block
+        loop {
+            // Skip separators
+            while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon)) {
+                self.lexer.next();
+            }
+            match self.lexer.peek() {
+                Some(Token::BraceClose) | None => break,
+                _ => {
+                    let pre_pos = self.lexer.current_position();
+                    let command = self.parse_command()?;
+                    body_commands.push(command);
+                    if self.lexer.current_position() == pre_pos {
+                        if self.lexer.next().is_none() { break; }
+                    }
+                }
+            }
+        }
+        
+        Ok(Command::Function(Function { 
+            name, 
+            body: Block { commands: body_commands }
+        }))
     }
 
     fn parse_subshell(&mut self) -> Result<Command, ParserError> {
@@ -2290,6 +2497,87 @@ impl Parser {
                         }));
                     } else {
                         // debug_println!("DEBUG: parse_parameter_expansion: Expected BraceClose but got: {:?}", self.lexer.peek());
+                    }
+                }
+            } else if let Some(Token::Colon) = self.lexer.peek() {
+                // This could be array slice syntax like ${var:offset} or ${var:start:length}
+                // debug_println!("DEBUG: parse_parameter_expansion: Found Colon, checking for array slice");
+                self.lexer.next(); // consume :
+                
+                // Parse the offset (could be negative)
+                let mut offset = String::new();
+                let mut has_length = false;
+                let mut length = String::new();
+                
+                // Parse offset (can start with - for negative numbers)
+                if let Some(Token::Minus) = self.lexer.peek() {
+                    offset.push('-');
+                    self.lexer.next(); // consume -
+                }
+                
+                // Parse the rest of the offset
+                while let Some(token) = self.lexer.peek() {
+                    match token {
+                        Token::Number | Token::Identifier => {
+                            let text = self.lexer.get_current_text().unwrap_or_default();
+                            offset.push_str(&text);
+                            self.lexer.next();
+                        }
+                        Token::Colon => {
+                            // This is ${var:start:length} syntax
+                            has_length = true;
+                            self.lexer.next(); // consume second :
+                            
+                            // Parse length (can start with - for negative numbers)
+                            if let Some(Token::Minus) = self.lexer.peek() {
+                                length.push('-');
+                                self.lexer.next(); // consume -
+                            }
+                            
+                            // Parse the rest of the length
+                            while let Some(token) = self.lexer.peek() {
+                                match token {
+                                    Token::Number | Token::Identifier => {
+                                        let text = self.lexer.get_current_text().unwrap_or_default();
+                                        length.push_str(&text);
+                                        self.lexer.next();
+                                    }
+                                    Token::BraceClose => {
+                                        break;
+                                    }
+                                    _ => {
+                                        // Unexpected token, break
+                                        break;
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                        Token::BraceClose => {
+                            // This is ${var:offset} syntax
+                            break;
+                        }
+                        _ => {
+                            // Unexpected token, break
+                            break;
+                        }
+                    }
+                }
+                
+                // Expect closing brace
+                if let Some(Token::BraceClose) = self.lexer.peek() {
+                    self.lexer.next(); // consume }
+                    
+                    if has_length {
+                        return Ok(Word::ParameterExpansion(ParameterExpansion {
+                            variable: var_name,
+                            operator: ParameterExpansionOperator::ArraySlice(offset, Some(length)),
+                        }));
+                    } else {
+                        return Ok(Word::ParameterExpansion(ParameterExpansion {
+                            variable: var_name,
+                            operator: ParameterExpansionOperator::ArraySlice(offset, None),
+                        }));
                     }
                 }
             } else {

@@ -163,6 +163,12 @@ fn main() {
     let mut input_file: Option<String> = None;
     let mut output_file: Option<String> = None;
     let mut i = 2;
+    
+    // Special case: if the first argument is -i or -o, start parsing from index 1
+    if command == "-i" || command == "-o" {
+        i = 1;
+    }
+    
     while i < args.len() {
         match args[i].as_str() {
             "--ast-pretty" => {
@@ -230,6 +236,56 @@ fn main() {
     //     ast_options.compact, ast_options.indent, ast_options.newlines);
     
     let command = &args[1];
+    
+    // Special case: if the first argument is -i or -o, treat it as input/output processing
+    if command == "-i" || command == "-o" {
+        if let Some(input_filename) = &input_file {
+            // Always treat as input file when -i is specified
+            match fs::read_to_string(input_filename) {
+                Ok(content) => {
+                    println!("Processing input file: {}", input_filename);
+                    // Parse the shell script
+                    let commands = match Parser::new(&content).parse() {
+                        Ok(c) => c,
+                        Err(e) => { 
+                            println!("Parse error: {}", e); 
+                            return; 
+                        }
+                    };
+                    
+                    // Generate Perl code
+                    let mut gen = PerlGenerator::new();
+                    let code = gen.generate(&commands);
+                    
+                    // Handle output file option
+                    if let Some(output_filename) = &output_file {
+                        // Write to output file
+                        match fs::write(output_filename, &code) {
+                            Ok(_) => println!("Generated Perl code written to: {}", output_filename),
+                            Err(e) => println!("Error writing to output file {}: {}", output_filename, e),
+                        }
+                    } else {
+                        // Show generated code and run it
+                        println!("Generated Perl code:");
+                        println!("{}", code);
+                        println!("\n--- Running generated Perl code ---");
+                        let tmp = "__tmp_run.pl";
+                        if fs::write(tmp, &code).is_ok() {
+                            let _ = std::process::Command::new("perl").arg(tmp).status();
+                            let _ = fs::remove_file(tmp);
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("Error reading input file {}: {}", input_filename, e);
+                }
+            }
+        } else {
+            println!("Error: -i option requires an input filename");
+            return;
+        }
+        return;
+    }
     
     match command.as_str() {
         "--test-eq" => {
@@ -553,8 +609,52 @@ fn main() {
                     }
                 }
             } else {
-                println!("Unknown command: {}", command);
-                println!("Use '{} --help' for usage information", args[0]);
+                // Treat unknown commands as shell commands to be executed
+                println!("Executing shell command: {}", command);
+                println!("{}", "=".repeat(50));
+                
+                // Parse the command as shell input
+                match Parser::new(command).parse() {
+                    Ok(commands) => {
+                        // Generate Perl code
+                        let mut generator = PerlGenerator::new();
+                        let perl_code = generator.generate(&commands);
+                        
+                        // Write to temporary file and execute
+                        let tmp_file = "__tmp_direct_exec.pl";
+                        if fs::write(tmp_file, &perl_code).is_ok() {
+                            println!("Generated Perl code:");
+                            println!("{}", perl_code);
+                            println!("\n--- Running generated Perl code ---");
+                            
+                            match std::process::Command::new("perl").arg(tmp_file).output() {
+                                Ok(output) => {
+                                    if !output.stdout.is_empty() {
+                                        print!("{}", String::from_utf8_lossy(&output.stdout));
+                                    }
+                                    if !output.stderr.is_empty() {
+                                        eprint!("{}", String::from_utf8_lossy(&output.stderr));
+                                    }
+                                    println!("Exit code: {}", output.status);
+                                }
+                                Err(e) => {
+                                    println!("Error running Perl: {}", e);
+                                }
+                            }
+                            
+                            // Clean up temporary file
+                            let _ = fs::remove_file(tmp_file);
+                        } else {
+                            println!("Error writing temporary Perl file");
+                        }
+                    }
+                    Err(e) => {
+                        println!("Parse error: {}", e);
+                        println!("Use '{} --help' for usage information", args[0]);
+                    }
+                }
+                
+                println!("{}", "=".repeat(50));
             }
         }
     }
@@ -979,7 +1079,7 @@ fn parse_to_perl(input: &str) {
         input.to_string()
     };
     
-    println!("Converting to Perl: {}", input);
+    println!("Converting to Perl: {}", content);
     println!("Perl Code:");
     println!("{}", "=".repeat(50));
     
@@ -1002,7 +1102,22 @@ fn parse_file_to_perl(filename: &str) {
     
     match fs::read_to_string(filename) {
         Ok(content) => {
-            parse_to_perl(&content);
+            println!("Converting to Perl: {}", content);
+            println!("Perl Code:");
+            println!("{}", "=".repeat(50));
+            
+            match Parser::new(&content).parse() {
+                Ok(commands) => {
+                    let mut generator = PerlGenerator::new();
+                    let perl_code = generator.generate(&commands);
+                    println!("{}", perl_code);
+                }
+                Err(e) => {
+                    println!("Parse error: {}", e);
+                }
+            }
+            
+            println!("{}", "=".repeat(50));
         }
         Err(e) => {
             println!("Error reading file: {}", e);

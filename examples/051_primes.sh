@@ -34,21 +34,20 @@ is_prime() {
     return 0
 }
 
-# Find first 1000 primes
-echo "Finding first 1000 prime numbers..."
+echo "Finding first 100 prime numbers..."
 echo "This may take a while..."
 
 primes=(2)
 count=1
 candidate=3
 
-while [ $count -lt 1000 ]; do
+while [ $count -lt 100 ]; do
     if is_prime $candidate; then
         primes+=($candidate)
         count=$((count + 1))
         
-        # Show progress every 100 primes
-        if [ $((count % 100)) -eq 0 ]; then
+        # Show progress every 10 primes
+        if [ $((count % 10)) -eq 0 ]; then
             echo "Found $count primes so far..."
         fi
     fi

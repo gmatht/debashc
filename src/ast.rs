@@ -126,6 +126,13 @@ impl std::fmt::Display for ParameterExpansion {
             ParameterExpansionOperator::ErrorIfUnset(error) => write!(f, "${{{0}:?{1}}}", self.variable, error),
             ParameterExpansionOperator::Basename => write!(f, "${{{0}##*/}}", self.variable),
             ParameterExpansionOperator::Dirname => write!(f, "${{{0}%/*}}", self.variable),
+            ParameterExpansionOperator::ArraySlice(offset, length) => {
+                if let Some(length_str) = length {
+                    write!(f, "${{{}}}:{}:{}", self.variable, offset, length_str)
+                } else {
+                    write!(f, "${{{}}}:{}", self.variable, offset)
+                }
+            }
         }
     }
 }
@@ -154,6 +161,9 @@ pub enum ParameterExpansionOperator {
     // Path manipulation
     Basename,                      // ##*/
     Dirname,                       // %/*
+    
+    // Array slice operations
+    ArraySlice(String, Option<String>), // :offset or :start:length
 }
 
 // New AST nodes for expressions
@@ -192,6 +202,13 @@ impl std::fmt::Display for Word {
                     ParameterExpansionOperator::ErrorIfUnset(error) => write!(f, "${{{}}}:?{}", pe.variable, error),
                     ParameterExpansionOperator::Basename => write!(f, "${{{}}}##*/", pe.variable),
                     ParameterExpansionOperator::Dirname => write!(f, "${{{}}}%/*", pe.variable),
+                    ParameterExpansionOperator::ArraySlice(offset, length) => {
+                        if let Some(length_str) = length {
+                            write!(f, "${{{}}}:{}:{}", pe.variable, offset, length_str)
+                        } else {
+                            write!(f, "${{{}}}:{}", pe.variable, offset)
+                        }
+                    }
                 }
             },
             Word::Array(name, elements) => write!(f, "{}=({})", name, elements.join(" ")),
@@ -251,6 +268,13 @@ impl std::fmt::Display for Word {
                                 ParameterExpansionOperator::ErrorIfUnset(error) => result.push_str(&format!("${{{}}}:?{}", pe.variable, error)),
                                 ParameterExpansionOperator::Basename => result.push_str(&format!("${{{}}}##*/", pe.variable)),
                                 ParameterExpansionOperator::Dirname => result.push_str(&format!("${{{}}}%/*", pe.variable)),
+                                ParameterExpansionOperator::ArraySlice(var, offset) => {
+                                    if let Some(offset_str) = offset {
+                                        result.push_str(&format!("${{{}}}:{1}:{2}", pe.variable, var, offset_str))
+                                    } else {
+                                        result.push_str(&format!("${{{}}}:{1}", pe.variable, var))
+                                    }
+                                }
                             }
                         }
                         StringPart::MapAccess(map_name, key) => result.push_str(&format!("{}[{}]", map_name, key)),
@@ -287,6 +311,13 @@ impl Word {
                     ParameterExpansionOperator::ErrorIfUnset(error) => format!("${{{}}}:?{}", pe.variable, error),
                     ParameterExpansionOperator::Basename => format!("${{{}}}##*/", pe.variable),
                     ParameterExpansionOperator::Dirname => format!("${{{}}}%/*", pe.variable),
+                    ParameterExpansionOperator::ArraySlice(offset, length) => {
+                        if let Some(length_str) = length {
+                            format!("${{{}}}:{1}:{2}", pe.variable, offset, length_str)
+                        } else {
+                            format!("${{{}}}:{1}", pe.variable, offset)
+                        }
+                    }
                 }
             },
             Word::Array(name, elements) => format!("{}=({})", name, elements.join(" ")),
@@ -346,6 +377,13 @@ impl Word {
                                 ParameterExpansionOperator::ErrorIfUnset(error) => result.push_str(&format!("${{{}}}:?{}", pe.variable, error)),
                                 ParameterExpansionOperator::Basename => result.push_str(&format!("${{{}}}##*/", pe.variable)),
                                 ParameterExpansionOperator::Dirname => result.push_str(&format!("${{{}}}%/*", pe.variable)),
+                                ParameterExpansionOperator::ArraySlice(offset, length) => {
+                                    if let Some(length_str) = length {
+                                        result.push_str(&format!("${{{}}}:{1}:{2}", pe.variable, offset, length_str))
+                                    } else {
+                                        result.push_str(&format!("${{{}}}:{1}", pe.variable, offset))
+                                    }
+                                }
                             }
                         },
                         StringPart::MapAccess(map_name, key) => result.push_str(&format!("${{{}}}[{}]", map_name, key)),

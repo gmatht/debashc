@@ -84,15 +84,15 @@ pub enum Token {
     // Operators
     #[token("|")]
     Pipe,
-    #[token("||")]
+    #[token("||", priority = 1)]
     Or,
     #[token("&")]
     Background,
-    #[token("&&")]
+    #[token("&&", priority = 1)]
     And,
     #[token(";")]
     Semicolon,
-    #[token(";;")]
+    #[token(";;", priority = 1)]
     DoubleSemicolon,
     #[token("..", priority = 3)]
     Range,
@@ -106,27 +106,19 @@ pub enum Token {
     BraceClose,
     #[token("=")]
     Assign,
-    #[token("+=")]
-    PlusAssign,
-    #[token("-=")]
-    MinusAssign,
-    #[token("*=")]
-    StarAssign,
-    #[token("/=")]
-    SlashAssign,
-    #[token("%=")]
+    #[token("%=", priority = 3)]
     PercentAssign,
-    #[token("**=")]
+    #[token("**=", priority = 3)]
     StarStarAssign,
-    #[token("<<=")]
+    #[token("<<=", priority = 3)]
     LeftShiftAssign,
-    #[token(">>=")]
+    #[token(">>=", priority = 3)]
     RightShiftAssign,
-    #[token("&=")]
+    #[token("&=", priority = 3)]
     AndAssign,
-    #[token("^=")]
+    #[token("^=", priority = 3)]
     CaretAssign,
-    #[token("|=")]
+    #[token("|=", priority = 3)]
     OrAssign,
 
     // Redirections
@@ -134,25 +126,25 @@ pub enum Token {
     RedirectIn,
     #[token(">")]
     RedirectOut,
-    #[token(">>")]
+    #[token(">>", priority = 1)]
     RedirectAppend,
-    #[token("<>")]
+    #[token("<>", priority = 1)]
     RedirectInOut,
-    #[token("<<")]
+    #[token("<<", priority = 1)]
     Heredoc,
-    #[token("<<-")]
+    #[token("<<-", priority = 1)]
     HeredocTabs,
-    #[token("<<<")]
+    #[token("<<<", priority = 1)]
     HereString,
-    #[token(">&")]
+    #[token(">&", priority = 1)]
     RedirectOutErr,
-    #[token("<&")]
+    #[token("<&", priority = 1)]
     RedirectInErr,
-    #[token(">|")]
+    #[token(">|", priority = 1)]
     RedirectOutClobber,
-    #[token("&>")]
+    #[token("&>", priority = 1)]
     RedirectAll,
-    #[token("&>>")]
+    #[token("&>>", priority = 1)]
     RedirectAllAppend,
 
     // Variables and expansions
@@ -189,7 +181,7 @@ pub enum Token {
     DollarBraceBangAt,
 
     // Arithmetic
-    #[token("$((", priority = 1)]
+    #[token("$((", priority = 0)]
     Arithmetic,
     #[token("$[")]
     ArithmeticBracket,
@@ -251,11 +243,11 @@ pub enum Token {
     GroupOwned,
     #[token("-N")]
     Modified,
-    #[token("-nt")]
+    #[token("-nt", priority = 1)]
     NewerThan,
-    #[token("-ot")]
+    #[token("-ot", priority = 1)]
     OlderThan,
-    #[token("-ef")]
+    #[token("-ef", priority = 1)]
     SameFile,
 
     // Strings and literals
@@ -292,25 +284,33 @@ pub enum Token {
     Bang,
     #[token("#", priority = 1)]
     _Hash, // Unused variant, prefixed with underscore
-    #[token("%")]
+    #[token("%", priority = 2)]
     Percent,
-    #[token("^")]
+    #[token("^", priority = 2)]
     Caret,
     #[token("~")]
     Tilde,
     #[token("+")]
     Plus,
+    #[token("+=", priority = 3)]
+    PlusAssign,
     #[token("-")]
     Minus,
+    #[token("-=", priority = 3)]
+    MinusAssign,
     #[token("*")]
     Star,
-    #[token("/", priority = 2)]
+    #[token("*=", priority = 3)]
+    StarAssign,
+    #[token("/")]
     Slash,
+    #[token("/=", priority = 3)]
+    SlashAssign,
     #[token("\\", priority = 1)]
     _Backslash, // Unused variant, prefixed with underscore
     #[token("?")]
     Question,
-    #[token(":")]
+    #[token(":", priority = 1)]
     Colon,
     #[token("@")]
     At,

@@ -286,8 +286,18 @@ impl PerlGenerator {
         output.push_str("\n");
         
         // Add global variable declarations
+        // Debug: print all collected variables
+        output.push_str(&format!("# DEBUG: Collected {} variables: {:?}\n", global_vars.len(), global_vars));
+        
         for var in &global_vars {
-            output.push_str(&format!("my ${};\n", var));
+            // Skip empty or invalid variable names
+            let trimmed_var = var.trim();
+            if !trimmed_var.is_empty() && trimmed_var.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                output.push_str(&format!("my ${};\n", trimmed_var));
+            } else {
+                // Debug: print problematic variables
+                output.push_str(&format!("# DEBUG: Skipping invalid variable: '{}'\n", var));
+            }
         }
         
         if !global_vars.is_empty() {
@@ -4980,6 +4990,15 @@ impl PerlGenerator {
             ParameterExpansionOperator::ErrorIfUnset(error) => format!("defined(${}) ? ${} : die('{}')", pe.variable, pe.variable, error),
             ParameterExpansionOperator::Basename => format!("basename(${})", pe.variable),
             ParameterExpansionOperator::Dirname => format!("dirname(${})", pe.variable),
+            ParameterExpansionOperator::ArraySlice(offset, length) => {
+                if let Some(length_str) = length {
+                    // ${var:start:length} -> @var[start..start+length-1]
+                    format!("@{0}[{1}..{1}+{2}-1]", pe.variable, offset, length_str)
+                } else {
+                    // ${var:offset} -> @var[offset..$#var] (from offset to end)
+                    format!("@{0}[{1}..$#{0}]", pe.variable, offset)
+                }
+            }
         }
     }
 
@@ -5616,8 +5635,8 @@ impl PerlGenerator {
             Command::Simple(simple_cmd) => {
                 // Check for variables in environment variables (assignments)
                 for (var, _value) in &simple_cmd.env_vars {
-                    // Skip array access patterns like map[foo]
-                    if !var.contains('[') && !vars.contains(var) {
+                    // Skip array access patterns like map[foo] and empty strings
+                    if !var.contains('[') && !var.is_empty() && !vars.contains(var) {
                         vars.push(var.clone());
                     }
                 }
@@ -5630,8 +5649,8 @@ impl PerlGenerator {
             Command::BuiltinCommand(builtin_cmd) => {
                 // Check for variables in environment variables (assignments)
                 for (var, _value) in &builtin_cmd.env_vars {
-                    // Skip array access patterns like map[foo]
-                    if !var.contains('[') && !vars.contains(var) {
+                    // Skip array access patterns like map[foo] and empty strings
+                    if !var.contains('[') && !var.is_empty() && !vars.contains(var) {
                         vars.push(var.clone());
                     }
                 }
@@ -5643,7 +5662,7 @@ impl PerlGenerator {
             }
             Command::For(for_loop) => {
                 // Add the for loop variable to global vars
-                if !vars.contains(&for_loop.variable) {
+                if !for_loop.variable.is_empty() && !vars.contains(&for_loop.variable) {
                     vars.push(for_loop.variable.clone());
                 }
                 // Recursively check the for loop body
@@ -5697,6 +5716,10 @@ impl PerlGenerator {
             Word::Variable(var_name) => {
                 // Skip special Perl variables that can't be declared with 'my'
                 if var_name == "#" || var_name == "@" || var_name == "*" || var_name == "?" || var_name == "!" {
+                    return;
+                }
+                // Skip empty or invalid variable names
+                if var_name.is_empty() || var_name.chars().any(|c| !c.is_alphanumeric() && c != '_') {
                     return;
                 }
                 if !vars.contains(var_name) {
