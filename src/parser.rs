@@ -2062,18 +2062,18 @@ impl Parser {
                         tokens.push(ArithmeticToken::ParenOpen);
                         inner_expression.push_str(&text);
                     }
-                    Some(Token::ParenClose) => {
-                        depth -= 1;
-                        tokens.push(ArithmeticToken::ParenClose);
-                        // Only include the text if we're not at the final closing parenthesis
-                        // We need depth > 1 because we start with depth = 2 for $(( and need to
-                        // include the first ) but not the second )
-                        if depth > 1 {
-                            inner_expression.push_str(&text);
+                                            Some(Token::ParenClose) => {
+                            depth -= 1;
+                            tokens.push(ArithmeticToken::ParenClose);
+                            // Include the text if we're not at the very final closing parenthesis
+                            // We start with depth = 2 for $((, so:
+                            // - depth = 2: we're at the opening $((, include nothing
+                            // - depth = 1: we're at the first ), include it
+                            // - depth = 0: we're at the second ), don't include it
+                            if depth > 0 {
+                                inner_expression.push_str(&text);
+                            }
                         }
-                        // When depth becomes 1 or 0, we've reached the end of the arithmetic expression
-                        // Don't include the final closing parentheses in the expression
-                    }
                     Some(Token::Number) => {
                         tokens.push(ArithmeticToken::Number(text.to_string()));
                         inner_expression.push_str(&text);

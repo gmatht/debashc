@@ -330,7 +330,7 @@ pub enum Token {
     CarriageReturn,
     #[token("\t")]
     Tab,
-    #[token(" ")]
+    #[regex(r" +", priority = 3)]
     Space,
 
     // Comments
@@ -405,6 +405,7 @@ impl Lexer {
                 Ok(())
             } else {
                 // Get the actual character from the current token for better error reporting
+                // Note: self.current was incremented by next(), so we need to look at current - 1
                 if let Some((_, start, end)) = self.tokens.get(self.current - 1) {
                     let actual_char = self.input[*start..*end].chars().next().unwrap_or('?');
                     let (line, col) = self.offset_to_line_col(*start);
@@ -440,6 +441,10 @@ impl Lexer {
         self.tokens.get(self.current).map(|(_, start, end)| {
             self.input[*start..*end].to_string()
         })
+    }
+    
+    pub fn get_current_span(&self) -> Option<(usize, usize)> {
+        self.tokens.get(self.current).map(|(_, start, end)| (*start, *end))
     }
 }
 
