@@ -2048,9 +2048,7 @@ impl Parser {
         let mut tokens = Vec::new();
         
         // We're at the Arithmetic token which is $((, consume it
-        if let Some((_start, _end)) = self.lexer.get_span() {
-            self.lexer.next();
-        }
+        self.lexer.next(); // Consume the $(( token
         
         let mut depth = 2; // We start with two open parentheses
         
