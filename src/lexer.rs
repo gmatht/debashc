@@ -282,8 +282,8 @@ pub enum Token {
     // Special characters
     #[token("!")]
     Bang,
-    #[token("#", priority = 1)]
-    _Hash, // Unused variant, prefixed with underscore
+    // #[token("#", priority = 1)]
+    // _Hash, // Unused variant, prefixed with underscore
     #[token("%", priority = 2)]
     Percent,
     #[token("^", priority = 2)]
@@ -334,7 +334,7 @@ pub enum Token {
     Space,
 
     // Comments
-    #[regex(r"#[^\n]*", priority = 3)]
+    #[regex(r"#[^\r\n]*", priority = 10)]
     Comment,
 }
 

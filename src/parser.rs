@@ -2308,9 +2308,14 @@ impl Parser {
                                 i += 1;
                             } else {
                                 // Regular alphanumeric variables
-                                while i < quoted_content.len() && quoted_content.chars().nth(i).unwrap_or(' ').is_alphanumeric() {
-                                    var_name.push(quoted_content.chars().nth(i).unwrap_or(' '));
-                                    i += 1;
+                                while i < quoted_content.len() {
+                                    let ch = quoted_content.chars().nth(i).unwrap_or(' ');
+                                    if ch.is_alphanumeric() || ch == '_' {
+                                        var_name.push(ch);
+                                        i += 1;
+                                    } else {
+                                        break;
+                                    }
                                 }
                             }
                         }
