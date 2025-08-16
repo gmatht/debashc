@@ -3899,6 +3899,15 @@ impl PerlGenerator {
                     // Convert ${#arr[@]} to scalar(@arr) for printf format strings
                     result.push_str(&format!("scalar(@{})", map_name));
                 }
+                StringPart::ArraySlice(array_name, offset, length) => {
+                    // Convert ${arr[@]:start:length} to @arr[start..start+length-1] for printf format strings
+                    // Convert ${arr[@]:start} to @arr[start..$#arr] for printf format strings
+                    if let Some(length_str) = length {
+                        result.push_str(&format!("@{}[{}..{}+{}-1]", array_name, offset, offset, length_str));
+                    } else {
+                        result.push_str(&format!("@{}[{}..$#{}]", array_name, offset, array_name));
+                    }
+                }
                 StringPart::ParameterExpansion(pe) => {
                     result.push_str(&self.generate_parameter_expansion(pe));
                 }
@@ -4104,6 +4113,15 @@ impl PerlGenerator {
                 StringPart::MapLength(map_name) => {
                     // Convert ${#arr[@]} to scalar(@arr) in Perl
                     result.push_str(&format!("scalar(@{})", map_name));
+                }
+                StringPart::ArraySlice(array_name, offset, length) => {
+                    // Convert ${arr[@]:start:length} to @arr[start..start+length-1] in Perl
+                    // Convert ${arr[@]:start} to @arr[start..$#arr] in Perl
+                    if let Some(length_str) = length {
+                        result.push_str(&format!("@{}{}[{}..{}+{}-1]", array_name, array_name, offset, offset, length_str));
+                    } else {
+                        result.push_str(&format!("@{}{}[{}..$#{}]", array_name, array_name, offset, array_name));
+                    }
                 }
                 StringPart::ParameterExpansion(pe) => {
                     result.push_str(&self.generate_parameter_expansion(pe));
@@ -4373,6 +4391,15 @@ impl PerlGenerator {
                 // ${#arr[@]} -> scalar(@arr)
                 format!("scalar(@{})", map_name)
             },
+            Word::ArraySlice(array_name, offset, length) => {
+                // ${arr[@]:start:length} -> @arr[start..start+length-1]
+                // ${arr[@]:start} -> @arr[start..$#arr]
+                if let Some(length_str) = length {
+                    format!("@{}[{}..{}+{}-1]", array_name, offset, offset, length_str)
+                } else {
+                    format!("@{}[{}..$#{}]", array_name, offset, array_name)
+                }
+            },
         }
     }
 
@@ -4475,6 +4502,15 @@ impl PerlGenerator {
             Word::MapLength(map_name) => {
                 // ${#arr[@]} -> scalar(@arr)
                 format!("scalar(@{})", map_name)
+            },
+            Word::ArraySlice(array_name, offset, length) => {
+                // ${arr[@]:start:length} -> @arr[start..start+length-1]
+                // ${arr[@]:start} -> @arr[start..$#arr]
+                if let Some(length_str) = length {
+                    format!("@{}[{}..{}+{}-1]", array_name, offset, offset, length_str)
+                } else {
+                    format!("@{}[{}..$#{}]", array_name, offset, array_name)
+                }
             },
             Word::Arithmetic(expr) => self.convert_arithmetic_to_perl(&expr.expression),
             Word::BraceExpansion(expansion) => {

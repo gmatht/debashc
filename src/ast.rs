@@ -176,6 +176,7 @@ pub enum Word {
     MapAccess(String, String), // map_name, key
     MapKeys(String), // !map[@] -> get keys of associative array
     MapLength(String), // #arr[@] -> get length of array
+    ArraySlice(String, String, Option<String>), // array_name, offset, optional_length
     Arithmetic(ArithmeticExpression),
     BraceExpansion(BraceExpansion),
     CommandSubstitution(Box<Command>),
@@ -215,6 +216,13 @@ impl std::fmt::Display for Word {
             Word::MapAccess(map_name, key) => write!(f, "{}[{}]", map_name, key),
             Word::MapKeys(map_name) => write!(f, "!{}[@]", map_name),
             Word::MapLength(map_name) => write!(f, "#{}[@]", map_name),
+            Word::ArraySlice(array_name, offset, length) => {
+                if let Some(length_str) = length {
+                    write!(f, "${{{}}}[@]:{}:{}", array_name, offset, length_str)
+                } else {
+                    write!(f, "${{{}}}[@]:{}", array_name, offset)
+                }
+            },
             Word::Arithmetic(expr) => write!(f, "{}", expr.expression),
             Word::BraceExpansion(expansion) => {
                 let mut result = String::new();
@@ -280,6 +288,13 @@ impl std::fmt::Display for Word {
                         StringPart::MapAccess(map_name, key) => result.push_str(&format!("{}[{}]", map_name, key)),
                         StringPart::MapKeys(map_name) => result.push_str(&format!("!{}[@]", map_name)),
                         StringPart::MapLength(map_name) => result.push_str(&format!("#{}[@]", map_name)),
+                        StringPart::ArraySlice(array_name, offset, length) => {
+                            if let Some(length_str) = length {
+                                result.push_str(&format!("${{{}[@]}}:{}:{}", array_name, offset, length_str));
+                            } else {
+                                result.push_str(&format!("${{{}[@]}}:{}", array_name, offset));
+                            }
+                        },
                         StringPart::Arithmetic(expr) => result.push_str(&expr.expression),
                         StringPart::CommandSubstitution(_) => result.push_str("$(...)"),
                     }
@@ -324,6 +339,13 @@ impl Word {
             Word::MapAccess(map_name, key) => format!("{}[{}]", map_name, key),
             Word::MapKeys(map_name) => format!("!{}[@]", map_name),
             Word::MapLength(map_name) => format!("#{}[@]", map_name),
+            Word::ArraySlice(array_name, offset, length) => {
+                if let Some(length_str) = length {
+                    format!("${{{}}}[@]:{}:{}", array_name, offset, length_str)
+                } else {
+                    format!("${{{}}}[@]:{}", array_name, offset)
+                }
+            },
             Word::Arithmetic(expr) => expr.expression.to_string(),
             Word::BraceExpansion(expansion) => {
                 let mut result = String::new();
@@ -389,6 +411,13 @@ impl Word {
                         StringPart::MapAccess(map_name, key) => result.push_str(&format!("${{{}}}[{}]", map_name, key)),
                         StringPart::MapKeys(map_name) => result.push_str(&format!("${{!{}}}[@]", map_name)),
                         StringPart::MapLength(map_name) => result.push_str(&format!("${{#{}}}[@]", map_name)),
+                        StringPart::ArraySlice(array_name, offset, length) => {
+                            if let Some(length_str) = length {
+                                result.push_str(&format!("${{{}[@]}}:{}:{}", array_name, offset, length_str));
+                            } else {
+                                result.push_str(&format!("${{{}[@]}}:{}", array_name, offset));
+                            }
+                        },
                         StringPart::Arithmetic(expr) => result.push_str(&expr.expression),
                         StringPart::CommandSubstitution(_) => result.push_str("$(...)"),
                     }
@@ -512,6 +541,7 @@ pub enum StringPart {
     MapAccess(String, String), // map_name, key
     MapKeys(String), // !map[@] -> get keys of associative array
     MapLength(String), // #arr[@] -> get length of array
+    ArraySlice(String, String, Option<String>), // array_name, offset, optional_length
     Arithmetic(ArithmeticExpression),
     CommandSubstitution(Box<Command>),
 } 

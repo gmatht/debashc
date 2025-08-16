@@ -3,6 +3,11 @@
 # Prime Number Generator
 # This script finds the first 1000 prime numbers
 
+#If the parser doesn't support += let it choke on this easy examples.
+y+=2
+z+=(a b)
+z+=${primes[@]:0:1}
+
 echo "=== Prime Number Generator (first 1000 primes) ==="
 
 # Function to check if a number is prime

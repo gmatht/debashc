@@ -1356,6 +1356,13 @@ impl Parser {
                                 &StringPart::MapAccess(ref map_name, ref key) => result.push_str(&format!("${{{}}}[{}]", map_name, key)),
                                 &StringPart::MapKeys(ref map_name) => result.push_str(&format!("${{!{}}}[@]", map_name)),
                                 &StringPart::MapLength(ref map_name) => result.push_str(&format!("${{#{}}}[@]", map_name)),
+                                &StringPart::ArraySlice(ref array_name, ref offset, ref length) => {
+                                    if let Some(length_str) = length {
+                                        result.push_str(&format!("${{{}[@]}}:{}:{}", array_name, offset, length_str));
+                                    } else {
+                                        result.push_str(&format!("${{{}[@]}}:{}", array_name, offset));
+                                    }
+                                },
                                 &StringPart::Arithmetic(ref expr) => result.push_str(&expr.expression),
                                 &StringPart::CommandSubstitution(_) => result.push_str("$(...)"),
                                 &StringPart::ParameterExpansion(ref pe) => result.push_str(&pe.to_string()),
@@ -1506,6 +1513,12 @@ impl Parser {
                                 
                                 // Special case: if key is "@", this is array iteration
                                 if key == "@" {
+                                    // Check if there's array slicing after the closing brace
+                                    // Look ahead for :offset:length syntax
+                                    if let Some(Token::Colon) = self.lexer.peek() {
+                                        // This is array slicing like ${arr[@]:start:length}
+                                        return self.parse_array_slicing(map_name.to_string());
+                                    }
                                     return Ok(Word::MapAccess(map_name.to_string(), "@".to_string()));
                                 }
                                 
@@ -2215,6 +2228,70 @@ impl Parser {
                                 if let Some(_bracket_end) = brace_content.rfind(']') {
                                     let map_name = &brace_content[..bracket_start];
                                     let key = &brace_content[bracket_start + 1.._bracket_end];
+                                    
+                                    // Check if this is array slicing like ${arr[@]:start:length}
+                                    if key == "@" {
+                                        // This is ${arr[@]} - check for array slicing
+                                        println!("DEBUG: Found ${}[@] in string interpolation, checking for array slicing", map_name);
+                                        
+                                        // Instead of looking ahead, we need to check if the original quoted string
+                                        // contains the array slicing syntax. Let me check the original string.
+                                        let original_string = &quoted_content;
+                                        println!("DEBUG: Original quoted content: '{}'", original_string);
+                                        println!("DEBUG: Looking for array slicing in: '{}'", original_string);
+                                        
+                                        // For array slicing like ${primes[@]:0:3}, we need to parse the entire thing
+                                        // as a single parameter expansion, not split it into parts
+                                        // Check if the original string contains array slicing syntax
+                                        if original_string.contains(":") && original_string.contains("[@]") {
+                                            // Parse the array slicing syntax
+                                            // Find the position after [@]
+                                            let bracket_end_pos = original_string.find("]").unwrap_or(0);
+                                            if bracket_end_pos > 0 {
+                                                let after_bracket = &original_string[bracket_end_pos + 1..];
+                                                
+                                                if after_bracket.starts_with(':') {
+                                                    // Parse the slicing part
+                                                    let mut offset = String::new();
+                                                    let mut length = Option::<String>::None;
+                                                    let mut slice_pos = 1; // Skip the first colon
+                                                    
+                                                    // Parse offset
+                                                    while slice_pos < after_bracket.len() {
+                                                        let ch = after_bracket.chars().nth(slice_pos).unwrap_or(' ');
+                                                        if ch.is_alphanumeric() || ch == '-' {
+                                                            offset.push(ch);
+                                                            slice_pos += 1;
+                                                        } else if ch == ':' {
+                                                            // Second colon found - parse length
+                                                            slice_pos += 1; // Skip the second colon
+                                                            let mut length_str = String::new();
+                                                            while slice_pos < after_bracket.len() {
+                                                                let ch = after_bracket.chars().nth(slice_pos).unwrap_or(' ');
+                                                                if ch.is_alphanumeric() || ch == '-' {
+                                                                    length_str.push(ch);
+                                                                    slice_pos += 1;
+                                                                } else {
+                                                                    break;
+                                                                }
+                                                            }
+                                                            length = Some(length_str);
+                                                            break;
+                                                        } else {
+                                                            break;
+                                                        }
+                                                    }
+                                                    
+                                                    // Create the ArraySlice StringPart
+                                                    parts.push(StringPart::ArraySlice(map_name.to_string(), offset, length));
+                                                    
+                                                    // Skip the regular variable handling
+                                                    continue;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    
                                     // Create a MapAccess StringPart
                                     parts.push(StringPart::MapAccess(map_name.to_string(), key.to_string()));
                                     continue; // Skip the regular variable handling
@@ -2431,6 +2508,61 @@ impl Parser {
         }
         
         Ok(var_name)
+    }
+    
+    fn parse_array_slicing(&mut self, array_name: String) -> Result<Word, ParserError> {
+        // Parse array slicing syntax like :start:length after ${arr[@]}
+        // We're already past the first colon, so consume it
+        self.lexer.next(); // consume the first colon
+        
+        // Parse the offset (start position)
+        let offset = self.parse_slice_offset()?;
+        
+        // Check if there's a second colon for length
+        if let Some(Token::Colon) = self.lexer.peek() {
+            self.lexer.next(); // consume the second colon
+            let length = self.parse_slice_offset()?;
+            Ok(Word::ArraySlice(array_name, offset, Some(length)))
+        } else {
+            // Just offset, no length specified
+            Ok(Word::ArraySlice(array_name, offset, None))
+        }
+    }
+    
+    fn parse_slice_offset(&mut self) -> Result<String, ParserError> {
+        // Parse the offset part of array slicing
+        // This can be a number, variable, or arithmetic expression
+        let mut offset = String::new();
+        
+        while !self.lexer.is_eof() {
+            if let Some((start, end)) = self.lexer.get_span() {
+                let token = self.lexer.peek();
+                
+                match token {
+                    Some(Token::Colon) => {
+                        // End of offset, but don't consume it yet
+                        break;
+                    }
+                    Some(Token::BraceClose) => {
+                        // End of parameter expansion
+                        break;
+                    }
+                    _ => {
+                        let text = self.lexer.get_text(start, end);
+                        offset.push_str(&text);
+                        self.lexer.next();
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+        
+        if offset.is_empty() {
+            return Err(ParserError::InvalidSyntax("Empty array slice offset".to_string()));
+        }
+        
+        Ok(offset)
     }
     
     fn parse_parameter_expansion(&mut self) -> Result<Word, ParserError> {
@@ -3113,10 +3245,6 @@ mod tests {
             panic!("Expected Simple command");
         }
     }
-
-
-
-
 
     #[test]
     fn test_parse_arithmetic_expression() {
