@@ -17,35 +17,44 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use std::thread;
 use std::collections::HashMap;
+use std::path::Path;
+use std::time::SystemTime;
 use std::os::windows::process::ExitStatusExt;
 use serde::{Serialize, Deserialize};
-use sha2::{Sha256, Digest};
 
 // Use the debug module for controlling DEBUG output
 use debashl::debug::set_debug_enabled;
 
 #[derive(Debug, Serialize, Deserialize)]
-struct BashOutputCache {
-    outputs: HashMap<String, CachedOutput>,
+struct CommandCache {
+    bash_outputs: HashMap<String, CachedBashOutput>,
+    perl_outputs: HashMap<String, CachedPerlOutput>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct CachedOutput {
+struct CachedBashOutput {
     stdout: String,
     stderr: String,
     exit_code: i32,
-    sha256_hash: String, // SHA256 hash of the bash file content
+    last_modified: u64, // Unix timestamp
 }
 
-impl BashOutputCache {
+#[derive(Debug, Serialize, Deserialize)]
+struct CachedPerlOutput {
+    perl_code: String,
+    last_modified: u64, // Unix timestamp
+}
+
+impl CommandCache {
     fn new() -> Self {
         Self {
-            outputs: HashMap::new(),
+            bash_outputs: HashMap::new(),
+            perl_outputs: HashMap::new(),
         }
     }
 
     fn load() -> Self {
-        let cache_file = "bash_output_cache.json";
+        let cache_file = "command_cache.json";
         match fs::read_to_string(cache_file) {
             Ok(content) => {
                 match serde_json::from_str(&content) {
@@ -57,62 +66,208 @@ impl BashOutputCache {
         }
     }
 
-    fn save(&self) -> Result<(), String> {
-        let cache_file = "bash_output_cache.json";
+    fn save(&self) {
+        let cache_file = "command_cache.json";
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            // Check cache size before writing
-            if json.len() > 64 * 1024 { // 64KB limit
-                return Err("Cache file would exceed 64KB limit".to_string());
-            }
-            
-            if let Err(e) = fs::write(cache_file, json) {
-                return Err(format!("Failed to write cache file: {}", e));
-            }
-            Ok(())
-        } else {
-            Err("Failed to serialize cache to JSON".to_string())
+            let _ = fs::write(cache_file, json);
         }
     }
 
-    fn get_cached_output(&self, filename: &str) -> Option<&CachedOutput> {
-        self.outputs.get(filename)
+    // Bash output caching methods
+    fn get_cached_bash_output(&self, filename: &str) -> Option<&CachedBashOutput> {
+        self.bash_outputs.get(filename)
     }
 
-    fn is_cache_valid(&self, filename: &str) -> bool {
-        if let Some(cached) = self.outputs.get(filename) {
-            // Calculate current SHA256 hash of the file
-            if let Ok(current_hash) = calculate_file_sha256(filename) {
-                return current_hash == cached.sha256_hash;
+    fn is_bash_cache_valid(&self, filename: &str) -> bool {
+        if let Some(cached) = self.bash_outputs.get(filename) {
+            if let Ok(metadata) = fs::metadata(filename) {
+                if let Ok(modified) = metadata.modified() {
+                    if let Ok(modified_timestamp) = modified.duration_since(SystemTime::UNIX_EPOCH) {
+                        return modified_timestamp.as_secs() <= cached.last_modified;
+                    }
+                }
             }
         }
         false
     }
 
-    fn update_cache(&mut self, filename: &str, stdout: String, stderr: String, exit_code: i32) -> Result<(), String> {
-        // Check output size before storing in memory (64KB limit)
-        let total_output_size = stdout.len() + stderr.len();
-        if total_output_size > 64 * 1024 { // 64KB limit
-            return Err(format!("Output size exceeds 64KB limit: stdout={} bytes, stderr={} bytes, total={} bytes", 
-                stdout.len(), stderr.len(), total_output_size));
-        }
-        
-        // Calculate SHA256 hash of the file content
-        let sha256_hash = calculate_file_sha256(filename)?;
+    fn update_bash_cache(&mut self, filename: &str, stdout: String, stderr: String, exit_code: i32) {
+        let last_modified = if let Ok(metadata) = fs::metadata(filename) {
+            if let Ok(modified) = metadata.modified() {
+                if let Ok(modified_timestamp) = modified.duration_since(SystemTime::UNIX_EPOCH) {
+                    modified_timestamp.as_secs()
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        } else {
+            0
+        };
 
-        self.outputs.insert(filename.to_string(), CachedOutput {
+        self.bash_outputs.insert(filename.to_string(), CachedBashOutput {
             stdout,
             stderr,
             exit_code,
-            sha256_hash,
+            last_modified,
         });
-        
-        Ok(())
     }
 
-    fn invalidate_cache(&mut self, filename: &str) {
-        self.outputs.remove(filename);
-        let _ = self.save(); // Ignore save errors during invalidation
+    fn invalidate_bash_cache(&mut self, filename: &str) {
+        self.bash_outputs.remove(filename);
+        self.save();
     }
+
+    // Perl output caching methods
+    fn get_cached_perl_output(&self, filename: &str) -> Option<&CachedPerlOutput> {
+        self.perl_outputs.get(filename)
+    }
+
+    fn is_perl_cache_valid(&self, filename: &str) -> bool {
+        if let Some(cached) = self.perl_outputs.get(filename) {
+            if let Ok(metadata) = fs::metadata(filename) {
+                if let Ok(modified) = metadata.modified() {
+                    if let Ok(modified_timestamp) = modified.duration_since(SystemTime::UNIX_EPOCH) {
+                        return modified_timestamp.as_secs() <= cached.last_modified;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn update_perl_cache(&mut self, filename: &str, perl_code: String) {
+        let last_modified = if let Ok(metadata) = fs::metadata(filename) {
+            if let Ok(modified) = metadata.modified() {
+                if let Ok(modified_timestamp) = modified.duration_since(SystemTime::UNIX_EPOCH) {
+                    modified_timestamp.as_secs()
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        self.perl_outputs.insert(filename.to_string(), CachedPerlOutput {
+            perl_code,
+            last_modified,
+        });
+    }
+
+    fn invalidate_perl_cache(&mut self, filename: &str) {
+        self.perl_outputs.remove(filename);
+        self.save();
+    }
+}
+
+fn cached_run_command(filename: &str, run_bash: bool, run_perl: bool) -> Result<(Option<std::process::Output>, Option<String>), String> {
+    let mut cache = CommandCache::load();
+    let mut bash_output = None;
+    let mut perl_code = None;
+    
+    // Check bash cache if needed
+    if run_bash {
+        if cache.is_bash_cache_valid(filename) {
+            if let Some(cached) = cache.get_cached_bash_output(filename) {
+                bash_output = Some(std::process::Output {
+                    stdout: cached.stdout.as_bytes().to_vec(),
+                    stderr: cached.stderr.as_bytes().to_vec(),
+                    status: std::process::ExitStatus::from_raw(cached.exit_code.try_into().unwrap_or(0)),
+                });
+            }
+        }
+    }
+    
+    // Check perl cache if needed
+    if run_perl {
+        if cache.is_perl_cache_valid(filename) {
+            if let Some(cached) = cache.get_cached_perl_output(filename) {
+                perl_code = Some(cached.perl_code.clone());
+            }
+        }
+    }
+    
+    // If we need to run bash and don't have cached output
+    if run_bash && bash_output.is_none() {
+        let output = run_bash_script(filename)?;
+        
+        // Cache the bash output
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let exit_code = output.status.code().unwrap_or(-1);
+        cache.update_bash_cache(filename, stdout, stderr, exit_code);
+        
+        bash_output = Some(output);
+    }
+    
+    // If we need to generate perl and don't have cached output
+    if run_perl && perl_code.is_none() {
+        let shell_content = fs::read_to_string(filename)
+            .map_err(|e| format!("Failed to read {}: {}", filename, e))?;
+        
+        let commands = Parser::new(&shell_content).parse()
+            .map_err(|e| format!("Failed to parse {}: {:?}", filename, e))?;
+        
+        let mut generator = PerlGenerator::new();
+        let code = generator.generate(&commands);
+        
+        // Cache the perl code
+        cache.update_perl_cache(filename, code.clone());
+        perl_code = Some(code);
+    }
+    
+    // Save cache if we made any updates
+    if bash_output.is_some() || perl_code.is_some() {
+        cache.save();
+    }
+    
+    Ok((bash_output, perl_code))
+}
+
+fn run_bash_script(filename: &str) -> Result<std::process::Output, String> {
+    // Create a temporary file with Unix line endings for WSL
+    let shell_content = match fs::read_to_string(filename) {
+        Ok(c) => c,
+        Err(e) => return Err(format!("Failed to read {}: {}", filename, e)),
+    };
+    let unix_content = shell_content.replace("\r\n", "\n");
+    let wsl_script_path = "__wsl_script.sh";
+    
+    if let Err(e) = fs::write(wsl_script_path, unix_content) {
+        return Err(format!("Failed to write WSL script: {}", e));
+    }
+    
+    let mut child = match Command::new("wsl").args(&["bash", wsl_script_path]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+        Ok(c) => c,
+        Err(e) => { 
+            let _ = fs::remove_file(wsl_script_path);
+            return Err(format!("Failed to spawn wsl bash: {}", e)); 
+        }
+    };
+    
+    let start = std::time::Instant::now();
+    let output = loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break child.wait_with_output().unwrap(),
+            Ok(None) => {
+                if start.elapsed() > Duration::from_millis(1000) { 
+                    let _ = child.kill(); 
+                    break child.wait_with_output().unwrap(); 
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => break child.wait_with_output().unwrap(),
+        }
+    };
+    
+    // Cleanup WSL script file
+    let _ = fs::remove_file(wsl_script_path);
+    
+    Ok(output)
 }
 
 #[derive(Debug)]
@@ -434,8 +589,8 @@ fn main() {
             test_all_examples_next_fail(&generators, test_number);
         }
         "--clear-cache" => {
-            // Clear the bash output cache
-            let cache_file = "bash_output_cache.json";
+            // Clear the unified command cache
+            let cache_file = "command_cache.json";
             if let Err(e) = fs::remove_file(cache_file) {
                 if e.kind() != std::io::ErrorKind::NotFound {
                     println!("Error removing cache file: {}", e);
@@ -443,7 +598,7 @@ fn main() {
                     println!("Cache file not found, nothing to clear.");
                 }
             } else {
-                println!("Bash output cache cleared successfully.");
+                println!("Command cache cleared successfully.");
             }
         }
         "lex" => {
@@ -825,21 +980,29 @@ fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
             Ok(c) => c,
             Err(e) => { 
                 let _ = fs::remove_file(wsl_script_path);
-                cleanup_tmp(lang, &tmp_file); 
                 return Err(format!("Failed to spawn wsl bash: {}", e)); 
             }
         };
+        
         let start = std::time::Instant::now();
-        loop {
+        let output = loop {
             match child.try_wait() {
                 Ok(Some(_)) => break child.wait_with_output().unwrap(),
                 Ok(None) => {
-                    if start.elapsed() > Duration::from_millis(1000) { let _ = child.kill(); break child.wait_with_output().unwrap(); }
+                    if start.elapsed() > Duration::from_millis(1000) { 
+                        let _ = child.kill(); 
+                        break child.wait_with_output().unwrap(); 
+                    }
                     thread::sleep(Duration::from_millis(10));
                 }
                 Err(_) => break child.wait_with_output().unwrap(),
             }
-        }
+        };
+        
+        // Cleanup WSL script file
+        let _ = fs::remove_file(wsl_script_path);
+        
+        output
     };
 
     // Run translated program
@@ -951,18 +1114,21 @@ fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
 }
 
 fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Option<AstFormatOptions>) -> Result<TestResult, String> {
-    // Load cache and check if we can use cached output
-    let mut cache = BashOutputCache::load();
+    // Load caches
+    let mut cache = CommandCache::load();
     let mut shell_output = None;
+    let mut cached_perl_code = None;
+    
+    // Declare variables that will be used throughout the function
     let mut shell_content = String::new();
     let mut tmp_file = String::new();
     let mut run_cmd = Vec::new();
     let mut translated_code = String::new();
     let mut ast = String::new();
     
-    // Check if cache is valid for this file
-    if cache.is_cache_valid(filename) {
-        if let Some(cached) = cache.get_cached_output(filename) {
+    // Check if bash output cache is valid for this file
+    if cache.is_bash_cache_valid(filename) {
+        if let Some(cached) = cache.get_cached_bash_output(filename) {
             // Use cached output
             shell_output = Some(std::process::Output {
                 stdout: cached.stdout.as_bytes().to_vec(),
@@ -972,68 +1138,27 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
         }
     }
     
-    // Always need to parse and generate code for comparison, even with cached output
-    if shell_content.is_empty() {
-        // Read shell script content
-        shell_content = match fs::read_to_string(filename) {
-            Ok(c) => c,
-            Err(e) => { return Err(format!("Failed to read {}: {}", filename, e)); }
-        };
+    // Check if Perl code cache is valid for this file
+    if let Some(cached) = cache.get_cached_perl_output(filename) {
+        cached_perl_code = Some(cached.perl_code.clone());
+        // If we have cached Perl code, we can use it directly
+        if lang == "perl" {
+            translated_code = cached.perl_code.clone();
+        }
     }
-
-    // Parse and generate target language code
-    let commands = match Parser::new(&shell_content).parse() {
-        Ok(c) => c,
-        Err(e) => { 
-            // Capture lexer output for debugging
-            let mut lexer = Lexer::new(&shell_content);
-            let mut lexer_output = String::new();
-            let mut token_count = 0;
-            
-            while !lexer.is_eof() && token_count < 1000 { // Limit to prevent infinite loops
-                if let Some(token) = lexer.peek() {
-                    let current_pos = lexer.current_position();
-                    let (line, col) = lexer.offset_to_line_col(current_pos);
-                    lexer_output.push_str(&format!("{:?} at {}:{}; ", token, line, col));
-                    lexer.next(); // Advance to next token
-                    token_count += 1;
-                } else {
-                    break;
-                }
-            }
-            
-            if token_count >= 1000 {
-                lexer_output.push_str("... (lexer output truncated at 1000 tokens)");
-            }
-            
-            return Err(format!("Failed to parse {}: {:?}\n\nLexer output:\n{}", filename, e, lexer_output)); 
-        }
-    };
-
-    // Capture AST for output using the provided formatting options
-    let ast_options = ast_options.unwrap_or_default();
-    ast = ast_options.format_ast_with_options(&commands);
-
-    let (tmp, run_cmd_vec, code) = match lang {
-        "perl" => {
-            let mut gen = PerlGenerator::new();
-            let code = gen.generate(&commands);
-            let tmp = "__tmp_test_output.pl";
-            if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Perl temp file: {}", e)); }
-            (tmp.to_string(), vec![if cfg!(windows) { "perl" } else { "perl" }, tmp], code)
-        }
-        _ => { return Err(format!("Unsupported language for --test-file: {}", lang)); }
-    };
     
-    tmp_file = tmp;
-    run_cmd = run_cmd_vec;
-    translated_code = code;
-
-    // Run shell script using WSL bash for proper Unix command compatibility
-    let shell_output = if let Some(cached) = shell_output {
-        // Use cached output
-        cached
-    } else {
+    // If we have cached Perl code but need to set up temp file and run command
+    if lang == "perl" && cached_perl_code.is_some() && tmp_file.is_empty() {
+        let tmp = "__tmp_test_output.pl";
+        if let Err(e) = fs::write(tmp, &translated_code) { 
+            return Err(format!("Failed to write Perl temp file: {}", e)); 
+        }
+        tmp_file = tmp.to_string();
+        run_cmd = vec![if cfg!(windows) { "perl" } else { "perl" }, tmp];
+    }
+    
+    // If no cached output, we need to run the shell script
+    if shell_output.is_none() {
         // Run the shell script and cache the output
         let output = {
             // Create a temporary file with Unix line endings for WSL
@@ -1046,48 +1171,108 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
                 Ok(c) => c,
                 Err(e) => { 
                     let _ = fs::remove_file(wsl_script_path);
-                    cleanup_tmp(lang, &tmp_file); 
                     return Err(format!("Failed to spawn wsl bash: {}", e)); 
                 }
             };
+            
             let start = std::time::Instant::now();
-            let out = loop {
+            let output = loop {
                 match child.try_wait() {
                     Ok(Some(_)) => break child.wait_with_output().unwrap(),
                     Ok(None) => {
-                        if start.elapsed() > Duration::from_millis(1000) { let _ = child.kill(); break child.wait_with_output().unwrap(); }
+                        if start.elapsed() > Duration::from_millis(1000) { 
+                            let _ = child.kill(); 
+                            break child.wait_with_output().unwrap(); 
+                        }
                         thread::sleep(Duration::from_millis(10));
                     }
                     Err(_) => break child.wait_with_output().unwrap(),
                 }
             };
-            out
+            
+            // Cleanup WSL script file
+            let _ = fs::remove_file(wsl_script_path);
+            
+            output
         };
         
-        // Check output size before caching (64KB limit)
+        // Cache the output
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let total_output_size = stdout.len() + stderr.len();
-        
-        if total_output_size > 64 * 1024 { // 64KB limit
-            return Err(format!("Output size exceeds 64KB limit: stdout={} bytes, stderr={} bytes, total={} bytes", 
-                stdout.len(), stderr.len(), total_output_size));
-        }
-        
         let exit_code = output.status.code().unwrap_or(-1);
+        cache.update_bash_cache(filename, stdout, stderr, exit_code);
         
-        // Update cache (size already checked above)
-        if let Err(e) = cache.update_cache(filename, stdout, stderr, exit_code) {
-            return Err(format!("Failed to update cache: {}", e));
+        shell_output = Some(output);
+    }
+    
+    // If no cached Perl code, we need to parse and generate
+    if cached_perl_code.is_none() {
+        // Read shell script content
+        shell_content = match fs::read_to_string(filename) {
+            Ok(c) => c,
+            Err(e) => { return Err(format!("Failed to read {}: {}", filename, e)); }
+        };
+
+        // Parse and generate target language code
+        let commands = match Parser::new(&shell_content).parse() {
+            Ok(c) => c,
+            Err(e) => { 
+                // Capture lexer output for debugging
+                let mut lexer = Lexer::new(&shell_content);
+                let mut lexer_output = String::new();
+                let mut token_count = 0;
+                
+                while !lexer.is_eof() && token_count < 1000 { // Limit to prevent infinite loops
+                    if let Some(token) = lexer.peek() {
+                        let current_pos = lexer.current_position();
+                        let (line, col) = lexer.offset_to_line_col(current_pos);
+                        lexer_output.push_str(&format!("{:?} at {}:{}; ", token, line, col));
+                        lexer.next(); // Advance to next token
+                        token_count += 1;
+                    } else {
+                        break;
+                    }
+                }
+                
+                if token_count >= 1000 {
+                    lexer_output.push_str("... (lexer output truncated at 1000 tokens)");
+                }
+                
+                return Err(format!("Failed to parse {}: {:?}\n\nLexer output:\n{}", filename, e, lexer_output)); 
+            }
+        };
+
+        // Capture AST for output using the provided formatting options
+        let ast_options = ast_options.unwrap_or_default();
+        ast = ast_options.format_ast_with_options(&commands);
+
+        let (tmp, run_cmd_vec, code) = match lang {
+            "perl" => {
+                let mut gen = PerlGenerator::new();
+                let code = gen.generate(&commands);
+                let tmp = "__tmp_test_output.pl";
+                if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Perl temp file: {}", e)); }
+                (tmp.to_string(), vec![if cfg!(windows) { "perl" } else { "perl" }, tmp], code)
+            }
+            _ => { return Err(format!("Unsupported language for --test-file: {}", lang)); }
+        };
+        
+        // Assign to the declared variables
+        tmp_file = tmp;
+        run_cmd = run_cmd_vec;
+        translated_code = code;
+        
+        // Cache the Perl code if we generated it
+        if lang == "perl" {
+            cache.update_perl_cache(filename, translated_code.clone());
         }
-        
-        // Save cache (should succeed now since we checked size)
-        if let Err(e) = cache.save() {
-            return Err(format!("Failed to save cache: {}", e));
-        }
-        
-        output
-    };
+    }
+    
+    // Save cache if we made any updates
+    cache.save();
+
+    // Get the shell output (either cached or fresh)
+    let shell_output = shell_output.unwrap();
 
     // Run translated program
     let translated_output = {
@@ -1167,19 +1352,6 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
     })
 }
 
-fn calculate_file_sha256(filename: &str) -> Result<String, String> {
-    let content = match fs::read_to_string(filename) {
-        Ok(c) => c,
-        Err(e) => return Err(format!("Failed to read file {}: {}", filename, e)),
-    };
-    
-    let mut hasher = Sha256::new();
-    hasher.update(content.as_bytes());
-    let result = hasher.finalize();
-    
-    Ok(format!("{:x}", result))
-}
-
 fn cleanup_tmp(lang: &str, tmp_file: &str) {
     let _ = fs::remove_file(tmp_file);
     if lang == "rust" {
@@ -1189,48 +1361,6 @@ fn cleanup_tmp(lang: &str, tmp_file: &str) {
             let _ = fs::remove_file(format!("{}.pdb", "__tmp_test_bin"));
         }
     }
-}
-
-fn run_bash_script_fresh(filename: &str) -> Result<std::process::Output, String> {
-    // Create a temporary file with Unix line endings for WSL
-    let shell_content = match fs::read_to_string(filename) {
-        Ok(c) => c,
-        Err(e) => return Err(format!("Failed to read {}: {}", filename, e)),
-    };
-    let unix_content = shell_content.replace("\r\n", "\n");
-    let wsl_script_path = "__wsl_script_fresh.sh";
-    
-    if let Err(e) = fs::write(wsl_script_path, unix_content) {
-        return Err(format!("Failed to write WSL script: {}", e));
-    }
-    
-    let mut child = match Command::new("wsl").args(&["bash", wsl_script_path]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
-        Ok(c) => c,
-        Err(e) => { 
-            let _ = fs::remove_file(wsl_script_path);
-            return Err(format!("Failed to spawn wsl bash: {}", e)); 
-        }
-    };
-    
-    let start = std::time::Instant::now();
-    let output = loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break child.wait_with_output().unwrap(),
-            Ok(None) => {
-                if start.elapsed() > Duration::from_millis(1000) { 
-                    let _ = child.kill(); 
-                    break child.wait_with_output().unwrap(); 
-                }
-                thread::sleep(Duration::from_millis(10));
-            }
-            Err(_) => break child.wait_with_output().unwrap(),
-        }
-    };
-    
-    // Cleanup WSL script file
-    let _ = fs::remove_file(wsl_script_path);
-    
-    Ok(output)
 }
 
 
@@ -1699,51 +1829,9 @@ fn test_all_examples_next_fail(generators: &[String], test_number: Option<usize>
                             std::process::exit(0);
                         }
                     } else {
-                        // Test failed - invalidate cache and re-run Bash script
-                        let mut cache = BashOutputCache::load();
-                        cache.invalidate_cache(example);
-                        
-                        println!("\nTest failed with cached output. Re-running Bash script...");
-                        
-                        // Force re-execution of Bash script
-                        let _fresh_shell_output = match run_bash_script_fresh(example) {
-                            Ok(output) => {
-                                // Compare fresh output with translated code
-                                let fresh_stdout = String::from_utf8_lossy(&output.stdout).to_string().replace("\r\n", "\n").trim().to_string();
-                                let fresh_stderr = String::from_utf8_lossy(&output.stderr).to_string().replace("\r\n", "\n").trim().to_string();
-                                
-                                if fresh_stdout == result.translated_stdout && fresh_stderr == result.translated_stderr {
-                                    println!("✅ Test now passes with fresh Bash output! Updating cache...");
-                                    
-                                    // Check output size before caching (64KB limit)
-                                    let total_output_size = fresh_stdout.len() + fresh_stderr.len();
-                                    if total_output_size > 64 * 1024 { // 64KB limit
-                                        println!("❌ Cannot cache: Output size exceeds 64KB limit ({} bytes)", total_output_size);
-                                    } else {
-                                        // Update cache with fresh output
-                                        if let Err(e) = cache.update_cache(example, fresh_stdout, fresh_stderr, output.status.code().unwrap_or(-1)) {
-                                            println!("❌ Failed to update cache: {}", e);
-                                        } else if let Err(e) = cache.save() {
-                                            println!("❌ Failed to save cache: {}", e);
-                                        } else {
-                                            println!("Cache updated successfully.");
-                                        }
-                                    }
-                                } else {
-                                    println!("❌ Test still fails with fresh output - issue confirmed");
-                                    println!("Fresh stdout: '{}'", fresh_stdout);
-                                    println!("Fresh stderr: '{}'", fresh_stderr);
-                                    println!("Translated stdout: '{}'", result.translated_stdout);
-                                    println!("Translated stderr: '{}'", result.translated_stderr);
-                                }
-                                Some(output)
-                            }
-                            Err(e) => {
-                                println!("Failed to re-run Bash script: {}", e);
-                                // Continue with original failure display
-                                None
-                            }
-                        };
+                        // Test failed - invalidate cache and show diff and exit
+                        let mut cache = CommandCache::load();
+                        cache.invalidate_bash_cache(example);
                         
                         // Clear entire terminal before showing failure
                         print!("\x1B[2J\x1B[1;1H"); // ANSI escape code to clear screen and move cursor to top
@@ -1808,8 +1896,8 @@ fn test_all_examples_next_fail(generators: &[String], test_number: Option<usize>
                 }
                 Err(e) => {
                     // Test error - invalidate cache and show error and exit
-                    let mut cache = BashOutputCache::load();
-                    cache.invalidate_cache(example);
+                    let mut cache = CommandCache::load();
+                    cache.invalidate_bash_cache(example);
                     
                     println!("\n\n");
                     println!("TEST ERROR: {} with {} generator", example, generator);
@@ -1950,7 +2038,7 @@ fn show_help(program_name: &str) {
             println!("  --next-fail [NUM] [gen1 gen2 ...] - Test specified generators (or perl if none specified), exit after first failure");
         println!("                                   - If NUM is provided, run only the NUMth test");
         println!("  fail [NUM] [gen1 gen2 ...]      - Shorthand for --next-fail");
-        println!("  --clear-cache                    - Clear the bash output cache");
+                        println!("  --clear-cache                    - Clear the command cache");
     println!();
     println!("AST FORMATTING OPTIONS (for --next-fail):");
     println!();
@@ -1995,8 +2083,8 @@ fn show_help(program_name: &str) {
     println!("  You can also specify a test number to run only that specific test");
     println!("  (e.g., --next-fail 5 to run only the 5th test).");
     println!();
-    println!("  The tool uses a cache to store bash script outputs, improving test performance.");
-    println!("  Cache is automatically updated when bash files change or tests fail.");
+                    println!("  The tool uses a cache to store bash script outputs and Perl code, improving test performance.");
+                println!("  Cache is automatically updated when bash files change or tests fail.");
     println!("  Use --clear-cache to manually clear the cache if needed.");
     println!();
     println!("  For more information, visit: https://github.com/your-repo/sh2perl");
