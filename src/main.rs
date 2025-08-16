@@ -17,9 +17,9 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use std::thread;
 use std::collections::HashMap;
-use std::time::SystemTime;
 use std::os::windows::process::ExitStatusExt;
 use serde::{Serialize, Deserialize};
+use sha2::{Sha256, Digest};
 
 // Use the debug module for controlling DEBUG output
 use debashl::debug::set_debug_enabled;
@@ -34,7 +34,7 @@ struct CachedOutput {
     stdout: String,
     stderr: String,
     exit_code: i32,
-    last_modified: u64, // Unix timestamp
+    sha256_hash: String, // SHA256 hash of the bash file content
 }
 
 impl BashOutputCache {
@@ -80,12 +80,9 @@ impl BashOutputCache {
 
     fn is_cache_valid(&self, filename: &str) -> bool {
         if let Some(cached) = self.outputs.get(filename) {
-            if let Ok(metadata) = fs::metadata(filename) {
-                if let Ok(modified) = metadata.modified() {
-                    if let Ok(modified_timestamp) = modified.duration_since(SystemTime::UNIX_EPOCH) {
-                        return modified_timestamp.as_secs() <= cached.last_modified;
-                    }
-                }
+            // Calculate current SHA256 hash of the file
+            if let Ok(current_hash) = calculate_file_sha256(filename) {
+                return current_hash == cached.sha256_hash;
             }
         }
         false
@@ -99,25 +96,14 @@ impl BashOutputCache {
                 stdout.len(), stderr.len(), total_output_size));
         }
         
-        let last_modified = if let Ok(metadata) = fs::metadata(filename) {
-            if let Ok(modified) = metadata.modified() {
-                if let Ok(modified_timestamp) = modified.duration_since(SystemTime::UNIX_EPOCH) {
-                    modified_timestamp.as_secs()
-                } else {
-                    0
-                }
-            } else {
-                0
-            }
-        } else {
-            0
-        };
+        // Calculate SHA256 hash of the file content
+        let sha256_hash = calculate_file_sha256(filename)?;
 
         self.outputs.insert(filename.to_string(), CachedOutput {
             stdout,
             stderr,
             exit_code,
-            last_modified,
+            sha256_hash,
         });
         
         Ok(())
@@ -1179,6 +1165,19 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
         ast,
         _lexer_output: String::new(), // No lexer output for detailed test
     })
+}
+
+fn calculate_file_sha256(filename: &str) -> Result<String, String> {
+    let content = match fs::read_to_string(filename) {
+        Ok(c) => c,
+        Err(e) => return Err(format!("Failed to read file {}: {}", filename, e)),
+    };
+    
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    let result = hasher.finalize();
+    
+    Ok(format!("{:x}", result))
 }
 
 fn cleanup_tmp(lang: &str, tmp_file: &str) {
