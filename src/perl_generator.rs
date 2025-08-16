@@ -4118,9 +4118,9 @@ impl PerlGenerator {
                     // Convert ${arr[@]:start:length} to @arr[start..start+length-1] in Perl
                     // Convert ${arr[@]:start} to @arr[start..$#arr] in Perl
                     if let Some(length_str) = length {
-                        result.push_str(&format!("@{}{}[{}..{}+{}-1]", array_name, array_name, offset, offset, length_str));
+                        result.push_str(&format!("@{}[{}..{}+{}-1]", array_name, offset, offset, length_str));
                     } else {
-                        result.push_str(&format!("@{}{}[{}..$#{}]", array_name, array_name, offset, array_name));
+                        result.push_str(&format!("@{}[{}..$#{}]", array_name, offset, array_name));
                     }
                 }
                 StringPart::ParameterExpansion(pe) => {

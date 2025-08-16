@@ -2229,21 +2229,18 @@ impl Parser {
                                     let map_name = &brace_content[..bracket_start];
                                     let key = &brace_content[bracket_start + 1.._bracket_end];
                                     
-                                    // Check if this is array slicing like ${arr[@]:start:length}
-                                    if key == "@" {
-                                        // This is ${arr[@]} - check for array slicing
-                                        println!("DEBUG: Found ${}[@] in string interpolation, checking for array slicing", map_name);
-                                        
-                                        // Instead of looking ahead, we need to check if the original quoted string
-                                        // contains the array slicing syntax. Let me check the original string.
-                                        let original_string = &quoted_content;
-                                        println!("DEBUG: Original quoted content: '{}'", original_string);
-                                        println!("DEBUG: Looking for array slicing in: '{}'", original_string);
-                                        
-                                        // For array slicing like ${primes[@]:0:3}, we need to parse the entire thing
-                                        // as a single parameter expansion, not split it into parts
-                                        // Check if the original string contains array slicing syntax
-                                        if original_string.contains(":") && original_string.contains("[@]") {
+                                                                            // Check if this is array slicing like ${arr[@]:start:length}
+                                        if key == "@" {
+                                            // This is ${arr[@]} - check for array slicing
+                                            
+                                            // Instead of looking ahead, we need to check if the original quoted string
+                                            // contains the array slicing syntax. Let me check the original string.
+                                            let original_string = &quoted_content;
+                                            
+                                            // For array slicing like ${primes[@]:0:3}, we need to parse the entire thing
+                                            // as a single parameter expansion, not split it into parts
+                                            // Check if the original string contains array slicing syntax
+                                            if original_string.contains(":") && original_string.contains("[@]") {
                                             // Parse the array slicing syntax
                                             // Find the position after [@]
                                             let bracket_end_pos = original_string.find("]").unwrap_or(0);
