@@ -1224,9 +1224,16 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
                 
                 while !lexer.is_eof() && token_count < 1000 { // Limit to prevent infinite loops
                     if let Some(token) = lexer.peek() {
+                        // Skip Newline tokens in debug output
+                        if let Token::Newline = token {
+                            lexer.next(); // Advance to next token
+                            continue;
+                        }
+                        
                         let current_pos = lexer.current_position();
                         let (line, col) = lexer.offset_to_line_col(current_pos);
-                        lexer_output.push_str(&format!("{:?} at {}:{}; ", token, line, col));
+                        let token_text = lexer.get_current_text().unwrap_or_else(|| "".to_string());
+                        lexer_output.push_str(&format!("{:?}('{}') at {}:{}; ", token, token_text, line, col));
                         lexer.next(); // Advance to next token
                         token_count += 1;
                     } else {
@@ -1372,9 +1379,11 @@ fn lex_input(input: &str) {
     let mut lexer = Lexer::new(input);
     let mut token_count = 0;
     
-    while let Some(token) = lexer.next() {
+    while let Some(token) = lexer.peek() {
         token_count += 1;
-        println!("{:3}: {:?}", token_count, token);
+        let token_text = lexer.get_current_text().unwrap_or_else(|| "".to_string());
+        println!("{:3}: {:?}('{}')", token_count, token, token_text);
+        lexer.next(); // Advance to next token
     }
     
     println!("{}", "=".repeat(50));

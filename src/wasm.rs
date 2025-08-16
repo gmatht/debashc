@@ -36,8 +36,10 @@ impl Debashc {
         let mut lexer = Lexer::new(input);
         let mut tokens = Vec::new();
         
-        while let Some(token) = lexer.next() {
-            tokens.push(format!("{:?}", token));
+        while let Some(token) = lexer.peek() {
+            let token_text = lexer.get_current_text().unwrap_or_else(|| "".to_string());
+            tokens.push(format!("{:?}('{}')", token, token_text));
+            lexer.next(); // Advance to next token
         }
         
         Ok(tokens.join("\n"))
