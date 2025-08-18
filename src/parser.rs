@@ -195,8 +195,7 @@ impl Parser {
                     eprintln!("DEBUG: After skipping whitespace for assignment check, pos={}, peek_n(pos)={:?}", pos, self.lexer.peek_n(pos));
                     if matches!(self.lexer.peek_n(pos), Some(Token::Assign)) {
                         eprintln!("DEBUG: Detected standalone variable assignment");
-                        // Consume the identifier token before parsing the assignment
-                        self.lexer.next();
+                        // Do not consume the identifier here; let parse_standalone_assignment handle it
                         self.parse_standalone_assignment()
                     } else {
                         eprintln!("DEBUG: Not a function definition, parsing as pipeline");
@@ -512,7 +511,7 @@ impl Parser {
                     self.lexer.next();
                     continue;
                 }
-                Token::Identifier | Token::Number | Token::DoubleQuotedString | Token::SingleQuotedString | Token::Source | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString | Token::Star | Token::Range | Token::Slash | Token::Tilde | Token::LongOption | Token::RegexPattern | Token::RegexMatch => {
+                Token::Identifier | Token::Number | Token::OctalNumber | Token::DoubleQuotedString | Token::SingleQuotedString | Token::Source | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString | Token::Star | Token::Range | Token::Slash | Token::Tilde | Token::LongOption | Token::RegexPattern | Token::RegexMatch => {
                     args.push(self.parse_word()?);
                 }
                 Token::Assign => {
@@ -864,7 +863,22 @@ impl Parser {
         while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
             self.lexer.next();
         }
-        let then_branch = Box::new(self.parse_command()?);
+        // Parse one or more commands in the then-branch until Else or Fi
+        let mut then_cmds = Vec::new();
+        loop {
+            match self.lexer.peek() {
+                Some(Token::Else) | Some(Token::Fi) | None => break,
+                _ => {
+                    let cmd = self.parse_command()?;
+                    then_cmds.push(cmd);
+                    // Skip separators between commands
+                    while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon | Token::CarriageReturn)) {
+                        self.lexer.next();
+                    }
+                }
+            }
+        }
+        let then_branch = Box::new(Command::Block(Block { commands: then_cmds }));
         
         // Skip whitespace/newlines before checking for separator
         while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
@@ -888,7 +902,20 @@ impl Parser {
             while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
                 self.lexer.next();
             }
-            Some(Box::new(self.parse_command()?))
+            let mut else_cmds = Vec::new();
+            loop {
+                match self.lexer.peek() {
+                    Some(Token::Fi) | None => break,
+                    _ => {
+                        let cmd = self.parse_command()?;
+                        else_cmds.push(cmd);
+                        while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon | Token::CarriageReturn)) {
+                            self.lexer.next();
+                        }
+                    }
+                }
+            }
+            Some(Box::new(Command::Block(Block { commands: else_cmds })))
         } else {
             None
         };
@@ -1511,6 +1538,7 @@ impl Parser {
         let result = match self.lexer.peek() {
             Some(Token::Identifier) => Ok(Word::Literal(self.get_identifier_text()?)),
             Some(Token::Number) => Ok(Word::Literal(self.get_number_text()?)),
+            Some(Token::OctalNumber) => Ok(Word::Literal(self.get_raw_token_text()?)),
             Some(Token::DoubleQuotedString) => {
                 // Check if the string contains any $ characters for interpolation
                 if let Some((start, end)) = self.lexer.get_span() {

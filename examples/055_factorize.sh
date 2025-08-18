@@ -18,7 +18,7 @@ factorize() {
             if [ -z "$factors" ]; then
                 factors="$divisor"
             else
-                factors="$factors × $divisor"
+                factors="$factors * $divisor"
             fi
             n=$((n / divisor))
         done
@@ -30,7 +30,7 @@ factorize() {
                 if [ -z "$factors" ]; then
                     factors="$n"
                 else
-                    factors="$factors × $n"
+                    factors="$factors * $n"
                 fi
             fi
             break
