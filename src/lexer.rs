@@ -250,6 +250,10 @@ pub enum Token {
     #[token("-ef", priority = 1)]
     SameFile,
 
+    // Regex matching
+    #[token("=~")]
+    RegexMatch,
+
     // Strings and literals
     #[regex(r#""([^"\\]|\\.)*""#, priority = 3)]
     DoubleQuotedString,
@@ -336,6 +340,10 @@ pub enum Token {
     // Comments
     #[regex(r"#[^\r\n]*", priority = 10)]
     Comment,
+    
+    // Regex pattern content (for bash test expressions)
+    #[regex(r"\^[0-9\-\[\]\+\.\$\*\(\)\?\\|]+", priority = 1)]
+    RegexPattern,
 }
 
 #[derive(Error, Debug)]
@@ -349,10 +357,10 @@ pub enum LexerError {
 }
 
 pub struct Lexer {
-    tokens: Vec<(Token, usize, usize)>,
-    current: usize,
-    input: String,
-    line_starts: Vec<usize>,
+    pub tokens: Vec<(Token, usize, usize)>,
+    pub current: usize,
+    pub input: String,
+    pub line_starts: Vec<usize>,
 }
 
 impl Lexer {
@@ -374,11 +382,28 @@ impl Lexer {
         // Precompute starts of lines for quick offset->(line,col)
         let mut line_starts = Vec::new();
         line_starts.push(0);
-        for (idx, byte) in input.as_bytes().iter().enumerate() {
-            if *byte == b'\n' {
-                if idx + 1 < input.len() {
-                    line_starts.push(idx + 1);
+        let mut i = 0;
+        while i < input.len() {
+            if input.as_bytes()[i] == b'\r' && i + 1 < input.len() && input.as_bytes()[i + 1] == b'\n' {
+                // Windows line ending: \r\n - only count \n as line break
+                if i + 2 < input.len() {
+                    line_starts.push(i + 2);
                 }
+                i += 2;
+            } else if input.as_bytes()[i] == b'\n' {
+                // Unix line ending: \n
+                if i + 1 < input.len() {
+                    line_starts.push(i + 1);
+                }
+                i += 1;
+            } else if input.as_bytes()[i] == b'\r' {
+                // Lone \r (old Mac line ending)
+                if i + 1 < input.len() {
+                    line_starts.push(i + 1);
+                }
+                i += 1;
+            } else {
+                i += 1;
             }
         }
 
@@ -443,9 +468,7 @@ impl Lexer {
         })
     }
     
-    pub fn get_current_span(&self) -> Option<(usize, usize)> {
-        self.tokens.get(self.current).map(|(_, start, end)| (*start, *end))
-    }
+
 }
 
 impl Lexer {

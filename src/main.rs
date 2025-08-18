@@ -17,7 +17,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use std::thread;
 use std::collections::HashMap;
-use std::path::Path;
+
 use std::time::SystemTime;
 use std::os::windows::process::ExitStatusExt;
 use serde::{Serialize, Deserialize};
@@ -124,18 +124,7 @@ impl CommandCache {
         self.perl_outputs.get(filename)
     }
 
-    fn is_perl_cache_valid(&self, filename: &str) -> bool {
-        if let Some(cached) = self.perl_outputs.get(filename) {
-            if let Ok(metadata) = fs::metadata(filename) {
-                if let Ok(modified) = metadata.modified() {
-                    if let Ok(modified_timestamp) = modified.duration_since(SystemTime::UNIX_EPOCH) {
-                        return modified_timestamp.as_secs() <= cached.last_modified;
-                    }
-                }
-            }
-        }
-        false
-    }
+
 
     fn update_perl_cache(&mut self, filename: &str, perl_code: String) {
         let last_modified = if let Ok(metadata) = fs::metadata(filename) {
@@ -158,12 +147,10 @@ impl CommandCache {
         });
     }
 
-    fn invalidate_perl_cache(&mut self, filename: &str) {
-        self.perl_outputs.remove(filename);
-        self.save();
-    }
+
 }
 
+/*
 fn cached_run_command(filename: &str, run_bash: bool, run_perl: bool) -> Result<(Option<std::process::Output>, Option<String>), String> {
     let mut cache = CommandCache::load();
     let mut bash_output = None;
@@ -221,13 +208,15 @@ fn cached_run_command(filename: &str, run_bash: bool, run_perl: bool) -> Result<
     }
     
     // Save cache if we made any updates
-    if bash_output.is_some() || perl_code.is_some() {
+    if bash_output.is_some() || perl_code.is_none() {
         cache.save();
     }
     
     Ok((bash_output, perl_code))
 }
+*/
 
+/*
 fn run_bash_script(filename: &str) -> Result<std::process::Output, String> {
     // Create a temporary file with Unix line endings for WSL
     let shell_content = match fs::read_to_string(filename) {
@@ -269,6 +258,7 @@ fn run_bash_script(filename: &str) -> Result<std::process::Output, String> {
     
     Ok(output)
 }
+*/
 
 #[derive(Debug)]
 struct TestResult {

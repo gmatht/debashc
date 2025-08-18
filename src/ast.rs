@@ -14,6 +14,9 @@ pub enum Command {
     Subshell(Box<Command>),
     Background(Box<Command>),
     Block(Block),
+    Break(Option<String>),      // Optional loop level
+    Continue(Option<String>),   // Optional loop level
+    Return(Option<Word>),       // Optional return value
     BlankLine,
 }
 

@@ -346,6 +346,9 @@ impl PerlGenerator {
             Command::Background(cmd) => self.generate_background(cmd),
             Command::Block(block) => self.generate_block(block),
             Command::BuiltinCommand(cmd) => self.generate_builtin_command(cmd),
+            Command::Break(level) => self.generate_break_statement(level),
+            Command::Continue(level) => self.generate_continue_statement(level),
+            Command::Return(value) => self.generate_return_statement(value),
             Command::BlankLine => "\n".to_string(),
         }
     }
@@ -5878,5 +5881,29 @@ impl PerlGenerator {
         
         // Return reference instead of cloning
         s.to_string()
+    }
+
+    fn generate_break_statement(&mut self, level: &Option<String>) -> String {
+        match level {
+            Some(level_str) => format!("last LABEL{};", level_str),
+            None => "last;".to_string(),
+        }
+    }
+
+    fn generate_continue_statement(&mut self, level: &Option<String>) -> String {
+        match level {
+            Some(level_str) => format!("next LABEL{};", level_str),
+            None => "next;".to_string(),
+        }
+    }
+
+    fn generate_return_statement(&mut self, value: &Option<Word>) -> String {
+        match value {
+            Some(word) => {
+                let perl_value = self.perl_string_literal(word);
+                format!("return {};", perl_value)
+            }
+            None => "return;".to_string(),
+        }
     }
 }
