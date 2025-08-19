@@ -8,6 +8,7 @@ pub enum Command {
     TestExpression(TestExpression),
     Pipeline(Pipeline),
     If(IfStatement),
+    Case(CaseStatement),
     While(WhileLoop),
     For(ForLoop),
     Function(Function),
@@ -60,6 +61,18 @@ pub struct IfStatement {
     pub condition: Box<Command>,
     pub then_branch: Box<Command>,
     pub else_branch: Option<Box<Command>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaseStatement {
+    pub word: Word,
+    pub cases: Vec<CaseClause>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaseClause {
+    pub patterns: Vec<Word>,
+    pub body: Vec<Command>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

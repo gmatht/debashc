@@ -271,7 +271,7 @@ pub enum Token {
     LongOption,
     
     // Identifiers and words
-    #[regex(r"[a-zA-Z_][a-zA-Z0-9_*?.-]*|[.][a-zA-Z0-9_*?.-]*", priority = 2)]
+    #[regex(r"[a-zA-Z_][a-zA-Z0-9_*?]*", priority = 2)]
     Identifier,
 
     #[regex(r"[0-9]+")]
@@ -314,6 +314,10 @@ pub enum Token {
     _Backslash, // Unused variant, prefixed with underscore
     #[token("?")]
     Question,
+    #[token(".")]
+    Dot,
+    #[regex(r"\*[a-zA-Z0-9_*?.-]*|\[[a-zA-Z0-9\-]+\]|\[[a-zA-Z0-9\-]+\]\[[a-zA-Z0-9\-]+\]", priority = 1)]
+    CasePattern,
     #[token(":", priority = 1)]
     Colon,
     #[token("@")]

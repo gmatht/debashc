@@ -153,6 +153,7 @@ impl Parser {
 
         match self.lexer.peek() {
             Some(Token::If) => self.parse_if_statement(),
+            Some(Token::Case) => self.parse_case_statement(),
             Some(Token::While) => self.parse_while_loop(),
             Some(Token::For) => self.parse_for_loop(),
             Some(Token::Function) => self.parse_function(),
@@ -428,7 +429,7 @@ impl Parser {
                     Word::Literal(self.get_identifier_text()?)
                 }
                 Token::Set | Token::Export | Token::Readonly | Token::Local | Token::Declare | Token::Typeset |
-                Token::Unset | Token::Shift | Token::Eval | Token::Exec | Token::Source | Token::Trap | Token::Wait | Token::Shopt => {
+                Token::Unset | Token::Shift | Token::Eval | Token::Exec | Token::Source | Token::Trap | Token::Wait | Token::Shopt | Token::Exit => {
                     Word::Literal(self.get_raw_token_text()?) // keep exact text for builtin/keyword-as-command
                 }
                 Token::TestBracket => {
@@ -458,7 +459,7 @@ impl Parser {
                     // If we have parsed environment-style assignments and hit a separator,
                     // treat as an assignment-only command (no external program), using "true" as no-op.
                     match token {
-                        Token::Semicolon | Token::Newline | Token::Done | Token::Fi | Token::Then | Token::Else | Token::ParenClose | Token::BraceClose => {
+                        Token::Semicolon | Token::Newline | Token::Done | Token::Fi | Token::Then | Token::Else | Token::ParenClose | Token::BraceClose | Token::Case | Token::Esac | Token::In => {
                             Word::Literal("true".to_string())
                         }
                         _ => {
@@ -506,12 +507,16 @@ impl Parser {
         while let Some(token) = self.lexer.peek() {
 //             println!("DEBUG: Processing token: {:?}", token);
             match token {
-                Token::Space | Token::Tab | Token::Newline | Token::Comment => {
+                Token::Space | Token::Tab | Token::Comment => {
                     // Skip whitespace and comments between arguments
                     self.lexer.next();
                     continue;
                 }
-                Token::Identifier | Token::Number | Token::OctalNumber | Token::DoubleQuotedString | Token::SingleQuotedString | Token::Source | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString | Token::Star | Token::Range | Token::Slash | Token::Tilde | Token::LongOption | Token::RegexPattern | Token::RegexMatch => {
+                Token::Newline | Token::Semicolon | Token::CarriageReturn => {
+                    // End of this simple command; do not consume here so outer loop can handle separators
+                    break;
+                }
+                Token::Identifier | Token::Number | Token::OctalNumber | Token::DoubleQuotedString | Token::SingleQuotedString | Token::Source | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString | Token::Star | Token::Dot | Token::CasePattern | Token::Range | Token::Slash | Token::Tilde | Token::LongOption | Token::RegexPattern | Token::RegexMatch => {
                     args.push(self.parse_word()?);
                 }
                 Token::Assign => {
@@ -932,6 +937,92 @@ impl Parser {
             then_branch,
             else_branch,
         }))
+    }
+
+    fn parse_case_statement(&mut self) -> Result<Command, ParserError> {
+        self.lexer.consume(Token::Case)?;
+        
+        // Skip whitespace after 'case'
+        self.skip_whitespace_and_comments();
+        
+        // Parse the word to match against
+        let word = self.parse_word()?;
+        
+        // Skip whitespace before 'in'
+        self.skip_whitespace_and_comments();
+        
+        // Consume 'in'
+        self.lexer.consume(Token::In)?;
+        
+        // Skip whitespace after 'in'
+        self.skip_whitespace_and_comments();
+        
+        let mut cases = Vec::new();
+        
+        // Parse case clauses until 'esac'
+        loop {
+            // Skip whitespace/newlines
+            self.skip_whitespace_and_comments();
+            
+            match self.lexer.peek() {
+                Some(Token::Esac) => break,
+                None => return Err(ParserError::UnexpectedEOF),
+                _ => {
+                    // Parse a case clause
+                    let mut patterns = Vec::new();
+                    
+                    // Parse first pattern
+                    patterns.push(self.parse_word()?);
+                    
+                    // Parse additional patterns separated by '|'
+                    while matches!(self.lexer.peek(), Some(Token::Pipe)) {
+                        self.lexer.next(); // consume '|'
+                        self.skip_whitespace_and_comments();
+                        patterns.push(self.parse_word()?);
+                    }
+                    
+                    // Expect closing parenthesis as part of the case pattern
+                    if let Some(Token::ParenClose) = self.lexer.peek() {
+                        self.lexer.next(); // consume ')'
+                    } else {
+                        return Err(ParserError::InvalidSyntax("Expected ')' after case pattern".to_string()));
+                    }
+                    
+                    // Skip whitespace after pattern
+                    self.skip_whitespace_and_comments();
+                    
+                    // Parse body commands until ';;'
+                    let mut body = Vec::new();
+                    loop {
+                        match self.lexer.peek() {
+                            Some(Token::DoubleSemicolon) => break,
+                            Some(Token::Esac) => break,
+                            None => return Err(ParserError::UnexpectedEOF),
+                            _ => {
+                                let cmd = self.parse_command()?;
+                                body.push(cmd);
+                                // Skip separators between commands
+                                while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon | Token::CarriageReturn)) {
+                                    self.lexer.next();
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Consume ';;' if present
+                    if matches!(self.lexer.peek(), Some(Token::DoubleSemicolon)) {
+                        self.lexer.next();
+                    }
+                    
+                    cases.push(CaseClause { patterns, body });
+                }
+            }
+        }
+        
+        // Consume 'esac'
+        self.lexer.consume(Token::Esac)?;
+        
+        Ok(Command::Case(CaseStatement { word, cases }))
     }
 
     fn parse_while_loop(&mut self) -> Result<Command, ParserError> {
@@ -1535,6 +1626,28 @@ impl Parser {
     }
 
     fn parse_word(&mut self) -> Result<Word, ParserError> {
+        // Combine contiguous bare-word tokens (identifiers, numbers, slashes) into a single literal
+        if matches!(self.lexer.peek(), Some(Token::Identifier) | Some(Token::Number) | Some(Token::OctalNumber) | Some(Token::Slash)) {
+            let mut combined = String::new();
+            loop {
+                match self.lexer.peek() {
+                    Some(Token::Identifier) | Some(Token::Number) | Some(Token::OctalNumber) | Some(Token::Slash) => {
+                        // Append raw token text and consume
+                        if let Some(text) = self.lexer.get_current_text() {
+                            combined.push_str(&text);
+                            self.lexer.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    _ => break,
+                }
+            }
+            // Skip inline whitespace after consuming the word
+            self.skip_inline_whitespace_and_comments();
+            return Ok(Word::Literal(combined));
+        }
+
         let result = match self.lexer.peek() {
             Some(Token::Identifier) => Ok(Word::Literal(self.get_identifier_text()?)),
             Some(Token::Number) => Ok(Word::Literal(self.get_number_text()?)),
@@ -1572,6 +1685,16 @@ impl Parser {
                 // Treat standalone '*' as a literal (e.g., `ls *`)
                 self.lexer.next();
                 Ok(Word::Literal("*".to_string()))
+            }
+            Some(Token::Dot) => {
+                // Treat standalone '.' as a literal (e.g., `ls .`)
+                self.lexer.next();
+                Ok(Word::Literal(".".to_string()))
+            }
+            Some(Token::CasePattern) => {
+                // Treat case statement patterns like *.txt as literals.
+                // get_raw_token_text() consumes the current token, so do not call next() here.
+                Ok(Word::Literal(self.get_raw_token_text()?))
             }
             Some(Token::Slash) => {
                 // Treat standalone '/' as a literal (e.g., `cd /`)
@@ -1611,8 +1734,8 @@ impl Parser {
             }
         };
         
-        // Skip whitespace after consuming the word
-        self.skip_whitespace_and_comments();
+        // Skip inline whitespace after consuming the word
+        self.skip_inline_whitespace_and_comments();
         
         result
     }
@@ -3201,6 +3324,16 @@ impl Parser {
             }
         }
         eprintln!("DEBUG: skip_whitespace_and_comments finished at position {}", self.lexer.current_position());
+    }
+
+    // Skip only spaces/tabs/comments, but stop at newlines and separators
+    fn skip_inline_whitespace_and_comments(&mut self) {
+        while let Some(token) = self.lexer.peek() {
+            match token {
+                Token::Space | Token::Tab | Token::Comment => { self.lexer.next(); }
+                _ => break,
+            }
+        }
     }
 
     fn parse_environment_variable_value(&mut self) -> Result<Word, ParserError> {

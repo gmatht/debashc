@@ -339,6 +339,7 @@ impl PerlGenerator {
             },
             Command::Pipeline(pipeline) => self.generate_pipeline(pipeline),
             Command::If(if_stmt) => self.generate_if_statement(if_stmt),
+            Command::Case(case_stmt) => self.generate_case_statement(case_stmt),
             Command::While(while_loop) => self.generate_while_loop(while_loop),
             Command::For(for_loop) => self.generate_for_loop(for_loop),
             Command::Function(func) => self.generate_function(func),
@@ -3353,6 +3354,60 @@ impl PerlGenerator {
         }
         
         output.push_str(&self.indent());
+        output.push_str("}\n");
+        
+        output
+    }
+
+    fn generate_case_statement(&mut self, case_stmt: &CaseStatement) -> String {
+        let mut output = String::new();
+        
+        // Convert bash case statement to Perl given/when
+        output.push_str("given (");
+        output.push_str(&self.perl_string_literal(&case_stmt.word));
+        output.push_str(") {\n");
+        
+        self.indent_level += 1;
+        
+        for case_clause in &case_stmt.cases {
+            // Handle multiple patterns with 'when' clauses
+            for (i, pattern) in case_clause.patterns.iter().enumerate() {
+                if i > 0 {
+                    output.push_str(" ");
+                }
+                output.push_str("when (");
+                
+                // Convert bash pattern to Perl regex
+                let pattern_str = self.perl_string_literal(pattern);
+                if pattern_str == "\"*\"" {
+                    // Default case
+                    output.push_str("default");
+                } else {
+                    // Convert bash glob patterns to Perl regex
+                    let mut perl_pattern = pattern_str.trim_matches('"').to_string();
+                    perl_pattern = perl_pattern.replace("*", ".*");
+                    perl_pattern = perl_pattern.replace("?", ".");
+                    perl_pattern = perl_pattern.replace("[", "\\[");
+                    perl_pattern = perl_pattern.replace("]", "\\]");
+                    output.push_str(&format!("qr/^{}$/", perl_pattern));
+                }
+                
+                output.push_str(") {\n");
+                
+                self.indent_level += 1;
+                // Generate body commands
+                for command in &case_clause.body {
+                    output.push_str(&self.indent());
+                    output.push_str(&self.generate_command(command));
+                }
+                self.indent_level -= 1;
+                
+                output.push_str(&self.indent());
+                output.push_str("}\n");
+            }
+        }
+        
+        self.indent_level -= 1;
         output.push_str("}\n");
         
         output
