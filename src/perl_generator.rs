@@ -442,11 +442,19 @@ impl PerlGenerator {
         if has_env {
             output.push_str("{\n");
             for (var, value) in &cmd.env_vars {
-                // Check if this is an array assignment like map[foo]=bar
+                // Check if this is an associative array assignment like map[foo]=bar
                 if let Some((array_name, key)) = self.extract_array_key(var) {
                     let val = self.perl_string_literal(value);
-                    // For array assignments, generate $array{key} = value instead of $ENV{var}
-                    output.push_str(&format!("${}{{{}}} = {};\n", array_name, key, val));
+                    // For associative array assignments, generate $array{key} = value instead of $ENV{var}
+                    // Quote the key to avoid bareword errors in strict mode
+                    let quoted_key = format!("\"{}\"", self.escape_perl_string(key));
+                    output.push_str(&format!("${}{{{}}} = {};\n", array_name, quoted_key, val));
+                } else if let Some(elements) = self.extract_array_elements(value) {
+                    // Check if this is an indexed array assignment like arr=(one two three)
+                    let elements_perl: Vec<String> = elements.iter()
+                        .map(|s| format!("\"{}\"", self.escape_perl_string(s)))
+                        .collect();
+                    output.push_str(&format!("@{} = ({});\n", var, elements_perl.join(", ")));
                 } else {
                     let val = self.perl_string_literal(value);
                     output.push_str(&format!("local $ENV{{{}}} = {};;\n", var, val));
@@ -1969,11 +1977,17 @@ impl PerlGenerator {
         if has_env {
             output.push_str("{\n");
             for (var, value) in &cmd.env_vars {
-                // Check if this is an array assignment like map[foo]=bar
+                // Check if this is an associative array assignment like map[foo]=bar
                 if let Some((array_name, key)) = self.extract_array_key(var) {
                     let val = self.perl_string_literal(value);
-                    // For array assignments, generate $array{key} = value instead of $ENV{var}
+                    // For associative array assignments, generate $array{key} = value instead of $ENV{var}
                     output.push_str(&format!("${}{{{}}} = {};\n", array_name, key, val));
+                } else if let Some(elements) = self.extract_array_elements(value) {
+                    // Check if this is an indexed array assignment like arr=(one two three)
+                    let elements_perl: Vec<String> = elements.iter()
+                        .map(|s| format!("\"{}\"", self.escape_perl_string(s)))
+                        .collect();
+                    output.push_str(&format!("@{} = ({});\n", var, elements_perl.join(", ")));
                 } else {
                     let val = self.perl_string_literal(value);
                     output.push_str(&format!("local $ENV{{{}}} = {};;\n", var, val));
@@ -4549,7 +4563,9 @@ impl PerlGenerator {
             // Special case: if we have only one part and it's a map access, return it without quotes
             if let StringPart::MapAccess(map_name, key) = &interp.parts[0] {
                 if map_name == "map" {
-                    return format!("$map{{{}}}", key);
+                    // Quote the key to avoid bareword errors in strict mode
+                    let quoted_key = format!("\"{}\"", self.escape_perl_string(key));
+                    return format!("$map{{{}}}", quoted_key);
                 } else {
                     return format!("${}[{}]", map_name, key);
                 }
@@ -4569,7 +4585,10 @@ impl PerlGenerator {
                                 let key = &content[bracket_start..];
                                 // For associative arrays, use {} instead of []
                                 if array_name == "map" {
-                                    result.push_str(&format!("$map{{{}}}", &key[1..key.len()-1]));
+                                    // Quote the key to avoid bareword errors in strict mode
+                                    let key_content = &key[1..key.len()-1]; // Remove [ and ]
+                                    let quoted_key = format!("\"{}\"", self.escape_perl_string(key_content));
+                                    result.push_str(&format!("$map{{{}}}", quoted_key));
                                 } else {
                                     result.push_str(&format!("${}{}", array_name, key));
                                 }
@@ -4718,7 +4737,9 @@ impl PerlGenerator {
                                 if array_name == "map" {
                                     // Convert map[key] to $map{key} for associative arrays
                                     let key_content = &key[1..key.len()-1]; // Remove [ and ]
-                                    result.push_str(&format!("${}{{{}}}", array_name, key_content));
+                                    // Quote the key to avoid bareword errors in strict mode
+                                    let quoted_key = format!("\"{}\"", self.escape_perl_string(key_content));
+                                    result.push_str(&format!("${}{{{}}}", array_name, quoted_key));
                                 } else {
                                     // Regular indexed array - use [] syntax in Perl
                                     result.push_str(&format!("${}[{}]", array_name, key));
@@ -6160,7 +6181,9 @@ impl PerlGenerator {
                                 }
                             } else if let StringPart::MapAccess(map_name, key) = &interp.parts[0] {
                                 if map_name == "map" {
-                                    parts.push(format!("$map{{{}}}", key));
+                                    // Quote the key to avoid bareword errors in strict mode
+                                    let quoted_key = format!("\"{}\"", self.escape_perl_string(key));
+                                    parts.push(format!("$map{{{}}}", quoted_key));
                                 } else {
                                     parts.push(format!("${}[{}]", map_name, key));
                                 }
