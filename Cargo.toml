@@ -2,58 +2,11 @@
 name = "debashl"
 version = "0.1.0"
 edition = "2021"
+default-run = "debashc"
 
 [[bin]]
 name = "debashc"
 path = "src/main.rs"
-
-[[bin]]
-name = "debug_lexer"
-path = "debug_lexer.rs"
-
-[[bin]]
-name = "debug_parser"
-path = "debug_parser.rs"
-
-[[bin]]
-name = "test_regex"
-path = "test_regex.rs"
-
-[[bin]]
-name = "test_line_counting"
-path = "test_line_counting.rs"
-
-[[bin]]
-name = "test_simple_echo"
-path = "test_simple_echo.rs"
-
-[[bin]]
-name = "test_context_echo"
-path = "test_context_echo.rs"
-
-[[bin]]
-name = "test_parser_debug"
-path = "test_parser_debug.rs"
-
-[[bin]]
-name = "test_function_debug"
-path = "test_function_debug.rs"
-
-[[bin]]
-name = "debug_function_test"
-path = "debug_function_test.rs"
-
-[[bin]]
-name = "debug_echo_test"
-path = "debug_echo_test.rs"
-
-[[bin]]
-name = "test_arithmetic"
-path = "test_arithmetic.rs"
-
-[[bin]]
-name = "test_read_r"
-path = "test_read_r.rs"
 
 [[bin]]
 name = "convert_examples"
