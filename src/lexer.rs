@@ -112,7 +112,7 @@ pub enum Token {
     StarStarAssign,
     #[token("<<=", priority = 3)]
     LeftShiftAssign,
-    #[token(">>=", priority = 3)]
+    #[token(">>=", priority = 2)]
     RightShiftAssign,
     #[token("&=", priority = 3)]
     AndAssign,
@@ -124,10 +124,10 @@ pub enum Token {
     // Redirections
     #[token("<")]
     RedirectIn,
+    #[token(">>", priority = 0)]
+    RedirectAppend,
     #[token(">")]
     RedirectOut,
-    #[token(">>", priority = 1)]
-    RedirectAppend,
     #[token("<>", priority = 1)]
     RedirectInOut,
     #[token("<<", priority = 1)]
@@ -183,6 +183,10 @@ pub enum Token {
     // Arithmetic
     #[token("$((", priority = 0)]
     Arithmetic,
+    #[token("((", priority = 0)]
+    ArithmeticEval,
+    #[token("))", priority = 0)]
+    ArithmeticEvalClose,
     #[token("$[")]
     ArithmeticBracket,
     #[token("let")]
@@ -211,7 +215,7 @@ pub enum Token {
     Directory,
     #[token("-e")]
     Exists,
-    #[token("-r")]
+    #[token("-r", priority = 10)]
     Readable,
     #[token("-w")]
     Writable,
@@ -250,6 +254,14 @@ pub enum Token {
     #[token("-ef", priority = 1)]
     SameFile,
 
+    // Command-line flags (general)
+    #[token("-name")]
+    NameFlag,
+    #[token("-maxdepth")]
+    MaxDepthFlag,
+    #[token("-type")]
+    TypeFlag,
+
     // Regex matching
     #[token("=~")]
     RegexMatch,
@@ -269,6 +281,8 @@ pub enum Token {
     // Long options (must come before Identifier to avoid conflicts)
     #[regex(r"--[a-zA-Z][a-zA-Z0-9_*?.-]*=[^ \t\n\r|&;(){}]*", priority = 3)]
     LongOption,
+    
+
     
     // Identifiers and words
     #[regex(r"[a-zA-Z_][a-zA-Z0-9_*?]*", priority = 2)]

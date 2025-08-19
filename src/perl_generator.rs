@@ -351,6 +351,13 @@ impl PerlGenerator {
             Command::Continue(level) => self.generate_continue_statement(level),
             Command::Return(value) => self.generate_return_statement(value),
             Command::BlankLine => "\n".to_string(),
+            Command::Redirect(redirect_cmd) => {
+                let mut result = self.generate_command(&redirect_cmd.command);
+                for redirect in &redirect_cmd.redirects {
+                    result.push_str(&self.generate_redirect(redirect));
+                }
+                result
+            }
         }
     }
 
@@ -1817,6 +1824,43 @@ impl PerlGenerator {
         }
         
         if has_env { output.push_str("}\n"); }
+        output
+    }
+
+    fn generate_redirect(&mut self, redirect: &Redirect) -> String {
+        let mut output = String::new();
+        
+        match redirect.operator {
+            RedirectOperator::Input => {
+                // Input redirection: command < file
+                output.push_str(&format!("open(STDIN, '<', '{}') or die \"Cannot open file: $!\\n\";\n", redirect.target));
+            }
+            RedirectOperator::Output => {
+                // Output redirection: command > file
+                output.push_str(&format!("open(STDOUT, '>', '{}') or die \"Cannot open file: $!\\n\";\n", redirect.target));
+            }
+            RedirectOperator::Append => {
+                // Append redirection: command >> file
+                output.push_str(&format!("open(STDOUT, '>>', '{}') or die \"Cannot open file: $!\\n\";\n", redirect.target));
+            }
+            RedirectOperator::Heredoc | RedirectOperator::HeredocTabs => {
+                // Heredoc: command << delimiter
+                if let Some(body) = &redirect.heredoc_body {
+                    // Create a temporary file with the heredoc content
+                    output.push_str(&format!("my $temp_content = {};\n", self.perl_string_literal(body)));
+                    let fh = self.get_unique_file_handle();
+                    output.push_str(&format!("open(my {}, '>', '/tmp/heredoc_temp') or die \"Cannot create temp file: $!\\n\";\n", fh));
+                    output.push_str(&format!("print {} $temp_content;\n", fh));
+                    output.push_str(&format!("close({});\n", fh));
+                    output.push_str("open(STDIN, '<', '/tmp/heredoc_temp') or die \"Cannot open temp file: $!\\n\";\n");
+                }
+            }
+            _ => {
+                // Other redirects not yet implemented
+                output.push_str(&format!("# Redirect {:?} not yet implemented\n", redirect.operator));
+            }
+        }
+        
         output
     }
 

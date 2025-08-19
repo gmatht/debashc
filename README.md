@@ -20,6 +20,37 @@ A comprehensive Rust library and command-line tool for parsing and converting sh
   - File test operators
   - Comments and whitespace
 
+## Why Not Use an LLM Instead?
+
+While Large Language Models (LLMs) like GPT-4 or Claude can translate shell scripts to other languages, this specialized transcoder offers several key advantages:
+
+### **Reliability & Consistency**
+- **Deterministic Output**: Every conversion produces identical, predictable results
+- **No Hallucinations**: Unlike LLMs, this tool won't invent non-existent functions or syntax
+- **Consistent Style**: Maintains uniform code formatting and structure across all conversions
+
+### **Performance & Cost**
+- **Lightning Fast**: Converts scripts in milliseconds without API calls or network latency
+- **Zero Cost**: No API usage fees, token costs, or rate limits
+- **Offline Operation**: Works completely offline without internet connectivity
+
+### **Accuracy & Understanding**
+- **Deep Shell Knowledge**: Built specifically for shell script semantics, not general text understanding
+- **Proper AST Parsing**: Creates accurate Abstract Syntax Trees that preserve script logic
+- **Language-Specific Optimizations**: Generates idiomatic code for target language
+
+### **Integration & Automation**
+- **CI/CD Ready**: Can be integrated into build pipelines and automated workflows
+- **Library API**: Provides programmatic access for embedding in other tools
+- **Batch Processing**: Efficiently handles multiple files without API constraints
+
+### **When This Transcoder Excels**
+This tool is ideal for:
+- Automated conversion pipelines
+- Performance-critical applications
+- Offline or air-gapped systems
+- Consistent, repeatable conversions
+
 ## Installation
 
 ```bash

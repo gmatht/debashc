@@ -15,6 +15,7 @@ pub enum Command {
     Subshell(Box<Command>),
     Background(Box<Command>),
     Block(Block),
+    Redirect(RedirectCommand),
     Break(Option<String>),      // Optional loop level
     Continue(Option<String>),   // Optional loop level
     Return(Option<Word>),       // Optional return value
@@ -97,6 +98,12 @@ pub struct Function {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
     pub commands: Vec<Command>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RedirectCommand {
+    pub command: Box<Command>,
+    pub redirects: Vec<Redirect>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
