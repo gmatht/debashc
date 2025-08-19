@@ -3867,18 +3867,7 @@ impl PerlGenerator {
         } else {
             // Fall back to generic parameter names
             for i in 1..=max_param {
-                let param_name = match i {
-                    1 => "name",
-                    2 => "value", 
-                    3 => "operation",
-                    4 => "option",
-                    5 => "arg5",
-                    6 => "arg6",
-                    7 => "arg7",
-                    8 => "arg8",
-                    9 => "arg9",
-                    _ => "arg",
-                };
+                let param_name = format!("arg{}", i);
                 params.push(param_name.to_string());
             }
         }
