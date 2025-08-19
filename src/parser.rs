@@ -332,37 +332,58 @@ impl Parser {
             match token {
                 Token::Identifier => {
                     // Fast-path: associative/indexed array assignment like: map[foo]=bar or matrix[0,0]=1
-                    if matches!(self.lexer.peek_n(1), Some(Token::TestBracket)) {
+                    if matches!(self.lexer.peek_n(1), Some(Token::TestBracket | Token::CasePattern)) {
                         let var_name = self.get_identifier_text()?;
-                        // Handle possible lexeme like "[0" where the first index char is attached to the bracket
                         let mut index_content = String::new();
-                        if let Some(open_bracket_text) = self.lexer.get_current_text() {
-                            if let Some(rest) = open_bracket_text.strip_prefix('[') {
-                                index_content.push_str(rest);
-                            }
-                        }
-                        self.lexer.next(); // consume the '[' token (possibly with attached text)
-
-                        let mut bracket_depth = 1;
-                        while bracket_depth > 0 {
-                            match self.lexer.peek() {
-                                Some(Token::TestBracket) => {
-                                    bracket_depth += 1;
-                                    // include nested [ only inside content
-                                    if let Some(t) = self.lexer.get_current_text() {
-                                        if let Some(rest) = t.strip_prefix('[') { index_content.push_str(rest); }
+                        
+                        // Handle different token types for array indices
+                        match self.lexer.peek() {
+                            Some(Token::TestBracket) => {
+                                // Handle possible lexeme like "[0" where the first index char is attached to the bracket
+                                if let Some(open_bracket_text) = self.lexer.get_current_text() {
+                                    if let Some(rest) = open_bracket_text.strip_prefix('[') {
+                                        index_content.push_str(rest);
                                     }
-                                    self.lexer.next();
                                 }
-                                Some(Token::TestBracketClose) => {
-                                    bracket_depth -= 1;
-                                    // do not include the final closing ']' in content
-                                    self.lexer.next();
+                                self.lexer.next(); // consume the '[' token (possibly with attached text)
+
+                                let mut bracket_depth = 1;
+                                while bracket_depth > 0 {
+                                    match self.lexer.peek() {
+                                        Some(Token::TestBracket) => {
+                                            bracket_depth += 1;
+                                            // include nested [ only inside content
+                                            if let Some(t) = self.lexer.get_current_text() {
+                                                if let Some(rest) = t.strip_prefix('[') { index_content.push_str(rest); }
+                                            }
+                                            self.lexer.next();
+                                        }
+                                        Some(Token::TestBracketClose) => {
+                                            bracket_depth -= 1;
+                                            // do not include the final closing ']' in content
+                                            self.lexer.next();
+                                        }
+                                        _ => {
+                                            if let Some(t) = self.lexer.get_current_text() { index_content.push_str(&t); }
+                                            self.lexer.next();
+                                        }
+                                    }
                                 }
-                                _ => {
-                                    if let Some(t) = self.lexer.get_current_text() { index_content.push_str(&t); }
-                                    self.lexer.next();
+                            }
+                            Some(Token::CasePattern) => {
+                                // Handle CasePattern like [foo] - extract the index content from inside the brackets
+                                if let Some(pattern_text) = self.lexer.get_current_text() {
+                                    // Remove the surrounding brackets: [foo] -> foo
+                                    if pattern_text.starts_with('[') && pattern_text.ends_with(']') {
+                                        index_content.push_str(&pattern_text[1..pattern_text.len()-1]);
+                                    } else {
+                                        index_content.push_str(&pattern_text);
+                                    }
                                 }
+                                self.lexer.next(); // consume the CasePattern token
+                            }
+                            _ => {
+                                // This shouldn't happen based on our condition check above
                             }
                         }
 
@@ -484,7 +505,7 @@ impl Parser {
                                     
                                     // Skip whitespace after the environment variable
                                     self.skip_whitespace_and_comments();
-                                } else if matches!(self.lexer.peek_n(1), Some(Token::TestBracket)) {
+                                } else if matches!(self.lexer.peek_n(1), Some(Token::TestBracket | Token::CasePattern)) {
                                     // Handle associative/indexed array assignment like: map[foo]=bar or matrix[0,0]=1
                                     let var_name = self.get_identifier_text()?;
                                     // The lexer may tokenize the opening bracket together with the first index digit (e.g. "[0").
@@ -504,70 +525,91 @@ impl Parser {
                                     }
                                     // Now actually consume the opening bracket token (which may include the first index char)
                                     let mut index_content = String::new();
-                                    if let Some(open_bracket_text) = self.lexer.get_current_text() {
-                                        if let Some(rest) = open_bracket_text.strip_prefix('[') {
-                                            index_content.push_str(rest);
+                                    
+                                    // Handle different token types for array indices
+                                    match self.lexer.peek() {
+                                        Some(Token::TestBracket) => {
+                                            if let Some(open_bracket_text) = self.lexer.get_current_text() {
+                                                if let Some(rest) = open_bracket_text.strip_prefix('[') {
+                                                    index_content.push_str(rest);
+                                                }
+                                            }
+                                            self.lexer.next(); // consume the '[' (and possibly its attached char(s))
+                                            
+                                            // Parse the array index content until we find the closing ]
+                                            let mut bracket_depth = 1;
+                                            
+                                            while bracket_depth > 0 {
+                                                let token = self.lexer.peek();
+                                                match token {
+                                                    Some(Token::TestBracket) => {
+                                                        bracket_depth += 1;
+                                                        index_content.push_str("[");
+                                                        self.lexer.next();
+                                                    }
+                                                    Some(Token::TestBracketClose) => {
+                                                        bracket_depth -= 1;
+                                                        if bracket_depth > 0 {
+                                                            index_content.push_str("]");
+                                                        }
+                                                        self.lexer.next();
+                                                    }
+                                                    Some(Token::Number) => {
+                                                        if let Some(text) = self.lexer.get_current_text() {
+                                                            index_content.push_str(&text);
+                                                        }
+                                                        self.lexer.next();
+                                                    }
+                                                    Some(Token::Comma) => {
+                                                        index_content.push_str(",");
+                                                        self.lexer.next();
+                                                    }
+                                                    Some(Token::Identifier) => {
+                                                        if let Some(text) = self.lexer.get_current_text() {
+                                                            index_content.push_str(&text);
+                                                        }
+                                                        self.lexer.next();
+                                                    }
+                                                    Some(Token::Dollar) => {
+                                                        index_content.push_str("$");
+                                                        self.lexer.next();
+                                                    }
+                                                    Some(Token::DollarBrace) => {
+                                                        index_content.push_str("${");
+                                                        self.lexer.next();
+                                                    }
+                                                    Some(Token::BraceClose) => {
+                                                        index_content.push_str("}");
+                                                        self.lexer.next();
+                                                    }
+                                                    Some(Token::Space) => {
+                                                        index_content.push_str(" ");
+                                                        self.lexer.next();
+                                                    }
+                                                    _ => {
+                                                        // For any other token, just consume it and add its text
+                                                        if let Some(text) = self.lexer.get_current_text() {
+                                                            index_content.push_str(&text);
+                                                        }
+                                                        self.lexer.next();
+                                                    }
+                                                }
+                                            }
                                         }
-                                    }
-                                    self.lexer.next(); // consume the '[' (and possibly its attached char(s))
-                                    
-                                    // Parse the array index content until we find the closing ]
-                                    let mut bracket_depth = 1;
-                                    
-                                    while bracket_depth > 0 {
-                                        let token = self.lexer.peek();
-                                        match token {
-                                            Some(Token::TestBracket) => {
-                                                bracket_depth += 1;
-                                                index_content.push_str("[");
-                                                self.lexer.next();
-                                            }
-                                            Some(Token::TestBracketClose) => {
-                                                bracket_depth -= 1;
-                                                if bracket_depth > 0 {
-                                                    index_content.push_str("]");
+                                        Some(Token::CasePattern) => {
+                                            // Handle CasePattern like [foo] - extract the index content from inside the brackets
+                                            if let Some(pattern_text) = self.lexer.get_current_text() {
+                                                // Remove the surrounding brackets: [foo] -> foo
+                                                if pattern_text.starts_with('[') && pattern_text.ends_with(']') {
+                                                    index_content.push_str(&pattern_text[1..pattern_text.len()-1]);
+                                                } else {
+                                                    index_content.push_str(&pattern_text);
                                                 }
-                                                self.lexer.next();
                                             }
-                                            Some(Token::Number) => {
-                                                if let Some(text) = self.lexer.get_current_text() {
-                                                    index_content.push_str(&text);
-                                                }
-                                                self.lexer.next();
-                                            }
-                                            Some(Token::Comma) => {
-                                                index_content.push_str(",");
-                                                self.lexer.next();
-                                            }
-                                            Some(Token::Identifier) => {
-                                                if let Some(text) = self.lexer.get_current_text() {
-                                                    index_content.push_str(&text);
-                                                }
-                                                self.lexer.next();
-                                            }
-                                            Some(Token::Dollar) => {
-                                                index_content.push_str("$");
-                                                self.lexer.next();
-                                            }
-                                            Some(Token::DollarBrace) => {
-                                                index_content.push_str("${");
-                                                self.lexer.next();
-                                            }
-                                            Some(Token::BraceClose) => {
-                                                index_content.push_str("}");
-                                                self.lexer.next();
-                                            }
-                                            Some(Token::Space) => {
-                                                index_content.push_str(" ");
-                                                self.lexer.next();
-                                            }
-                                            _ => {
-                                                // For any other token, just consume it and add its text
-                                                if let Some(text) = self.lexer.get_current_text() {
-                                                    index_content.push_str(&text);
-                                                }
-                                                self.lexer.next();
-                                            }
+                                            self.lexer.next(); // consume the CasePattern token
+                                        }
+                                        _ => {
+                                            // This shouldn't happen based on our condition check above
                                         }
                                     }
                                     
@@ -659,8 +701,8 @@ impl Parser {
             return Err(ParserError::UnexpectedEOF);
         };
         
-        // Skip whitespace before parsing arguments
-        self.skip_whitespace_and_comments();
+        // Skip inline whitespace before parsing arguments (but stop at newlines)
+        self.skip_inline_whitespace_and_comments();
         
         // Special handling for Bash double-bracket test: capture everything until closing ']]'
         if is_double_bracket {
