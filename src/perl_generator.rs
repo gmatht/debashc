@@ -2109,7 +2109,10 @@ impl PerlGenerator {
                 let var = parts[0].trim();
                 let value = parts[1].trim();
                 
-                format!("{} == {}", var, value)
+                // Handle special shell variables in test expressions
+                let var_perl = if var == "$#" { "scalar(@ARGV)".to_string() } else { var.to_string() };
+                
+                format!("{} == {}", var_perl, value)
             } else {
                 "0".to_string()
             }
@@ -2120,7 +2123,10 @@ impl PerlGenerator {
                 let var = parts[0].trim();
                 let value = parts[1].trim();
                 
-                format!("{} != {}", var, value)
+                // Handle special shell variables in test expressions
+                let var_perl = if var == "$#" { "scalar(@ARGV)".to_string() } else { var.to_string() };
+                
+                format!("{} != {}", var_perl, value)
             } else {
                 "0".to_string()
             }
@@ -2131,7 +2137,10 @@ impl PerlGenerator {
                 let var = parts[0].trim();
                 let value = parts[1].trim();
                 
-                format!("{} < {}", var, value)
+                // Handle special shell variables in test expressions
+                let var_perl = if var == "$#" { "scalar(@ARGV)".to_string() } else { var.to_string() };
+                
+                format!("{} < {}", var_perl, value)
             } else {
                 "0".to_string()
             }
@@ -2142,7 +2151,10 @@ impl PerlGenerator {
                 let var = parts[0].trim();
                 let value = parts[1].trim();
                 
-                format!("{} <= {}", var, value)
+                // Handle special shell variables in test expressions
+                let var_perl = if var == "$#" { "scalar(@ARGV)".to_string() } else { var.to_string() };
+                
+                format!("{} <= {}", var_perl, value)
             } else {
                 "0".to_string()
             }
@@ -2153,7 +2165,10 @@ impl PerlGenerator {
                 let var = parts[0].trim();
                 let value = parts[1].trim();
                 
-                format!("{} > {}", var, value)
+                // Handle special shell variables in test expressions
+                let var_perl = if var == "$#" { "scalar(@ARGV)".to_string() } else { var.to_string() };
+                
+                format!("{} > {}", var_perl, value)
             } else {
                 "0".to_string()
             }
@@ -2164,7 +2179,10 @@ impl PerlGenerator {
                 let var = parts[0].trim();
                 let value = parts[1].trim();
                 
-                format!("{} >= {}", var, value)
+                // Handle special shell variables in test expressions
+                let var_perl = if var == "$#" { "scalar(@ARGV)".to_string() } else { var.to_string() };
+                
+                format!("{} >= {}", var_perl, value)
             } else {
                 "0".to_string()
             }
@@ -4477,8 +4495,13 @@ impl PerlGenerator {
                 if let Some(pe) = self.extract_parameter_expansion(var) {
                     self.generate_parameter_expansion(&pe)
                 } else {
-                    // Regular variable reference
-                    format!("${}", var)
+                    // Handle special shell variables
+                    match var.as_str() {
+                        "#" => "scalar(@ARGV)".to_string(), // $# -> scalar(@ARGV) in Perl
+                        "@" => "@ARGV".to_string(),         // $@ -> @ARGV in Perl  
+                        "*" => "\"$ARGV[0] $ARGV[1] ...\"".to_string(), // $* -> "$ARGV[0] $ARGV[1] ..." in Perl
+                        _ => format!("${}", var) // Regular variable reference
+                    }
                 }
             },
             Word::MapAccess(map_name, key) => {
