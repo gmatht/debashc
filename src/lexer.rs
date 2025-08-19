@@ -92,6 +92,8 @@ pub enum Token {
     And,
     #[token(";")]
     Semicolon,
+    #[token(",")]
+    Comma,
     #[token(";;", priority = 1)]
     DoubleSemicolon,
     #[token("..", priority = 3)]
@@ -344,8 +346,6 @@ pub enum Token {
     DoubleQuote,
     #[token("\\", priority = 2)]
     Escape,
-    #[token(",")]
-    Comma,
     #[regex(r"\n", priority = 3)]
     Newline,
     #[token("\r")]

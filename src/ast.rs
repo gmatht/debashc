@@ -92,6 +92,7 @@ pub struct ForLoop {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: String,
+    pub parameters: Vec<String>,
     pub body: Block,
 }
 

@@ -274,6 +274,7 @@ impl PerlGenerator {
         let mut output = String::with_capacity(estimated_size);
         
         output.push_str("#!/usr/bin/env perl\n");
+        output.push_str("use v5.38; # minimum v5.38 for signatures\n");
         output.push_str("use strict;\n");
         output.push_str("use warnings;\n");
         output.push_str("use File::Basename;\n");
@@ -1219,7 +1220,7 @@ impl PerlGenerator {
                 for arg in &cmd.args {
                     let fh = self.get_unique_file_handle();
                     output.push_str(&format!("open(my {}, '<', '{}') or die \"Cannot open file: $!\\n\";\n", fh, arg));
-                    output.push_str(&format!("while (my $line = <{}) {{\n", fh));
+                    output.push_str(&format!("while (my $line = <{}>) {{\n", fh));
                     output.push_str("    print($line);\n");
                     output.push_str("}\n");
                     output.push_str(&format!("close({});\n", fh));
@@ -1266,7 +1267,7 @@ impl PerlGenerator {
                     if self.subshell_depth == 0 {
                         self.declared_locals.insert(array_name_str.clone());
                     }
-                } else {
+                    } else {
                     // Clear the array instead of redeclaring
                     output.push_str(&format!("@{} = ();\n", array_name_str));
                 }
@@ -1565,9 +1566,9 @@ impl PerlGenerator {
                                                 // Handle string interpolation directly by converting it to proper Perl code
                                                 let executable_code = match interp {
                                                     crate::ast::StringInterpolation { parts } => {
-                                                        let mut result = String::new();
+                    let mut result = String::new();
                                                         for part in parts {
-                                                            match part {
+                        match part {
                                                                 crate::ast::StringPart::Literal(lit) => {
                                                                     // Check if this literal contains {SHELL_VAR} and replace it
                                                                     if lit.contains("{SHELL_VAR}") {
@@ -1575,7 +1576,7 @@ impl PerlGenerator {
                                                                         // Also unescape backslashes in this literal
                                                                         let unescaped = processed.replace("\\\"", "\"").replace("\\n", "\n");
                                                                         result.push_str(&unescaped);
-                                                                    } else {
+                                } else {
                                                                         // Unescape backslashes in the literal
                                                                         let unescaped = lit.replace("\\\"", "\"").replace("\\n", "\n");
                                                                         result.push_str(&unescaped);
@@ -1585,17 +1586,17 @@ impl PerlGenerator {
                                                                     if var == "ENV" {
                                                                         // Handle $ENV{VAR} specially
                                                                         result.push_str("$ENV{");
-                                                                    } else {
+                                } else {
                                                                         result.push_str(&format!("${}", var));
-                                                                    }
-                                                                }
+                                }
+                            }
                                                                 _ => {
                                                                     result.push_str(&format!("{:?}", part));
                                                                 }
-                                                            }
-                                                        }
-                                                        result
-                                                    }
+                        }
+                    }
+                    result
+                }
                                                 };
                                                 
                                                 // If the Perl code uses $arg, declare it first
@@ -3564,8 +3565,6 @@ impl PerlGenerator {
         output
     }
 
-    // Removed unused find_for_loop_variable method
-
     fn generate_for_loop(&mut self, for_loop: &ForLoop) -> String {
         let variable = &for_loop.variable;
         let items = &for_loop.items;
@@ -3791,19 +3790,25 @@ impl PerlGenerator {
         format!("{}{}}}\n", loop_header, body_code)
     }
 
-    // Removed unused parse_numeric_brace_range method
-
-    // Removed unused parse_seq_command method
-
-    // Removed unused expand_simple_brace_expression method
-
     fn generate_function(&mut self, func: &Function) -> String {
         let mut output = String::new();
         
         // Track that this function is defined
         self.declared_functions.insert(func.name.clone());
         
-        output.push_str(&format!("sub {} {{\n", func.name));
+        // Scan function body for positional parameters to infer signature
+        let inferred_params = self.infer_function_parameters(&func.body);
+        
+        // Generate modern Perl signature: sub name($param1, $param2) { }
+        if inferred_params.is_empty() {
+            output.push_str(&format!("sub {} {{\n", func.name));
+        } else {
+            let params: Vec<String> = inferred_params.iter()
+                .map(|p| format!("${}", p))
+                .collect();
+            output.push_str(&format!("sub {}({}) {{\n", func.name, params.join(", ")));
+        }
+        
         self.indent_level += 1;
         
         // Generate body commands
@@ -3816,6 +3821,165 @@ impl PerlGenerator {
         output.push_str("}\n");
         
         output
+    }
+
+    fn infer_function_parameters(&self, block: &Block) -> Vec<String> {
+        let mut params = Vec::new();
+        let mut max_param = 0;
+        
+        // Scan through all commands in the block to find positional parameters
+        for command in &block.commands {
+            // Look for positional parameters in the command structure
+            self.scan_command_for_positional_params(command, &mut max_param);
+        }
+        
+        // Generate parameter names based on the highest parameter number found
+        for i in 1..=max_param {
+            let param_name = match i {
+                1 => "name",
+                2 => "value", 
+                3 => "operation",
+                4 => "option",
+                5 => "arg5",
+                6 => "arg6",
+                7 => "arg7",
+                8 => "arg8",
+                9 => "arg9",
+                _ => "arg",
+            };
+            params.push(param_name.to_string());
+        }
+        
+        params
+    }
+
+    fn scan_command_for_positional_params(&self, command: &Command, max_param: &mut usize) {
+        match command {
+            Command::Simple(cmd) => {
+                // Check arguments for positional parameters
+                for arg in &cmd.args {
+                    self.scan_word_for_positional_params(arg, max_param);
+                }
+            }
+            Command::If(if_stmt) => {
+                // Check if condition and body
+                self.scan_command_for_positional_params(&if_stmt.condition, max_param);
+                self.scan_command_for_positional_params(&if_stmt.then_branch, max_param);
+                if let Some(else_branch) = &if_stmt.else_branch {
+                    self.scan_command_for_positional_params(else_branch, max_param);
+                }
+            }
+            Command::Case(case_stmt) => {
+                // Check case word and cases
+                self.scan_word_for_positional_params(&case_stmt.word, max_param);
+                for case_clause in &case_stmt.cases {
+                    for cmd in &case_clause.body {
+                        self.scan_command_for_positional_params(cmd, max_param);
+                    }
+                }
+            }
+            Command::While(while_loop) => {
+                // Check while condition and body
+                self.scan_command_for_positional_params(&while_loop.condition, max_param);
+                for cmd in &while_loop.body.commands {
+                    self.scan_command_for_positional_params(cmd, max_param);
+                }
+            }
+            Command::For(for_loop) => {
+                // Check for loop body
+                for cmd in &for_loop.body.commands {
+                    self.scan_command_for_positional_params(cmd, max_param);
+                }
+            }
+            Command::Function(func) => {
+                // Check function body
+                for cmd in &func.body.commands {
+                    self.scan_command_for_positional_params(cmd, max_param);
+                }
+            }
+            Command::Block(block) => {
+                // Check block commands
+                for cmd in &block.commands {
+                    self.scan_command_for_positional_params(cmd, max_param);
+                }
+            }
+            _ => {
+                // For other command types, just continue
+            }
+        }
+    }
+
+    fn scan_word_for_positional_params(&self, word: &Word, max_param: &mut usize) {
+        match word {
+            Word::Literal(s) => {
+                // Look for $1, $2, etc. patterns in literal strings
+                for i in 1..=9 {
+                    if s.contains(&format!("${}", i)) {
+                        *max_param = (*max_param).max(i);
+                    }
+                }
+            }
+            Word::Variable(var) => {
+                // Check if this is a positional parameter
+                if var.chars().all(|c| c.is_ascii_digit()) {
+                    if let Ok(index) = var.parse::<usize>() {
+                        if index > 0 && index <= 9 {
+                            *max_param = (*max_param).max(index);
+                        }
+                    }
+                }
+            }
+            Word::StringInterpolation(interp) => {
+                // Check string interpolation parts
+                for part in &interp.parts {
+                    match part {
+                        StringPart::Literal(s) => {
+                            for i in 1..=9 {
+                                if s.contains(&format!("${}", i)) {
+                                    *max_param = (*max_param).max(i);
+                                }
+                            }
+                        }
+                        StringPart::Variable(var) => {
+                            if var.chars().all(|c| c.is_ascii_digit()) {
+                                if let Ok(index) = var.parse::<usize>() {
+                                    if index > 0 && index <= 9 {
+                                        *max_param = (*max_param).max(index);
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn convert_positional_parameter(&self, param: &str) -> String {
+        // Convert shell positional parameters ($1, $2, etc.) to actual parameter names when inside functions
+        if param.starts_with('$') && param.len() > 1 {
+            if let Ok(index) = param[1..].parse::<usize>() {
+                if index > 0 && index <= 9 { // Shell supports $1 through $9
+                    // Convert to meaningful parameter names based on common patterns
+                    let param_name = match index {
+                        1 => "name",
+                        2 => "value", 
+                        3 => "operation",
+                        4 => "option",
+                        5 => "arg5",
+                        6 => "arg6",
+                        7 => "arg7",
+                        8 => "arg8",
+                        9 => "arg9",
+                        _ => "arg",
+                    };
+                    return format!("${}", param_name);
+                }
+            }
+        }
+        param.to_string()
     }
 
     fn generate_subshell(&mut self, command: &Command) -> String {
@@ -3861,7 +4025,7 @@ impl PerlGenerator {
     
     fn escape_perl_string(&self, s: &str) -> String {
         // Handle strings that already contain escape sequences
-        let mut result = String::new();
+                    let mut result = String::new();
         
         for ch in s.chars() {
             match ch {
@@ -3879,8 +4043,8 @@ impl PerlGenerator {
             }
         }
         
-        result
-    }
+                    result
+                }
 
     fn escape_perl_regex(&self, s: &str) -> String {
         s.chars().map(|c| match c {
@@ -3905,7 +4069,7 @@ impl PerlGenerator {
 
     fn perl_string_literal(&self, s: &str) -> String {
         // Handle strings that already contain escape sequences
-        let mut result = String::new();
+                    let mut result = String::new();
         
         for ch in s.chars() {
             match ch {
@@ -3964,15 +4128,15 @@ impl PerlGenerator {
         }
         
         // Return the escaped string without quotes
-        result
-    }
+                    result
+                }
 
     fn convert_arithmetic_to_perl(&self, expr: &str) -> String {
         SharedUtils::convert_arithmetic_operators(expr, "perl")
     }
 
     fn convert_string_interpolation_to_perl_for_printf(&self, interp: &StringInterpolation) -> String {
-        let mut result = String::new();
+                    let mut result = String::new();
         
         for part in &interp.parts {
             match part {
@@ -4038,24 +4202,9 @@ impl PerlGenerator {
                         result.push_str("scalar(@ARGV)");
                     } else if var == "@" {
                         result.push_str("join(\" \", @ARGV)");
-                    } else if var == "1" {
-                        result.push_str("$_[0]");
-                    } else if var == "2" {
-                        result.push_str("$_[1]");
-                    } else if var == "3" {
-                        result.push_str("$_[2]");
-                    } else if var == "4" {
-                        result.push_str("$_[3]");
-                    } else if var == "5" {
-                        result.push_str("$_[4]");
-                    } else if var == "6" {
-                        result.push_str("$_[5]");
-                    } else if var == "7" {
-                        result.push_str("$_[6]");
-                    } else if var == "8" {
-                        result.push_str("$_[7]");
-                    } else if var == "9" {
-                        result.push_str("$_[8]");
+                    } else if var.chars().all(|c| c.is_ascii_digit()) {
+                        // Convert positional parameters to modern Perl parameter names
+                        result.push_str(&self.convert_positional_parameter(&format!("${}", var)));
                     } else {
                         // Check for special shell array syntax
                         if var.starts_with('#') && var.contains('[') {
@@ -4099,8 +4248,8 @@ impl PerlGenerator {
             }
         }
         
-        result
-    }
+                    result
+                }
 
     fn convert_string_interpolation_to_perl(&self, interp: &StringInterpolation) -> String {
         let mut result = String::new();
@@ -4252,24 +4401,9 @@ impl PerlGenerator {
                         result.push_str("scalar(@ARGV)");
                     } else if var == "@" {
                         result.push_str("join(\" \", @ARGV)");
-                    } else if var == "1" {
-                        result.push_str("$_[0]");
-                    } else if var == "2" {
-                        result.push_str("$_[1]");
-                    } else if var == "3" {
-                        result.push_str("$_[2]");
-                    } else if var == "4" {
-                        result.push_str("$_[3]");
-                    } else if var == "5" {
-                        result.push_str("$_[4]");
-                    } else if var == "6" {
-                        result.push_str("$_[5]");
-                    } else if var == "7" {
-                        result.push_str("$_[6]");
-                    } else if var == "8" {
-                        result.push_str("$_[7]");
-                    } else if var == "9" {
-                        result.push_str("$_[8]");
+                    } else if var.chars().all(|c| c.is_ascii_digit()) {
+                        // Convert positional parameters to modern Perl parameter names
+                        result.push_str(&self.convert_positional_parameter(&format!("${}", var)));
                     } else if var == "ENV" {
                         // Special handling for ENV environment variable access
                         // This will be followed by a literal like "{SHELL_VAR}"
@@ -4500,7 +4634,14 @@ impl PerlGenerator {
                         "#" => "scalar(@ARGV)".to_string(), // $# -> scalar(@ARGV) in Perl
                         "@" => "@ARGV".to_string(),         // $@ -> @ARGV in Perl  
                         "*" => "\"$ARGV[0] $ARGV[1] ...\"".to_string(), // $* -> "$ARGV[0] $ARGV[1] ..." in Perl
-                        _ => format!("${}", var) // Regular variable reference
+                        _ => {
+                            // Check if this is a positional parameter ($1, $2, etc.) and convert it
+                            if var.chars().all(|c| c.is_ascii_digit()) {
+                                self.convert_positional_parameter(&format!("${}", var))
+                            } else {
+                                format!("${}", var) // Regular variable reference
+                            }
+                        }
                     }
                 }
             },
@@ -5490,8 +5631,9 @@ impl PerlGenerator {
                                 remaining_parts.push("scalar(@ARGV)".to_string());
                             } else if var == "@" {
                                 remaining_parts.push("join(\" \", @ARGV)".to_string());
-                            } else if var == "1" {
-                                remaining_parts.push("$_[0]".to_string());
+                            } else if var.chars().all(|c| c.is_ascii_digit()) {
+                                // Convert positional parameters to modern Perl parameter names
+                                remaining_parts.push(self.convert_positional_parameter(&format!("${}", var)));
                             } else if var.starts_with('#') && var.ends_with("[@]") {
                                 let array_name = &var[1..var.len()-3];
                                 remaining_parts.push(format!("scalar(@{})", array_name));
@@ -5561,8 +5703,9 @@ impl PerlGenerator {
                             parts.push("scalar(@ARGV)".to_string());
                         } else if var == "@" {
                             parts.push("join(\" \", @ARGV)".to_string());
-                        } else if var == "1" {
-                            parts.push("$_[0]".to_string());
+                        } else if var.chars().all(|c| c.is_ascii_digit()) {
+                            // Convert positional parameters to modern Perl parameter names
+                            parts.push(self.convert_positional_parameter(&format!("${}", var)));
                         } else if var.starts_with('#') && var.ends_with("[@]") {
                             let array_name = &var[1..var.len()-3];
                             parts.push(format!("scalar(@{})", array_name));

@@ -1544,12 +1544,62 @@ impl Parser {
         // Skip whitespace after name
         self.skip_whitespace_and_comments();
 
-        // Optional empty parentheses after function name: function name()
+        // Parse parameters if present: function name(param1, param2)
+        let mut parameters = Vec::new();
         if let Some(Token::ParenOpen) = self.lexer.peek() {
-            // Consume () if present
+            // Consume opening parenthesis
             self.lexer.next();
-            if let Some(Token::ParenClose) = self.lexer.peek() { self.lexer.next(); }
-            // Skip whitespace/newlines
+            
+            // Parse parameters until closing parenthesis
+            loop {
+                self.skip_whitespace_and_comments();
+                
+                match self.lexer.peek() {
+                    Some(Token::ParenClose) => {
+                        self.lexer.next(); // consume closing parenthesis
+                        break;
+                    }
+                    Some(Token::Identifier) => {
+                        let param = self.get_identifier_text()?;
+                        parameters.push(param);
+                        
+                        // Check for comma separator
+                        self.skip_whitespace_and_comments();
+                        if let Some(Token::Comma) = self.lexer.peek() {
+                            self.lexer.next(); // consume comma
+                        } else if let Some(Token::ParenClose) = self.lexer.peek() {
+                            // No comma, must be last parameter
+                            continue;
+                        } else {
+                            // Expect comma or closing parenthesis
+                            let (line, col) = self
+                                .lexer
+                                .get_span()
+                                .map(|(s, _)| self.lexer.offset_to_line_col(s))
+                                .unwrap_or((1, 1));
+                            return Err(ParserError::UnexpectedToken { 
+                                token: self.lexer.peek().unwrap().clone(), 
+                                line, 
+                                col 
+                            });
+                        }
+                    }
+                    _ => {
+                        let (line, col) = self
+                            .lexer
+                            .get_span()
+                            .map(|(s, _)| self.lexer.offset_to_line_col(s))
+                            .unwrap_or((1, 1));
+                        return Err(ParserError::UnexpectedToken { 
+                            token: self.lexer.peek().unwrap().clone(), 
+                            line, 
+                            col 
+                        });
+                    }
+                }
+            }
+            
+            // Skip whitespace/newlines after parentheses
             while matches!(self.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
                 self.lexer.next();
             }
@@ -1598,7 +1648,7 @@ impl Parser {
             Block { commands: vec![command] }
         };
         
-        Ok(Command::Function(Function { name, body }))
+        Ok(Command::Function(Function { name, parameters, body }))
     }
 
     fn parse_posix_function(&mut self) -> Result<Command, ParserError> {
@@ -1612,8 +1662,62 @@ impl Parser {
         self.lexer.consume(Token::ParenOpen)?;
         eprintln!("DEBUG: Consumed ParenOpen, now at position {}", self.lexer.current_position());
         
-        // Consume the closing parenthesis
-        self.lexer.consume(Token::ParenClose)?;
+        // Parse parameters if present: name(param1, param2)
+        let mut parameters = Vec::new();
+        if let Some(Token::ParenClose) = self.lexer.peek() {
+            // No parameters, just consume closing parenthesis
+            self.lexer.next();
+        } else {
+            // Parse parameters until closing parenthesis
+            loop {
+                self.skip_whitespace_and_comments();
+                
+                match self.lexer.peek() {
+                    Some(Token::ParenClose) => {
+                        self.lexer.next(); // consume closing parenthesis
+                        break;
+                    }
+                    Some(Token::Identifier) => {
+                        let param = self.get_identifier_text()?;
+                        parameters.push(param);
+                        
+                        // Check for comma separator
+                        self.skip_whitespace_and_comments();
+                        if let Some(Token::Comma) = self.lexer.peek() {
+                            self.lexer.next(); // consume comma
+                        } else if let Some(Token::ParenClose) = self.lexer.peek() {
+                            // No comma, must be last parameter
+                            continue;
+                        } else {
+                            // Expect comma or closing parenthesis
+                            let (line, col) = self
+                                .lexer
+                                .get_span()
+                                .map(|(s, _)| self.lexer.offset_to_line_col(s))
+                                .unwrap_or((1, 1));
+                            return Err(ParserError::UnexpectedToken { 
+                                token: self.lexer.peek().unwrap().clone(), 
+                                line, 
+                                col 
+                            });
+                        }
+                    }
+                    _ => {
+                        let (line, col) = self
+                            .lexer
+                            .get_span()
+                            .map(|(s, _)| self.lexer.offset_to_line_col(s))
+                            .unwrap_or((1, 1));
+                        return Err(ParserError::UnexpectedToken { 
+                            token: self.lexer.peek().unwrap().clone(), 
+                            line, 
+                            col 
+                        });
+                    }
+                }
+            }
+        }
+        
         eprintln!("DEBUG: Consumed ParenClose, now at position {}", self.lexer.current_position());
         
         // Skip whitespace/newlines after parentheses
@@ -1665,6 +1769,7 @@ impl Parser {
         eprintln!("DEBUG: Function body complete, returning Function");
         Ok(Command::Function(Function { 
             name, 
+            parameters,
             body: Block { commands: body_commands }
         }))
     }
