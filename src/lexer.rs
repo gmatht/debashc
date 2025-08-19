@@ -84,15 +84,15 @@ pub enum Token {
     // Operators
     #[token("|")]
     Pipe,
-    #[token("||")]
+    #[token("||", priority = 1)]
     Or,
     #[token("&")]
     Background,
-    #[token("&&")]
+    #[token("&&", priority = 1)]
     And,
     #[token(";")]
     Semicolon,
-    #[token(";;")]
+    #[token(";;", priority = 1)]
     DoubleSemicolon,
     #[token("..", priority = 3)]
     Range,
@@ -106,57 +106,49 @@ pub enum Token {
     BraceClose,
     #[token("=")]
     Assign,
-    #[token("+=")]
-    PlusAssign,
-    #[token("-=")]
-    MinusAssign,
-    #[token("*=")]
-    StarAssign,
-    #[token("/=")]
-    SlashAssign,
-    #[token("%=")]
+    #[token("%=", priority = 3)]
     PercentAssign,
-    #[token("**=")]
+    #[token("**=", priority = 3)]
     StarStarAssign,
-    #[token("<<=")]
+    #[token("<<=", priority = 3)]
     LeftShiftAssign,
-    #[token(">>=")]
+    #[token(">>=", priority = 2)]
     RightShiftAssign,
-    #[token("&=")]
+    #[token("&=", priority = 3)]
     AndAssign,
-    #[token("^=")]
+    #[token("^=", priority = 3)]
     CaretAssign,
-    #[token("|=")]
+    #[token("|=", priority = 3)]
     OrAssign,
 
     // Redirections
     #[token("<")]
     RedirectIn,
+    #[token(">>", priority = 0)]
+    RedirectAppend,
     #[token(">")]
     RedirectOut,
-    #[token(">>")]
-    RedirectAppend,
-    #[token("<>")]
+    #[token("<>", priority = 1)]
     RedirectInOut,
-    #[token("<<")]
+    #[token("<<", priority = 1)]
     Heredoc,
-    #[token("<<-")]
+    #[token("<<-", priority = 1)]
     HeredocTabs,
-    #[token("<<<")]
+    #[token("<<<", priority = 1)]
     HereString,
-    #[token(">&")]
+    #[token(">&", priority = 1)]
     RedirectOutErr,
-    #[token("<&")]
+    #[token("<&", priority = 1)]
     RedirectInErr,
-    #[token(">|")]
+    #[token(">|", priority = 1)]
     RedirectOutClobber,
-    #[token("&>")]
+    #[token("&>", priority = 1)]
     RedirectAll,
-    #[token("&>>")]
+    #[token("&>>", priority = 1)]
     RedirectAllAppend,
 
     // Variables and expansions
-    #[token("$")]
+    #[token("$", priority = 2)]
     Dollar,
     #[token("${")]
     DollarBrace,
@@ -189,8 +181,12 @@ pub enum Token {
     DollarBraceBangAt,
 
     // Arithmetic
-    #[token("$((", priority = 1)]
+    #[token("$((", priority = 0)]
     Arithmetic,
+    #[token("((", priority = 0)]
+    ArithmeticEval,
+    #[token("))", priority = 0)]
+    ArithmeticEvalClose,
     #[token("$[")]
     ArithmeticBracket,
     #[token("let")]
@@ -219,7 +215,7 @@ pub enum Token {
     Directory,
     #[token("-e")]
     Exists,
-    #[token("-r")]
+    #[token("-r", priority = 10)]
     Readable,
     #[token("-w")]
     Writable,
@@ -251,15 +247,27 @@ pub enum Token {
     GroupOwned,
     #[token("-N")]
     Modified,
-    #[token("-nt")]
+    #[token("-nt", priority = 1)]
     NewerThan,
-    #[token("-ot")]
+    #[token("-ot", priority = 1)]
     OlderThan,
-    #[token("-ef")]
+    #[token("-ef", priority = 1)]
     SameFile,
 
+    // Command-line flags (general)
+    #[token("-name")]
+    NameFlag,
+    #[token("-maxdepth")]
+    MaxDepthFlag,
+    #[token("-type")]
+    TypeFlag,
+
+    // Regex matching
+    #[token("=~")]
+    RegexMatch,
+
     // Strings and literals
-    #[regex(r#""([^"\\]|\\.)*""#, priority = 3)]
+    #[regex(r#""([^"\\]|\\.)*""#, priority = 4)]
     DoubleQuotedString,
     #[regex(r"'([^'\\]|\\[^'])*'", priority = 3)]
     SingleQuotedString,
@@ -274,8 +282,10 @@ pub enum Token {
     #[regex(r"--[a-zA-Z][a-zA-Z0-9_*?.-]*=[^ \t\n\r|&;(){}]*", priority = 3)]
     LongOption,
     
+
+    
     // Identifiers and words
-    #[regex(r"[a-zA-Z_][a-zA-Z0-9_*?.-]*|[.][a-zA-Z0-9_*?.-]*", priority = 2)]
+    #[regex(r"[a-zA-Z_][a-zA-Z0-9_*?]*", priority = 2)]
     Identifier,
 
     #[regex(r"[0-9]+")]
@@ -290,27 +300,39 @@ pub enum Token {
     // Special characters
     #[token("!")]
     Bang,
-    #[token("#", priority = 1)]
-    _Hash, // Unused variant, prefixed with underscore
-    #[token("%")]
+    // #[token("#", priority = 1)]
+    // _Hash, // Unused variant, prefixed with underscore
+    #[token("%", priority = 2)]
     Percent,
-    #[token("^")]
+    #[token("^", priority = 2)]
     Caret,
     #[token("~")]
     Tilde,
     #[token("+")]
     Plus,
+    #[token("+=", priority = 3)]
+    PlusAssign,
     #[token("-")]
     Minus,
+    #[token("-=", priority = 3)]
+    MinusAssign,
     #[token("*")]
     Star,
-    #[token("/", priority = 2)]
+    #[token("*=", priority = 3)]
+    StarAssign,
+    #[token("/")]
     Slash,
+    #[token("/=", priority = 3)]
+    SlashAssign,
     #[token("\\", priority = 1)]
     _Backslash, // Unused variant, prefixed with underscore
     #[token("?")]
     Question,
-    #[token(":")]
+    #[token(".")]
+    Dot,
+    #[regex(r"\*[a-zA-Z0-9_*?.-]*|\[[a-zA-Z0-9\-]+\]|\[[a-zA-Z0-9\-]+\]\[[a-zA-Z0-9\-]+\]", priority = 1)]
+    CasePattern,
+    #[token(":", priority = 1)]
     Colon,
     #[token("@")]
     At,
@@ -330,12 +352,16 @@ pub enum Token {
     CarriageReturn,
     #[token("\t")]
     Tab,
-    #[token(" ")]
+    #[regex(r" +", priority = 3)]
     Space,
 
     // Comments
-    #[regex(r"#[^\n]*", priority = 3)]
+    #[regex(r"#[^\r\n]*", priority = 10)]
     Comment,
+    
+    // Regex pattern content (for bash test expressions)
+    #[regex(r"\^[0-9\-\[\]\+\.\$\*\(\)\?\\|]+", priority = 1)]
+    RegexPattern,
 }
 
 #[derive(Error, Debug)]
@@ -349,10 +375,10 @@ pub enum LexerError {
 }
 
 pub struct Lexer {
-    tokens: Vec<(Token, usize, usize)>,
-    current: usize,
-    input: String,
-    line_starts: Vec<usize>,
+    pub tokens: Vec<(Token, usize, usize)>,
+    pub current: usize,
+    pub input: String,
+    pub line_starts: Vec<usize>,
 }
 
 impl Lexer {
@@ -374,11 +400,28 @@ impl Lexer {
         // Precompute starts of lines for quick offset->(line,col)
         let mut line_starts = Vec::new();
         line_starts.push(0);
-        for (idx, byte) in input.as_bytes().iter().enumerate() {
-            if *byte == b'\n' {
-                if idx + 1 < input.len() {
-                    line_starts.push(idx + 1);
+        let mut i = 0;
+        while i < input.len() {
+            if input.as_bytes()[i] == b'\r' && i + 1 < input.len() && input.as_bytes()[i + 1] == b'\n' {
+                // Windows line ending: \r\n - only count \n as line break
+                if i + 2 < input.len() {
+                    line_starts.push(i + 2);
                 }
+                i += 2;
+            } else if input.as_bytes()[i] == b'\n' {
+                // Unix line ending: \n
+                if i + 1 < input.len() {
+                    line_starts.push(i + 1);
+                }
+                i += 1;
+            } else if input.as_bytes()[i] == b'\r' {
+                // Lone \r (old Mac line ending)
+                if i + 1 < input.len() {
+                    line_starts.push(i + 1);
+                }
+                i += 1;
+            } else {
+                i += 1;
             }
         }
 
@@ -405,6 +448,7 @@ impl Lexer {
                 Ok(())
             } else {
                 // Get the actual character from the current token for better error reporting
+                // Note: self.current was incremented by next(), so we need to look at current - 1
                 if let Some((_, start, end)) = self.tokens.get(self.current - 1) {
                     let actual_char = self.input[*start..*end].chars().next().unwrap_or('?');
                     let (line, col) = self.offset_to_line_col(*start);
@@ -441,6 +485,8 @@ impl Lexer {
             self.input[*start..*end].to_string()
         })
     }
+    
+
 }
 
 impl Lexer {

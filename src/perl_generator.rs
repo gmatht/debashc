@@ -286,8 +286,18 @@ impl PerlGenerator {
         output.push_str("\n");
         
         // Add global variable declarations
+        // Debug: print all collected variables
+        output.push_str(&format!("# DEBUG: Collected {} variables: {:?}\n", global_vars.len(), global_vars));
+        
         for var in &global_vars {
-            output.push_str(&format!("my ${};\n", var));
+            // Skip empty or invalid variable names
+            let trimmed_var = var.trim();
+            if !trimmed_var.is_empty() && trimmed_var.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                output.push_str(&format!("my ${};\n", trimmed_var));
+            } else {
+                // Debug: print problematic variables
+                output.push_str(&format!("# DEBUG: Skipping invalid variable: '{}'\n", var));
+            }
         }
         
         if !global_vars.is_empty() {
@@ -329,6 +339,7 @@ impl PerlGenerator {
             },
             Command::Pipeline(pipeline) => self.generate_pipeline(pipeline),
             Command::If(if_stmt) => self.generate_if_statement(if_stmt),
+            Command::Case(case_stmt) => self.generate_case_statement(case_stmt),
             Command::While(while_loop) => self.generate_while_loop(while_loop),
             Command::For(for_loop) => self.generate_for_loop(for_loop),
             Command::Function(func) => self.generate_function(func),
@@ -336,7 +347,17 @@ impl PerlGenerator {
             Command::Background(cmd) => self.generate_background(cmd),
             Command::Block(block) => self.generate_block(block),
             Command::BuiltinCommand(cmd) => self.generate_builtin_command(cmd),
+            Command::Break(level) => self.generate_break_statement(level),
+            Command::Continue(level) => self.generate_continue_statement(level),
+            Command::Return(value) => self.generate_return_statement(value),
             Command::BlankLine => "\n".to_string(),
+            Command::Redirect(redirect_cmd) => {
+                let mut result = self.generate_command(&redirect_cmd.command);
+                for redirect in &redirect_cmd.redirects {
+                    result.push_str(&self.generate_redirect(redirect));
+                }
+                result
+            }
         }
     }
 
@@ -1806,6 +1827,43 @@ impl PerlGenerator {
         output
     }
 
+    fn generate_redirect(&mut self, redirect: &Redirect) -> String {
+        let mut output = String::new();
+        
+        match redirect.operator {
+            RedirectOperator::Input => {
+                // Input redirection: command < file
+                output.push_str(&format!("open(STDIN, '<', '{}') or die \"Cannot open file: $!\\n\";\n", redirect.target));
+            }
+            RedirectOperator::Output => {
+                // Output redirection: command > file
+                output.push_str(&format!("open(STDOUT, '>', '{}') or die \"Cannot open file: $!\\n\";\n", redirect.target));
+            }
+            RedirectOperator::Append => {
+                // Append redirection: command >> file
+                output.push_str(&format!("open(STDOUT, '>>', '{}') or die \"Cannot open file: $!\\n\";\n", redirect.target));
+            }
+            RedirectOperator::Heredoc | RedirectOperator::HeredocTabs => {
+                // Heredoc: command << delimiter
+                if let Some(body) = &redirect.heredoc_body {
+                    // Create a temporary file with the heredoc content
+                    output.push_str(&format!("my $temp_content = {};\n", self.perl_string_literal(body)));
+                    let fh = self.get_unique_file_handle();
+                    output.push_str(&format!("open(my {}, '>', '/tmp/heredoc_temp') or die \"Cannot create temp file: $!\\n\";\n", fh));
+                    output.push_str(&format!("print {} $temp_content;\n", fh));
+                    output.push_str(&format!("close({});\n", fh));
+                    output.push_str("open(STDIN, '<', '/tmp/heredoc_temp') or die \"Cannot open temp file: $!\\n\";\n");
+                }
+            }
+            _ => {
+                // Other redirects not yet implemented
+                output.push_str(&format!("# Redirect {:?} not yet implemented\n", redirect.operator));
+            }
+        }
+        
+        output
+    }
+
     fn generate_shopt_command(&mut self, cmd: &ShoptCommand) -> String {
         let mut output = String::new();
         
@@ -2051,7 +2109,10 @@ impl PerlGenerator {
                 let var = parts[0].trim();
                 let value = parts[1].trim();
                 
-                format!("{} == {}", var, value)
+                // Handle special shell variables in test expressions
+                let var_perl = if var == "$#" { "scalar(@ARGV)".to_string() } else { var.to_string() };
+                
+                format!("{} == {}", var_perl, value)
             } else {
                 "0".to_string()
             }
@@ -2062,7 +2123,10 @@ impl PerlGenerator {
                 let var = parts[0].trim();
                 let value = parts[1].trim();
                 
-                format!("{} != {}", var, value)
+                // Handle special shell variables in test expressions
+                let var_perl = if var == "$#" { "scalar(@ARGV)".to_string() } else { var.to_string() };
+                
+                format!("{} != {}", var_perl, value)
             } else {
                 "0".to_string()
             }
@@ -2073,7 +2137,10 @@ impl PerlGenerator {
                 let var = parts[0].trim();
                 let value = parts[1].trim();
                 
-                format!("{} < {}", var, value)
+                // Handle special shell variables in test expressions
+                let var_perl = if var == "$#" { "scalar(@ARGV)".to_string() } else { var.to_string() };
+                
+                format!("{} < {}", var_perl, value)
             } else {
                 "0".to_string()
             }
@@ -2084,7 +2151,10 @@ impl PerlGenerator {
                 let var = parts[0].trim();
                 let value = parts[1].trim();
                 
-                format!("{} <= {}", var, value)
+                // Handle special shell variables in test expressions
+                let var_perl = if var == "$#" { "scalar(@ARGV)".to_string() } else { var.to_string() };
+                
+                format!("{} <= {}", var_perl, value)
             } else {
                 "0".to_string()
             }
@@ -2095,7 +2165,10 @@ impl PerlGenerator {
                 let var = parts[0].trim();
                 let value = parts[1].trim();
                 
-                format!("{} > {}", var, value)
+                // Handle special shell variables in test expressions
+                let var_perl = if var == "$#" { "scalar(@ARGV)".to_string() } else { var.to_string() };
+                
+                format!("{} > {}", var_perl, value)
             } else {
                 "0".to_string()
             }
@@ -2106,7 +2179,10 @@ impl PerlGenerator {
                 let var = parts[0].trim();
                 let value = parts[1].trim();
                 
-                format!("{} >= {}", var, value)
+                // Handle special shell variables in test expressions
+                let var_perl = if var == "$#" { "scalar(@ARGV)".to_string() } else { var.to_string() };
+                
+                format!("{} >= {}", var_perl, value)
             } else {
                 "0".to_string()
             }
@@ -3345,6 +3421,60 @@ impl PerlGenerator {
         output
     }
 
+    fn generate_case_statement(&mut self, case_stmt: &CaseStatement) -> String {
+        let mut output = String::new();
+        
+        // Convert bash case statement to Perl given/when
+        output.push_str("given (");
+        output.push_str(&self.perl_string_literal(&case_stmt.word));
+        output.push_str(") {\n");
+        
+        self.indent_level += 1;
+        
+        for case_clause in &case_stmt.cases {
+            // Handle multiple patterns with 'when' clauses
+            for (i, pattern) in case_clause.patterns.iter().enumerate() {
+                if i > 0 {
+                    output.push_str(" ");
+                }
+                output.push_str("when (");
+                
+                // Convert bash pattern to Perl regex
+                let pattern_str = self.perl_string_literal(pattern);
+                if pattern_str == "\"*\"" {
+                    // Default case
+                    output.push_str("default");
+                } else {
+                    // Convert bash glob patterns to Perl regex
+                    let mut perl_pattern = pattern_str.trim_matches('"').to_string();
+                    perl_pattern = perl_pattern.replace("*", ".*");
+                    perl_pattern = perl_pattern.replace("?", ".");
+                    perl_pattern = perl_pattern.replace("[", "\\[");
+                    perl_pattern = perl_pattern.replace("]", "\\]");
+                    output.push_str(&format!("qr/^{}$/", perl_pattern));
+                }
+                
+                output.push_str(") {\n");
+                
+                self.indent_level += 1;
+                // Generate body commands
+                for command in &case_clause.body {
+                    output.push_str(&self.indent());
+                    output.push_str(&self.generate_command(command));
+                }
+                self.indent_level -= 1;
+                
+                output.push_str(&self.indent());
+                output.push_str("}\n");
+            }
+        }
+        
+        self.indent_level -= 1;
+        output.push_str("}\n");
+        
+        output
+    }
+
     fn generate_while_loop(&mut self, while_loop: &WhileLoop) -> String {
         let mut output = String::new();
         
@@ -3889,6 +4019,15 @@ impl PerlGenerator {
                     // Convert ${#arr[@]} to scalar(@arr) for printf format strings
                     result.push_str(&format!("scalar(@{})", map_name));
                 }
+                StringPart::ArraySlice(array_name, offset, length) => {
+                    // Convert ${arr[@]:start:length} to @arr[start..start+length-1] for printf format strings
+                    // Convert ${arr[@]:start} to @arr[start..$#arr] for printf format strings
+                    if let Some(length_str) = length {
+                        result.push_str(&format!("@{}[{}..{}+{}-1]", array_name, offset, offset, length_str));
+                    } else {
+                        result.push_str(&format!("@{}[{}..$#{}]", array_name, offset, array_name));
+                    }
+                }
                 StringPart::ParameterExpansion(pe) => {
                     result.push_str(&self.generate_parameter_expansion(pe));
                 }
@@ -4094,6 +4233,15 @@ impl PerlGenerator {
                 StringPart::MapLength(map_name) => {
                     // Convert ${#arr[@]} to scalar(@arr) in Perl
                     result.push_str(&format!("scalar(@{})", map_name));
+                }
+                StringPart::ArraySlice(array_name, offset, length) => {
+                    // Convert ${arr[@]:start:length} to @arr[start..start+length-1] in Perl
+                    // Convert ${arr[@]:start} to @arr[start..$#arr] in Perl
+                    if let Some(length_str) = length {
+                        result.push_str(&format!("@{}[{}..{}+{}-1]", array_name, offset, offset, length_str));
+                    } else {
+                        result.push_str(&format!("@{}[{}..$#{}]", array_name, offset, array_name));
+                    }
                 }
                 StringPart::ParameterExpansion(pe) => {
                     result.push_str(&self.generate_parameter_expansion(pe));
@@ -4347,8 +4495,13 @@ impl PerlGenerator {
                 if let Some(pe) = self.extract_parameter_expansion(var) {
                     self.generate_parameter_expansion(&pe)
                 } else {
-                    // Regular variable reference
-                    format!("${}", var)
+                    // Handle special shell variables
+                    match var.as_str() {
+                        "#" => "scalar(@ARGV)".to_string(), // $# -> scalar(@ARGV) in Perl
+                        "@" => "@ARGV".to_string(),         // $@ -> @ARGV in Perl  
+                        "*" => "\"$ARGV[0] $ARGV[1] ...\"".to_string(), // $* -> "$ARGV[0] $ARGV[1] ..." in Perl
+                        _ => format!("${}", var) // Regular variable reference
+                    }
                 }
             },
             Word::MapAccess(map_name, key) => {
@@ -4362,6 +4515,15 @@ impl PerlGenerator {
             Word::MapLength(map_name) => {
                 // ${#arr[@]} -> scalar(@arr)
                 format!("scalar(@{})", map_name)
+            },
+            Word::ArraySlice(array_name, offset, length) => {
+                // ${arr[@]:start:length} -> @arr[start..start+length-1]
+                // ${arr[@]:start} -> @arr[start..$#arr]
+                if let Some(length_str) = length {
+                    format!("@{}[{}..{}+{}-1]", array_name, offset, offset, length_str)
+                } else {
+                    format!("@{}[{}..$#{}]", array_name, offset, array_name)
+                }
             },
         }
     }
@@ -4465,6 +4627,15 @@ impl PerlGenerator {
             Word::MapLength(map_name) => {
                 // ${#arr[@]} -> scalar(@arr)
                 format!("scalar(@{})", map_name)
+            },
+            Word::ArraySlice(array_name, offset, length) => {
+                // ${arr[@]:start:length} -> @arr[start..start+length-1]
+                // ${arr[@]:start} -> @arr[start..$#arr]
+                if let Some(length_str) = length {
+                    format!("@{}[{}..{}+{}-1]", array_name, offset, offset, length_str)
+                } else {
+                    format!("@{}[{}..$#{}]", array_name, offset, array_name)
+                }
             },
             Word::Arithmetic(expr) => self.convert_arithmetic_to_perl(&expr.expression),
             Word::BraceExpansion(expansion) => {
@@ -4980,6 +5151,15 @@ impl PerlGenerator {
             ParameterExpansionOperator::ErrorIfUnset(error) => format!("defined(${}) ? ${} : die('{}')", pe.variable, pe.variable, error),
             ParameterExpansionOperator::Basename => format!("basename(${})", pe.variable),
             ParameterExpansionOperator::Dirname => format!("dirname(${})", pe.variable),
+            ParameterExpansionOperator::ArraySlice(offset, length) => {
+                if let Some(length_str) = length {
+                    // ${var:start:length} -> @var[start..start+length-1]
+                    format!("@{0}[{1}..{1}+{2}-1]", pe.variable, offset, length_str)
+                } else {
+                    // ${var:offset} -> @var[offset..$#var] (from offset to end)
+                    format!("@{0}[{1}..$#{0}]", pe.variable, offset)
+                }
+            }
         }
     }
 
@@ -5616,8 +5796,8 @@ impl PerlGenerator {
             Command::Simple(simple_cmd) => {
                 // Check for variables in environment variables (assignments)
                 for (var, _value) in &simple_cmd.env_vars {
-                    // Skip array access patterns like map[foo]
-                    if !var.contains('[') && !vars.contains(var) {
+                    // Skip array access patterns like map[foo] and empty strings
+                    if !var.contains('[') && !var.is_empty() && !vars.contains(var) {
                         vars.push(var.clone());
                     }
                 }
@@ -5630,8 +5810,8 @@ impl PerlGenerator {
             Command::BuiltinCommand(builtin_cmd) => {
                 // Check for variables in environment variables (assignments)
                 for (var, _value) in &builtin_cmd.env_vars {
-                    // Skip array access patterns like map[foo]
-                    if !var.contains('[') && !vars.contains(var) {
+                    // Skip array access patterns like map[foo] and empty strings
+                    if !var.contains('[') && !var.is_empty() && !vars.contains(var) {
                         vars.push(var.clone());
                     }
                 }
@@ -5643,7 +5823,7 @@ impl PerlGenerator {
             }
             Command::For(for_loop) => {
                 // Add the for loop variable to global vars
-                if !vars.contains(&for_loop.variable) {
+                if !for_loop.variable.is_empty() && !vars.contains(&for_loop.variable) {
                     vars.push(for_loop.variable.clone());
                 }
                 // Recursively check the for loop body
@@ -5697,6 +5877,10 @@ impl PerlGenerator {
             Word::Variable(var_name) => {
                 // Skip special Perl variables that can't be declared with 'my'
                 if var_name == "#" || var_name == "@" || var_name == "*" || var_name == "?" || var_name == "!" {
+                    return;
+                }
+                // Skip empty or invalid variable names
+                if var_name.is_empty() || var_name.chars().any(|c| !c.is_alphanumeric() && c != '_') {
                     return;
                 }
                 if !vars.contains(var_name) {
@@ -5819,5 +6003,29 @@ impl PerlGenerator {
         
         // Return reference instead of cloning
         s.to_string()
+    }
+
+    fn generate_break_statement(&mut self, level: &Option<String>) -> String {
+        match level {
+            Some(level_str) => format!("last LABEL{};", level_str),
+            None => "last;".to_string(),
+        }
+    }
+
+    fn generate_continue_statement(&mut self, level: &Option<String>) -> String {
+        match level {
+            Some(level_str) => format!("next LABEL{};", level_str),
+            None => "next;".to_string(),
+        }
+    }
+
+    fn generate_return_statement(&mut self, value: &Option<Word>) -> String {
+        match value {
+            Some(word) => {
+                let perl_value = self.perl_string_literal(word);
+                format!("return {};", perl_value)
+            }
+            None => "return;".to_string(),
+        }
     }
 }
