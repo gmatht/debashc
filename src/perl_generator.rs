@@ -484,8 +484,9 @@ impl PerlGenerator {
                 RedirectOperator::ProcessSubstitutionInput(cmd) => {
                     // Process substitution input: <(command)
                     temp_file_counter += 1;
-                    let temp_file = format!("/tmp/process_sub_{}_{}.tmp", TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed), temp_file_counter);
-                    let temp_var = format!("temp_file_ps_{}", temp_file_counter);
+                    let global_counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+                    let temp_file = format!("/tmp/process_sub_{}_{}.tmp", global_counter, temp_file_counter);
+                    let temp_var = format!("temp_file_ps_{}_{}", global_counter, temp_file_counter);
                     output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
                     
                     // Generate the command for system call
@@ -494,16 +495,18 @@ impl PerlGenerator {
                     // Clean up the command string for system call and properly escape it
                     let _clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
                     // Use proper Perl system call syntax with list form to avoid shell interpretation
-                    output.push_str(&format!("open(my $fh, '>', ${}) or die \"Cannot create temp file: $!\\n\";\n", temp_var));
-                    output.push_str(&format!("close($fh);\n"));
+                    let fh_var = format!("fh_ps_{}_{}", global_counter, temp_file_counter);
+                    output.push_str(&format!("open(my ${}, '>', ${}) or die \"Cannot create temp file: $!\\n\";\n", fh_var, temp_var));
+                    output.push_str(&format!("close(${});\n", fh_var));
                     // For now, just create the file - the actual command execution would need more complex handling
                     process_sub_files.push((temp_var, temp_file));
                 }
                 RedirectOperator::ProcessSubstitutionOutput(_cmd) => {
                     // Process substitution output: >(command)
                     temp_file_counter += 1;
-                    let temp_file = format!("/tmp/process_sub_out_{}_{}.tmp", TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed), temp_file_counter);
-                    let temp_var = format!("temp_file_out_{}", temp_file_counter);
+                    let global_counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+                    let temp_file = format!("/tmp/process_sub_out_{}_{}.tmp", global_counter, temp_file_counter);
+                    let temp_var = format!("temp_file_out_{}_{}", global_counter, temp_file_counter);
                     output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
                     process_sub_files.push((temp_var, temp_file));
                 }
@@ -521,8 +524,9 @@ impl PerlGenerator {
                     if redir.target.starts_with("(") && redir.target.ends_with(")") {
                         // This looks like a process substitution, create a temp file
                         temp_file_counter += 1;
-                        let temp_file = format!("/tmp/process_sub_input_{}_{}.tmp", TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed), temp_file_counter);
-                        let temp_var = format!("temp_file_input_{}", temp_file_counter);
+                        let global_counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+                        let temp_file = format!("/tmp/process_sub_input_{}_{}.tmp", global_counter, temp_file_counter);
+                        let temp_var = format!("temp_file_input_{}_{}", global_counter, temp_file_counter);
                         output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
                         
                         // Extract the command from the target (remove parentheses)
@@ -533,13 +537,14 @@ impl PerlGenerator {
                             // Extract the content between the quotes
                             let content = &cmd_str[8..cmd_str.len()-1]; // Remove "printf '" and "'"
                             // Create temp file with the content
-                            output.push_str(&format!("open(my $fh, '>', ${}) or die \"Cannot create temp file: $!\\n\";\n", temp_var));
-                            output.push_str(&format!("print $fh \"{}\";\n", content.replace("\\n", "\n")));
-                            output.push_str(&format!("close($fh);\n"));
+                            let fh_var = format!("fh_input_{}_{}", global_counter, temp_file_counter);
+                            output.push_str(&format!("open(my ${}, '>', ${}) or die \"Cannot create temp file: $!\\n\";\n", fh_var, temp_var));
+                            output.push_str(&format!("print ${} \"{}\";\n", fh_var, content.replace("\\n", "\n")));
+                            output.push_str(&format!("close(${});\n", fh_var));
                         } else {
-                                                    // For other commands, use system() with proper escaping
-                        let _clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
-                        output.push_str(&format!("system('{} > ${}') == 0 or die \"Process substitution failed: $!\\n\";\n", _clean_cmd, temp_var));
+                            // For other commands, use system() with proper escaping
+                            let _clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
+                            output.push_str(&format!("system('{} > ${}') == 0 or die \"Process substitution failed: $!\\n\";\n", _clean_cmd, temp_var));
                         }
                         process_sub_files.push((temp_var, temp_file));
                     }
@@ -682,53 +687,65 @@ impl PerlGenerator {
                         perl_args.join(", ")));
                 }
             }
-        } else if cmd.name == "echo" {
-            // Handle echo with flags like -e for escape sequences
-            let mut interpret_escapes = false;
-            let mut args_to_process = Vec::new();
-            
-            // Check for flags
-            for arg in &cmd.args {
-                if let Word::Literal(s) = arg {
-                    if s == "-e" {
-                        interpret_escapes = true;
-                        continue;
-                    } else if s.starts_with('-') {
-                        // Skip other flags for now
-                        continue;
-                    }
-                }
-                args_to_process.push(arg.clone());
-            }
-            
-            if interpret_escapes {
-                // For -e flag, we need to process escape sequences
-                let mut parts = Vec::new();
-                for arg in &args_to_process {
-                    if let Word::Literal(s) = arg {
-                        // Convert escape sequences to Perl format
-                        let processed = s
-                            .replace("\\n", "\\n")
-                            .replace("\\t", "\\t")
-                            .replace("\\r", "\\r")
-                            .replace("\\b", "\\b")
-                            .replace("\\a", "\\a")
-                            .replace("\\v", "\\v");
-                        parts.push(format!("\"{}\"", processed));
-                    } else {
-                        parts.push(self.word_to_perl(arg));
-                    }
-                }
+        } else if let Word::Literal(name) = &cmd.name {
+            if name == "echo" {
+                // Handle echo with flags like -e for escape sequences
+                // Check if this echo command has output redirection
+                let has_output_redirect = cmd.redirects.iter().any(|r| matches!(r.operator, RedirectOperator::Output | RedirectOperator::Append));
                 
-                if parts.len() == 1 {
-                    output.push_str(&format!("print({});\n", parts[0]));
+                if has_output_redirect {
+                    // If echo has output redirection, don't generate print statement here
+                    // The redirection handling will take care of it
+                    output.push_str("# echo with redirection - handled by redirect processing\n");
                 } else {
-                    output.push_str(&format!("print({});\n", parts.join(" . ")));
+                    // No redirection, handle echo normally
+                    let mut interpret_escapes = false;
+                    let mut args_to_process = Vec::new();
+                    
+                    // Check for flags
+                    for arg in &cmd.args {
+                        if let Word::Literal(s) = arg {
+                            if s == "-e" {
+                                interpret_escapes = true;
+                                continue;
+                            } else if s.starts_with('-') {
+                                // Skip other flags for now
+                                continue;
+                            }
+                        }
+                        args_to_process.push(arg.clone());
+                    }
+                    
+                    if interpret_escapes {
+                        // For -e flag, we need to process escape sequences
+                        let mut parts = Vec::new();
+                        for arg in &args_to_process {
+                            if let Word::Literal(s) = arg {
+                                // Convert escape sequences to Perl format
+                                let processed = s
+                                    .replace("\\n", "\\n")
+                                    .replace("\\t", "\\t")
+                                    .replace("\\r", "\\r")
+                                    .replace("\\b", "\\b")
+                                    .replace("\\a", "\\a")
+                                    .replace("\\v", "\\v");
+                                parts.push(format!("\"{}\"", processed));
+                            } else {
+                                parts.push(self.word_to_perl(arg));
+                            }
+                        }
+                        
+                        if parts.len() == 1 {
+                            output.push_str(&format!("print({});\n", parts[0]));
+                        } else {
+                            output.push_str(&format!("print({});\n", parts.join(" . ")));
+                        }
+                    } else {
+                        // No -e flag, use the original conversion
+                        let args = self.convert_echo_args_to_print_args(&args_to_process);
+                        output.push_str(&format!("print({});\n", args));
+                    }
                 }
-            } else {
-                // No -e flag, use the original conversion
-                let args = self.convert_echo_args_to_print_args(&args_to_process);
-                output.push_str(&format!("print({});\n", args));
             }
         } else if cmd.name == "touch" {
             // Special handling for touch with brace expansion support
@@ -1370,7 +1387,7 @@ impl PerlGenerator {
                     if self.subshell_depth == 0 {
                         self.declared_locals.insert(array_name_str.clone());
                     }
-                    } else {
+                } else {
                     // Clear the array instead of redeclaring
                     output.push_str(&format!("@{} = ();\n", array_name_str));
                 }
@@ -1893,11 +1910,41 @@ impl PerlGenerator {
                 }
                 RedirectOperator::Output => {
                     // Output redirection: command > file
-                    output.push_str(&format!("open(STDOUT, '>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
+                    // Special handling for echo command to create file directly
+                    if let Word::Literal(name) = &cmd.name {
+                        if name == "echo" {
+                            // For echo, create the file directly instead of redirecting STDOUT
+                            let echo_content = self.convert_echo_args_to_print_args(&cmd.args);
+                            output.push_str(&format!("open(my $fh, '>', '{}') or die \"Cannot create file: $!\\n\";\n", redir.target));
+                            output.push_str(&format!("print $fh {};\n", echo_content));
+                            output.push_str("close($fh);\n");
+                        } else {
+                            // For other commands, redirect STDOUT
+                            output.push_str(&format!("open(STDOUT, '>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
+                        }
+                    } else {
+                        // For other command types, redirect STDOUT
+                        output.push_str(&format!("open(STDOUT, '>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
+                    }
                 }
                 RedirectOperator::Append => {
                     // Append redirection: command >> file
-                    output.push_str(&format!("open(STDOUT, '>>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
+                    // Special handling for echo command to append to file directly
+                    if let Word::Literal(name) = &cmd.name {
+                        if name == "echo" {
+                            // For echo, append to the file directly instead of redirecting STDOUT
+                            let echo_content = self.convert_echo_args_to_print_args(&cmd.args);
+                            output.push_str(&format!("open(my $fh, '>>', '{}') or die \"Cannot append to file: $!\\n\";\n", redir.target));
+                            output.push_str(&format!("print $fh {};\n", echo_content));
+                            output.push_str("close($fh);\n");
+                        } else {
+                            // For other commands, redirect STDOUT
+                            output.push_str(&format!("open(STDOUT, '>>', '{}') or die \"Cannot append to file: $!\\n\";\n", redir.target));
+                        }
+                    } else {
+                        // For other command types, redirect STDOUT
+                        output.push_str(&format!("open(STDOUT, '>>', '{}') or die \"Cannot append to file: $!\\n\";\n", redir.target));
+                    }
                 }
 
                 RedirectOperator::Heredoc | RedirectOperator::HeredocTabs => {
@@ -1941,6 +1988,8 @@ impl PerlGenerator {
             }
             RedirectOperator::Output => {
                 // Output redirection: command > file
+                // Note: This function doesn't have access to the command name, so it can't handle echo specially
+                // The special handling is done in generate_simple_command
                 output.push_str(&format!("open(STDOUT, '>', '{}') or die \"Cannot open file: $!\\n\";\n", redirect.target));
             }
             RedirectOperator::Append => {

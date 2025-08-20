@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 use std::os::windows::process::ExitStatusExt;
 use serde::{Serialize, Deserialize};
+use sha2::{Sha256, Digest};
 
 // Use the debug module for controlling DEBUG output
 use debashl::debug::set_debug_enabled;
@@ -41,7 +42,10 @@ struct CachedBashOutput {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CachedPerlOutput {
-    perl_code: String,
+    stdout: String,
+    stderr: String,
+    exit_code: i32,
+    perl_code_hash: String, // SHA256 hash of the generated Perl code
     last_modified: u64, // Unix timestamp
 }
 
@@ -51,6 +55,12 @@ impl CommandCache {
             bash_outputs: HashMap::new(),
             perl_outputs: HashMap::new(),
         }
+    }
+
+    fn compute_sha256(data: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(data.as_bytes());
+        format!("{:x}", hasher.finalize())
     }
 
     fn load() -> Self {
@@ -126,7 +136,18 @@ impl CommandCache {
 
 
 
-    fn update_perl_cache(&mut self, filename: &str, perl_code: String) {
+    fn is_perl_cache_valid(&self, filename: &str, perl_code: &str) -> bool {
+        if let Some(cached) = self.perl_outputs.get(filename) {
+            // Check if the Perl code hash matches (indicating the generated code hasn't changed)
+            let current_hash = Self::compute_sha256(perl_code);
+            if current_hash == cached.perl_code_hash {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn update_perl_cache(&mut self, filename: &str, stdout: String, stderr: String, exit_code: i32, perl_code: &str) {
         let last_modified = if let Ok(metadata) = fs::metadata(filename) {
             if let Ok(modified) = metadata.modified() {
                 if let Ok(modified_timestamp) = modified.duration_since(SystemTime::UNIX_EPOCH) {
@@ -141,8 +162,13 @@ impl CommandCache {
             0
         };
 
+        let perl_code_hash = Self::compute_sha256(perl_code);
+
         self.perl_outputs.insert(filename.to_string(), CachedPerlOutput {
-            perl_code,
+            stdout,
+            stderr,
+            exit_code,
+            perl_code_hash,
             last_modified,
         });
     }
@@ -171,11 +197,7 @@ fn cached_run_command(filename: &str, run_bash: bool, run_perl: bool) -> Result<
     
     // Check perl cache if needed
     if run_perl {
-        if cache.is_perl_cache_valid(filename) {
-            if let Some(cached) = cache.get_cached_perl_output(filename) {
-                perl_code = Some(cached.perl_code.clone());
-            }
-        }
+        // We'll check the cache after generating the Perl code to see if we can reuse the output
     }
     
     // If we need to run bash and don't have cached output
@@ -202,9 +224,19 @@ fn cached_run_command(filename: &str, run_bash: bool, run_perl: bool) -> Result<
         let mut generator = PerlGenerator::new();
         let code = generator.generate(&commands);
         
-        // Cache the perl code
-        cache.update_perl_cache(filename, code.clone());
-        perl_code = Some(code);
+        // Check if we can use cached output
+        if cache.is_perl_cache_valid(filename, &code) {
+            if let Some(cached) = cache.get_cached_perl_output(filename) {
+                // We have valid cached output, so we don't need to run the Perl code again
+                // Just store the generated code for display purposes
+                perl_code = Some(code);
+                // Note: We don't update the cache here since we're reusing existing output
+            }
+        } else {
+            // Cache is invalid or doesn't exist, we'll need to run the Perl code
+            perl_code = Some(code);
+            // Note: We'll update the cache after running the Perl code
+        }
     }
     
     // Save cache if we made any updates
@@ -1107,7 +1139,6 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
     // Load caches
     let mut cache = CommandCache::load();
     let mut shell_output = None;
-    let mut cached_perl_code = None;
     
     // Declare variables that will be used throughout the function
     let mut shell_content = String::new();
@@ -1115,6 +1146,7 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
     let mut run_cmd = Vec::new();
     let mut translated_code = String::new();
     let mut ast = String::new();
+    let mut cached_perl_code: Option<String> = None;
     
     // Check if bash output cache is valid for this file
     if cache.is_bash_cache_valid(filename) {
@@ -1129,13 +1161,7 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
     }
     
     // Check if Perl code cache is valid for this file
-    if let Some(cached) = cache.get_cached_perl_output(filename) {
-        cached_perl_code = Some(cached.perl_code.clone());
-        // If we have cached Perl code, we can use it directly
-        if lang == "perl" {
-            translated_code = cached.perl_code.clone();
-        }
-    }
+    // We'll check this after generating the Perl code to see if we can reuse cached output
     
     // If we have cached Perl code but need to set up temp file and run command
     if lang == "perl" && cached_perl_code.is_some() && tmp_file.is_empty() {
@@ -1261,7 +1287,7 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
         
         // Cache the Perl code if we generated it
         if lang == "perl" {
-            cache.update_perl_cache(filename, translated_code.clone());
+            // We'll update the cache after running the Perl code to store the output
         }
     }
     
@@ -1315,6 +1341,23 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
         }
     };
 
+    // Check if we can use cached Perl output
+    if lang == "perl" && cache.is_perl_cache_valid(filename, &translated_code) {
+        if let Some(_cached) = cache.get_cached_perl_output(filename) {
+            // We have valid cached output, so we can use it instead of the actual execution
+            // This means the Perl code hasn't changed, so the output should be the same
+            // For now, we'll still use the actual execution output, but we could optimize this later
+        }
+    }
+
+    // Update Perl cache with the execution output
+    if lang == "perl" {
+        let trans_stdout_raw = String::from_utf8_lossy(&translated_output.stdout).to_string();
+        let trans_stderr_raw = String::from_utf8_lossy(&translated_output.stderr).to_string();
+        let trans_exit_code = translated_output.status.code().unwrap_or(-1);
+        cache.update_perl_cache(filename, trans_stdout_raw, trans_stderr_raw, trans_exit_code, &translated_code);
+    }
+
     // Cleanup temp files
     cleanup_tmp(lang, &tmp_file);
 
@@ -1333,6 +1376,9 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
 
     // Cleanup WSL script file
     let _ = fs::remove_file("__wsl_script.sh");
+    
+    // Save cache if we made any updates
+    cache.save();
     
     Ok(TestResult {
         success,
