@@ -242,16 +242,15 @@ impl PerlGenerator {
                     for item in expanded.split_whitespace() {
                         all_files.push(format!("{}{}{}", prefix, item, suffix));
                     }
-                } else {
-                    // Regular argument
-                    all_files.push(self.word_to_perl(&args[i]));
+                    // Skip adding individual prefix and suffix arguments since we've handled them in the expansion
+                    return all_files;
                 }
             }
-        } else {
-            // Simple case - no brace expansion
-            for arg in args {
-                all_files.push(self.word_to_perl(arg));
-            }
+        }
+        
+        // Simple case - no brace expansion
+        for arg in args {
+            all_files.push(self.word_to_perl(arg));
         }
         
         all_files
@@ -298,10 +297,14 @@ impl PerlGenerator {
                 // Hardcoded fix for known array/hash variables
                 if trimmed_var == "arr" {
                     output.push_str(&format!("my @{};\n", trimmed_var));
+                    self.declared_locals.insert(trimmed_var.to_string());
                 } else if trimmed_var == "map" {
                     output.push_str(&format!("my %{};\n", trimmed_var));
+                    self.declared_locals.insert(trimmed_var.to_string());
                 } else {
+                    // Declare variables at top scope so they're available across blocks
                     output.push_str(&format!("my ${};\n", trimmed_var));
+                    self.declared_locals.insert(trimmed_var.to_string());
                 }
             }
         }
@@ -311,6 +314,8 @@ impl PerlGenerator {
         if !global_vars.contains(&"map".to_string()) {
             output.push_str("# DEBUG: Adding hardcoded map declaration\n");
             output.push_str("my %map;\n");
+            // Add map to declared_locals to prevent redeclaration
+            self.declared_locals.insert("map".to_string());
         } else {
             output.push_str("# DEBUG: Map variable already in global_vars\n");
         }
@@ -457,6 +462,14 @@ impl PerlGenerator {
                     output.push_str(&format!("@{} = ({});\n", var, elements_perl.join(", ")));
                 } else {
                     let val = self.perl_string_literal(value);
+                    // Always assign the value, but only declare if not already declared
+                    if !self.declared_locals.contains(var) {
+                        output.push_str(&format!("my ${} = {};\n", var, val));
+                        self.declared_locals.insert(var.clone());
+                    } else {
+                        // Variable already declared, just assign the value
+                        output.push_str(&format!("${} = {};\n", var, val));
+                    }
                     output.push_str(&format!("local $ENV{{{}}} = {};;\n", var, val));
                 }
             }
@@ -550,7 +563,7 @@ impl PerlGenerator {
                     let elements_perl: Vec<String> = elements.iter()
                         .map(|s| self.perl_string_literal(s))
                         .collect();
-                    let declaration = if self.subshell_depth > 0 || !self.declared_locals.contains(var) {
+                    let declaration = if !self.declared_locals.contains(var) {
                         format!("my @{} = ({});", var, elements_perl.join(", "))
                     } else {
                         format!("@{} = ({});", var, elements_perl.join(", "))
@@ -569,7 +582,7 @@ impl PerlGenerator {
                         Word::Literal(literal) => self.perl_string_literal(literal),
                         _ => self.word_to_perl(value),
                     };
-                    if self.subshell_depth > 0 || !self.declared_locals.contains(&array_name) {
+                    if !self.declared_locals.contains(&array_name) {
                         output.push_str(&format!("my %{} = ();\n", array_name));
                         self.declared_locals.insert(array_name.clone());
                     }
@@ -601,16 +614,15 @@ impl PerlGenerator {
                     }
                 };
                 
-                if self.subshell_depth > 0 || !self.declared_locals.contains(var) {
+                // Always declare variables when they're first assigned to avoid global symbol errors
+                if !self.declared_locals.contains(var) {
                     output.push_str(&format!("my ${} = {};\n", var, val));
+                    self.declared_locals.insert(var.clone());
                 } else {
                     output.push_str(&format!("${} = {};\n", var, val));
                 }
                 // Also set the environment variable so it can be accessed via $ENV{VAR}
                 output.push_str(&format!("$ENV{{{}}} = ${};\n", var, var));
-                if self.subshell_depth == 0 {
-                    self.declared_locals.insert(var.clone());
-                }
             }
         } else if cmd.name == "true" {
             // Builtin true: successful no-op
@@ -722,9 +734,11 @@ impl PerlGenerator {
             // Special handling for touch with brace expansion support
             if !cmd.args.is_empty() {
                 let all_files = self.expand_touch_patterns(&cmd.args);
-                for file in all_files {
-                    output.push_str(&format!("open(my $fh, '>', '{}') or die \"Cannot create file: $!\\n\";\n", file));
-                    output.push_str("close($fh);\n");
+                for (i, file) in all_files.iter().enumerate() {
+                    // Use unique filehandle names to avoid variable masking warnings
+                    let fh_name = if all_files.len() == 1 { "fh".to_string() } else { format!("fh_{}", i) };
+                    output.push_str(&format!("open(my ${}, '>', '{}') or die \"Cannot create file: $!\\n\";\n", fh_name, file));
+                    output.push_str(&format!("close(${});\n", fh_name));
                 }
             }
         } else if cmd.name == "cd" {
@@ -1990,6 +2004,14 @@ impl PerlGenerator {
                     output.push_str(&format!("@{} = ({});\n", var, elements_perl.join(", ")));
                 } else {
                     let val = self.perl_string_literal(value);
+                    // Declare the variable if it's not already declared
+                    if !self.declared_locals.contains(var) {
+                        output.push_str(&format!("my ${} = {};\n", var, val));
+                        self.declared_locals.insert(var.clone());
+                    } else {
+                        // Variable already declared, just assign the value
+                        output.push_str(&format!("${} = {};\n", var, val));
+                    }
                     output.push_str(&format!("local $ENV{{{}}} = {};;\n", var, val));
                 }
             }
@@ -4030,7 +4052,7 @@ impl PerlGenerator {
         
         // Handle conflicts between local variable names and parameter names
         // If a local variable name conflicts with a parameter name, use a different name
-        for (i, param_name) in params.iter().enumerate() {
+        for (_i, param_name) in params.iter().enumerate() {
             // Check for patterns like "my $param_name = \"$param_name\";"
             let conflict_pattern = format!("my ${} = \"${}\";", param_name, param_name);
             if result.contains(&conflict_pattern) {
@@ -4484,6 +4506,8 @@ impl PerlGenerator {
     fn convert_string_interpolation_to_perl(&self, interp: &StringInterpolation) -> String {
         let mut result = String::new();
         
+
+        
         // Special case: if we have only one part and it's a special variable that should be evaluated
         if interp.parts.len() == 1 {
             if let StringPart::Variable(var) = &interp.parts[0] {
@@ -4501,7 +4525,7 @@ impl PerlGenerator {
                     return format!("keys(%{})", array_name);
                 } else if var.starts_with('!') && var.ends_with("[*]") {
                     // This is !map[*] - convert to keys(%map) in Perl without quotes
-                    let array_name = &var[1..var.len()-3]; // Remove ! prefix and [*] suffix
+                    let array_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
                     return format!("keys(%{})", array_name);
                 }
             }
@@ -4635,7 +4659,7 @@ impl PerlGenerator {
                                                 default.to_string()
                                             };
                                             
-                                            let replacement = format!("defined({}) ? {} : {}", processed_var, processed_var, processed_default);
+                                            let replacement = format!("defined({}) ? {} : '{}'", processed_var, processed_var, processed_default);
                                             processed_s = processed_s.replace(expansion, &replacement);
                                         }
                                     }
@@ -5687,26 +5711,52 @@ impl PerlGenerator {
                     default.clone()
                 };
                 
-                format!("defined(${}) ? ${} : {}", var_name, var_name, processed_default)
+                // Quote the default value to avoid bareword errors in strict mode
+                let quoted_default = if processed_default.starts_with("`") || processed_default.starts_with("$") {
+                    // Command substitution or variable - don't quote
+                    processed_default
+                } else {
+                    // Literal string - quote it
+                    format!("\"{}\"", processed_default)
+                };
+                format!("defined(${}) ? ${} : {}", var_name, var_name, quoted_default)
             },
             ParameterExpansionOperator::AssignDefault(default) => {
                 // Handle positional parameters properly
+                // Quote the default value to avoid bareword errors in strict mode
+                let quoted_default = if default.starts_with("`") || default.starts_with("$") {
+                    // Command substitution or variable - don't quote
+                    default.to_string()
+                } else {
+                    // Literal string - quote it
+                    format!("\"{}\"", default)
+                };
+                
                 if pe.variable.chars().all(|c| c.is_ascii_digit()) {
                     // This is a positional parameter like $2, convert it to $arg2
                     let arg_name = format!("arg{}", pe.variable);
-                    format!("${} //= '{}'", arg_name, default)
+                    format!("${} //= {}", arg_name, quoted_default)
                 } else {
-                    format!("${} //= '{}'", pe.variable, default)
+                    format!("${} //= {}", pe.variable, quoted_default)
                 }
             },
             ParameterExpansionOperator::ErrorIfUnset(error) => {
                 // Handle positional parameters properly
+                // Quote the error message to avoid bareword errors in strict mode
+                let quoted_error = if error.starts_with("`") || error.starts_with("$") {
+                    // Command substitution or variable - don't quote
+                    error.to_string()
+                } else {
+                    // Literal string - quote it
+                    format!("\"{}\"", error)
+                };
+                
                 if pe.variable.chars().all(|c| c.is_ascii_digit()) {
                     // This is a positional parameter like $2, convert it to $arg2
                     let arg_name = format!("arg{}", pe.variable);
-                    format!("defined(${}) ? ${} : die('{}')", arg_name, arg_name, error)
+                    format!("defined(${}) ? ${} : die({})", arg_name, arg_name, quoted_error)
                 } else {
-                    format!("defined(${}) ? ${} : die('{}')", pe.variable, pe.variable, error)
+                    format!("defined(${}) ? ${} : die({})", pe.variable, pe.variable, quoted_error)
                 }
             },
             ParameterExpansionOperator::Basename => {

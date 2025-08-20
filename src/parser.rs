@@ -3140,18 +3140,18 @@ impl Parser {
                                     let map_name = &brace_content[..bracket_start];
                                     let key = &brace_content[bracket_start + 1.._bracket_end];
                                     
-                                                                            // Check if this is array slicing like ${arr[@]:start:length}
-                                        if key == "@" {
-                                            // This is ${arr[@]} - check for array slicing
-                                            
-                                            // Instead of looking ahead, we need to check if the original quoted string
-                                            // contains the array slicing syntax. Let me check the original string.
-                                            let original_string = &quoted_content;
-                                            
-                                            // For array slicing like ${primes[@]:0:3}, we need to parse the entire thing
-                                            // as a single parameter expansion, not split it into parts
-                                            // Check if the original string contains array slicing syntax
-                                            if original_string.contains(":") && original_string.contains("[@]") {
+                                    // Check if this is array slicing like ${arr[@]:start:length}
+                                    if key == "@" {
+                                        // This is ${arr[@]} - check for array slicing
+                                        
+                                        // Instead of looking ahead, we need to check if the original quoted string
+                                        // contains the array slicing syntax. Let me check the original string.
+                                        let original_string = &quoted_content;
+                                        
+                                        // For array slicing like ${primes[@]:0:3}, we need to parse the entire thing
+                                        // as a single parameter expansion, not split it into parts
+                                        // Check if the original string contains array slicing syntax
+                                        if original_string.contains(":") && original_string.contains("[@]") {
                                             // Parse the array slicing syntax
                                             // Find the position after [@]
                                             let bracket_end_pos = original_string.find("]").unwrap_or(0);
@@ -3202,6 +3202,39 @@ impl Parser {
                                     
                                     // Create a MapAccess StringPart
                                     parts.push(StringPart::MapAccess(map_name.to_string(), key.to_string()));
+                                    continue; // Skip the regular variable handling
+                                }
+                            }
+                            // Fallback to regular variable if parsing fails
+                            var_name = brace_content;
+                        } else if brace_content.contains(":-") || brace_content.contains(":=") || brace_content.contains(":?") {
+                            // This is a parameter expansion like ${var:-default}, ${var:=default}, or ${var:?error}
+                            // Parse it as a parameter expansion
+                            if brace_content.contains(":-") {
+                                let parts_split: Vec<&str> = brace_content.split(":-").collect();
+                                if parts_split.len() == 2 {
+                                    parts.push(StringPart::ParameterExpansion(ParameterExpansion {
+                                        variable: parts_split[0].to_string(),
+                                        operator: ParameterExpansionOperator::DefaultValue(parts_split[1].to_string()),
+                                    }));
+                                    continue; // Skip the regular variable handling
+                                }
+                            } else if brace_content.contains(":=") {
+                                let parts_split: Vec<&str> = brace_content.split(":=").collect();
+                                if parts_split.len() == 2 {
+                                    parts.push(StringPart::ParameterExpansion(ParameterExpansion {
+                                        variable: parts_split[0].to_string(),
+                                        operator: ParameterExpansionOperator::AssignDefault(parts_split[1].to_string()),
+                                    }));
+                                    continue; // Skip the regular variable handling
+                                }
+                            } else if brace_content.contains(":?") {
+                                let parts_split: Vec<&str> = brace_content.split(":?").collect();
+                                if parts_split.len() == 2 {
+                                    parts.push(StringPart::ParameterExpansion(ParameterExpansion {
+                                        variable: parts_split[0].to_string(),
+                                        operator: ParameterExpansionOperator::ErrorIfUnset(parts_split[1].to_string()),
+                                    }));
                                     continue; // Skip the regular variable handling
                                 }
                             }
