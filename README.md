@@ -54,7 +54,7 @@ This tool is ideal for:
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/debashc.git
+git clone https://github.com/gmatht/debashc.git
 cd debashc
 cargo build --release
 ```
