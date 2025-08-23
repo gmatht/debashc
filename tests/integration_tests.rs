@@ -1030,7 +1030,7 @@ fn test_perl_generator_quoted_strings() {
 
 #[test]
 fn test_example_simple_sh_to_perl() {
-    let content = fs::read_to_string("examples/simple.sh").expect("Failed to read simple.sh");
+    let content = fs::read_to_string("examples/001_simple.sh").expect("Failed to read 001_simple.sh");
     let mut parser = Parser::new(&content);
     let commands = parser.parse().expect("Failed to parse simple.sh");
     
@@ -1070,7 +1070,7 @@ fn test_example_simple_sh_to_perl() {
 
 #[test]
 fn test_example_pipeline_sh_to_perl() {
-    let content = fs::read_to_string("examples/pipeline.sh").expect("Failed to read pipeline.sh");
+    let content = fs::read_to_string("examples/003_pipeline.sh").expect("Failed to read 003_pipeline.sh");
     let mut parser = Parser::new(&content);
     let commands = parser.parse().expect("Failed to parse pipeline.sh");
     
@@ -1100,7 +1100,7 @@ fn test_example_pipeline_sh_to_perl() {
 
 #[test]
 fn test_example_control_flow_sh_to_perl() {
-    let content = fs::read_to_string("examples/control_flow.sh").expect("Failed to read control_flow.sh");
+    let content = fs::read_to_string("examples/002_control_flow.sh").expect("Failed to read 002_control_flow.sh");
     let mut parser = Parser::new(&content);
     let commands = parser.parse().expect("Failed to parse control_flow.sh");
     
@@ -1168,7 +1168,7 @@ fn test_example_control_flow_sh_to_perl() {
 
 #[test]
 fn test_example_test_quoted_sh_to_perl() {
-    let content = fs::read_to_string("examples/test_quoted.sh").expect("Failed to read test_quoted.sh");
+    let content = fs::read_to_string("examples/004_test_quoted.sh").expect("Failed to read 004_test_quoted.sh");
     let mut parser = Parser::new(&content);
     let commands = parser.parse().expect("Failed to parse test_quoted.sh");
     
@@ -1317,12 +1317,22 @@ fn test_examples_output_equivalence() {
         
         // Run the shell script using WSL bash for proper Unix command compatibility
         let unix_path = path.to_string_lossy().replace("\\", "/");
+
+        #[cfg(windows)]
         let mut shell_child = Command::new("wsl")
             .args(&["bash", &unix_path])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .expect("Failed to spawn wsl bash");
+        #[cfg(not(windows))]
+        let mut shell_child = Command::new("/bin/bash")
+            .arg(unix_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("Failed to spawn /bin/bash");
+
         let start = std::time::Instant::now();
         let shell_output = loop {
             if let Some(_status) = shell_child.try_wait().expect("wait on shell child failed") {
@@ -1688,12 +1698,21 @@ fn test_examples_output_equivalence() {
 
 fn run_shell_script_capture(path: &std::path::Path) -> std::process::Output {
     let unix_path = path.to_string_lossy().replace("\\", "/");
+    #[cfg(windows)]
     let mut child = Command::new("wsl")
         .args(&["bash", &unix_path])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("Failed to spawn wsl bash");
+    #[cfg(not(windows))]
+    let mut child = Command::new("/bin/bash")
+        .arg(unix_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn /bin/bash");
+
     let start = std::time::Instant::now();
     loop {
         match child.try_wait() {
@@ -1816,11 +1835,11 @@ macro_rules! equiv_test_cases_mod {
 // Curated, stable examples for equivalence
 equiv_test_cases_mod!(run_generated_perl, perl,
     [
-        test_quoted => "examples/test_quoted.sh",
-        simple => "examples/simple.sh",
-        args => "examples/args.sh",
-        misc => "examples/misc.sh",
-        grep_params => "examples/grep_params.sh",
+        test_quoted => "examples/004_test_quoted.sh",
+        simple => "examples/001_simple.sh",
+        args => "examples/005_args.sh",
+        misc => "examples/006_misc.sh",
+        grep_params => "examples/018_grep_params.sh",
     ]
 );
 
