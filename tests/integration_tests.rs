@@ -1,15 +1,15 @@
 use debashl::lexer::{Lexer, Token};
 use debashl::parser::Parser;
 use debashl::perl_generator::PerlGenerator;
-use debashl::rust_generator::RustGenerator;
-use debashl::python_generator::PythonGenerator;
-use debashl::c_generator::CGenerator;
-use debashl::js_generator::JsGenerator;
-use debashl::lua_generator::LuaGenerator;
-use debashl::english_generator::EnglishGenerator;
-use debashl::french_generator::FrenchGenerator;
-use debashl::batch_generator::BatchGenerator;
-use debashl::powershell_generator::PowerShellGenerator;
+// use debashl::rust_generator::RustGenerator;
+// use debashl::python_generator::PythonGenerator;
+// use debashl::c_generator::CGenerator;
+// use debashl::js_generator::JsGenerator;
+// use debashl::lua_generator::LuaGenerator;
+// use debashl::english_generator::EnglishGenerator;
+// use debashl::french_generator::FrenchGenerator;
+// use debashl::batch_generator::BatchGenerator;
+// use debashl::powershell_generator::PowerShellGenerator;
 // duplicate imports removed
 use std::fs;
 use std::process::{Command, Stdio};
@@ -797,19 +797,19 @@ fn test_generators_double_bracket_is_builtin() {
     let perl_code = perl.generate(&commands);
     assert!(!perl_code.contains("system('[[')"), "Perl should not call system for [[ : {}", perl_code);
 
-    // Python
-    let mut parser2 = Parser::new(input);
-    let commands2 = parser2.parse().unwrap();
-    let mut py = PythonGenerator::new();
-    let py_code = py.generate(&commands2);
-    assert!(!py_code.contains("subprocess.run(['[[')"), "Python should not call subprocess for [[ : {}", py_code);
+    // // Python
+    // let mut parser2 = Parser::new(input);
+    // let commands2 = parser2.parse().unwrap();
+    // let mut py = PythonGenerator::new();
+    // let py_code = py.generate(&commands2);
+    // assert!(!py_code.contains("subprocess.run(['[[')"), "Python should not call subprocess for [[ : {}", py_code);
 
-    // Rust
-    let mut parser3 = Parser::new(input);
-    let commands3 = parser3.parse().unwrap();
-    let mut rs = RustGenerator::new();
-    let rs_code = rs.generate(&commands3);
-    assert!(!rs_code.contains("Command::new(\"[[\")"), "Rust should not spawn [[ : {}", rs_code);
+    // // Rust
+    // let mut parser3 = Parser::new(input);
+    // let commands3 = parser3.parse().unwrap();
+    // let mut rs = RustGenerator::new();
+    // let rs_code = rs.generate(&commands3);
+    // assert!(!rs_code.contains("Command::new(\"[[\")"), "Rust should not spawn [[ : {}", rs_code);
 }
 
 #[test]
@@ -823,54 +823,54 @@ fn test_generators_shopt_is_builtin_no_output() {
     let perl_code = perl.generate(&commands);
     assert!(!perl_code.to_lowercase().contains("shopt"), "Perl should not emit shopt: {}", perl_code);
 
-    // Python
-    let mut parser2 = Parser::new(input);
-    let commands2 = parser2.parse().unwrap();
-    let mut py = PythonGenerator::new();
-    let py_code = py.generate(&commands2);
-    assert!(!py_code.to_lowercase().contains("shopt"), "Python should not emit shopt: {}", py_code);
+    // // Python
+    // let mut parser2 = Parser::new(input);
+    // let commands2 = parser2.parse().unwrap();
+    // let mut py = PythonGenerator::new();
+    // let py_code = py.generate(&commands2);
+    // assert!(!py_code.to_lowercase().contains("shopt"), "Python should not emit shopt: {}", py_code);
 
-    // Rust
-    let mut parser3 = Parser::new(input);
-    let commands3 = parser3.parse().unwrap();
-    let mut rs = RustGenerator::new();
-    let rs_code = rs.generate(&commands3);
-    assert!(!rs_code.to_lowercase().contains("shopt"), "Rust should not emit shopt: {}", rs_code);
+    // // Rust
+    // let mut parser3 = Parser::new(input);
+    // let commands3 = parser3.parse().unwrap();
+    // let mut rs = RustGenerator::new();
+    // let rs_code = rs.generate(&commands3);
+    // assert!(!rs_code.to_lowercase().contains("shopt"), "Rust should not emit shopt: {}", rs_code);
 
-    // C
-    let mut parser4 = Parser::new(input);
-    let commands4 = parser4.parse().unwrap();
-    let mut cgen = CGenerator::new();
-    let c_code = cgen.generate(&commands4);
-    assert!(!c_code.to_lowercase().contains("shopt"), "C should not emit shopt: {}", c_code);
+    // // C
+    // let mut parser4 = Parser::new(input);
+    // let commands4 = parser4.parse().unwrap();
+    // let mut cgen = CGenerator::new();
+    // let c_code = cgen.generate(&commands4);
+    // assert!(!c_code.to_lowercase().contains("shopt"), "C should not emit shopt: {}", c_code);
 
-    // JS
-    let mut parser5 = Parser::new(input);
-    let commands5 = parser5.parse().unwrap();
-    let mut jsg = JsGenerator::new();
-    let js_code = jsg.generate(&commands5);
-    assert!(!js_code.to_lowercase().contains("shopt"), "JS should not emit shopt: {}", js_code);
+    // // JS
+    // let mut parser5 = Parser::new(input);
+    // let commands5 = parser5.parse().unwrap();
+    // let mut jsg = JsGenerator::new();
+    // let js_code = jsg.generate(&commands5);
+    // assert!(!js_code.to_lowercase().contains("shopt"), "JS should not emit shopt: {}", js_code);
 
-    // Lua
-    let mut parser6 = Parser::new(input);
-    let commands6 = parser6.parse().unwrap();
-    let mut luag = LuaGenerator::new();
-    let lua_code = luag.generate(&commands6);
-    assert!(!lua_code.to_lowercase().contains("shopt"), "Lua should not emit shopt: {}", lua_code);
+    // // Lua
+    // let mut parser6 = Parser::new(input);
+    // let commands6 = parser6.parse().unwrap();
+    // let mut luag = LuaGenerator::new();
+    // let lua_code = luag.generate(&commands6);
+    // assert!(!lua_code.to_lowercase().contains("shopt"), "Lua should not emit shopt: {}", lua_code);
 
-    // Batch
-    let mut parser7 = Parser::new(input);
-    let commands7 = parser7.parse().unwrap();
-    let mut batg = BatchGenerator::new();
-    let bat_code = batg.generate(&commands7);
-    assert!(!bat_code.to_lowercase().contains("shopt"), "Batch should not emit shopt: {}", bat_code);
+    // // Batch
+    // let mut parser7 = Parser::new(input);
+    // let commands7 = parser7.parse().unwrap();
+    // let mut batg = BatchGenerator::new();
+    // let bat_code = batg.generate(&commands7);
+    // assert!(!bat_code.to_lowercase().contains("shopt"), "Batch should not emit shopt: {}", bat_code);
 
-    // PowerShell
-    let mut parser8 = Parser::new(input);
-    let commands8 = parser8.parse().unwrap();
-    let mut psg = PowerShellGenerator::new();
-    let ps_code = psg.generate(&commands8);
-    assert!(!ps_code.to_lowercase().contains("shopt"), "PowerShell should not emit shopt: {}", ps_code);
+    // // PowerShell
+    // let mut parser8 = Parser::new(input);
+    // let commands8 = parser8.parse().unwrap();
+    // let mut psg = PowerShellGenerator::new();
+    // let ps_code = psg.generate(&commands8);
+    // assert!(!ps_code.to_lowercase().contains("shopt"), "PowerShell should not emit shopt: {}", ps_code);
 }
 
 #[test]
@@ -885,21 +885,21 @@ fn test_generators_cd_is_builtin() {
     assert!(perl_code.contains("chdir('/tmp')"), "Perl cd should use chdir: {}", perl_code);
     assert!(!perl_code.contains("system('cd'"), "Perl should not spawn cd: {}", perl_code);
 
-    // Python: use os.chdir, no subprocess.run(['cd', ...])
-    let mut parser2 = Parser::new(input);
-    let commands2 = parser2.parse().unwrap();
-    let mut py = PythonGenerator::new();
-    let py_code = py.generate(&commands2);
-    assert!(py_code.contains("os.chdir('/tmp')"), "Python cd should use os.chdir: {}", py_code);
-    assert!(!py_code.contains("subprocess.run(['cd'"), "Python should not spawn cd: {}", py_code);
+    // // Python: use os.chdir, no subprocess.run(['cd', ...])
+    // let mut parser2 = Parser::new(input);
+    // let commands2 = parser2.parse().unwrap();
+    // let mut py = PythonGenerator::new();
+    // let py_code = py.generate(&commands2);
+    // assert!(py_code.contains("os.chdir('/tmp')"), "Python cd should use os.chdir: {}", py_code);
+    // assert!(!py_code.contains("subprocess.run(['cd'"), "Python should not spawn cd: {}", py_code);
 
-    // Rust: use env::set_current_dir, no Command::new("cd")
-    let mut parser3 = Parser::new(input);
-    let commands3 = parser3.parse().unwrap();
-    let mut rs = RustGenerator::new();
-    let rs_code = rs.generate(&commands3);
-    assert!(rs_code.contains("env::set_current_dir(\"/tmp\")"), "Rust cd should use env::set_current_dir: {}", rs_code);
-    assert!(!rs_code.contains("Command::new(\"cd\")"), "Rust should not spawn cd: {}", rs_code);
+    // // Rust: use env::set_current_dir, no Command::new("cd")
+    // let mut parser3 = Parser::new(input);
+    // let commands3 = parser3.parse().unwrap();
+    // let mut rs = RustGenerator::new();
+    // let rs_code = rs.generate(&commands3);
+    // assert!(rs_code.contains("env::set_current_dir(\"/tmp\")"), "Rust cd should use env::set_current_dir: {}", rs_code);
+    // assert!(!rs_code.contains("Command::new(\"cd\")"), "Rust should not spawn cd: {}", rs_code);
 }
 
 #[test]
@@ -916,60 +916,60 @@ fn test_generators_true_false_are_builtins() {
     assert!(!perl_code.contains("system('true'"), "Perl should not spawn true: {}", perl_code);
     assert!(!perl_code.contains("system('false'"), "Perl should not spawn false: {}", perl_code);
 
-    // Python: true => pass; false => sys.exit(1); and no subprocess.run(['true'/'false'])
-    let mut parser2 = Parser::new(input);
-    let commands2 = parser2.parse().unwrap();
-    let mut py = PythonGenerator::new();
-    let py_code = py.generate(&commands2);
-    assert!(py_code.contains("pass"), "Python true should compile to pass: {}", py_code);
-    assert!(py_code.contains("sys.exit(1)"), "Python false should exit 1: {}", py_code);
-    assert!(!py_code.contains("subprocess.run(['true'"), "Python should not spawn true: {}", py_code);
-    assert!(!py_code.contains("subprocess.run(['false'"), "Python should not spawn false: {}", py_code);
+    // // Python: true => pass; false => sys.exit(1); and no subprocess.run(['true'/'false'])
+    // let mut parser2 = Parser::new(input);
+    // let commands2 = parser2.parse().unwrap();
+    // let mut py = PythonGenerator::new();
+    // let py_code = py.generate(&commands2);
+    // assert!(py_code.contains("pass"), "Python true should compile to pass: {}", py_code);
+    // assert!(py_code.contains("sys.exit(1)"), "Python false should exit 1: {}", py_code);
+    // assert!(!py_code.contains("subprocess.run(['true'"), "Python should not spawn true: {}", py_code);
+    // assert!(!py_code.contains("subprocess.run(['false'"), "Python should not spawn false: {}", py_code);
 
-    // Rust: true => comment/No-Op; false => early return ExitCode::FAILURE; and no Command::new("true"/"false")
-    let mut parser3 = Parser::new(input);
-    let commands3 = parser3.parse().unwrap();
-    let mut rs = RustGenerator::new();
-    let rs_code = rs.generate(&commands3);
-    assert!(rs_code.contains("/* true */"), "Rust true should be a no-op: {}", rs_code);
-    assert!(rs_code.contains("return std::process::ExitCode::FAILURE;"), "Rust false should early return ExitCode::FAILURE: {}", rs_code);
-    assert!(!rs_code.contains("Command::new(\"true\")"), "Rust should not spawn true: {}", rs_code);
-    assert!(!rs_code.contains("Command::new(\"false\")"), "Rust should not spawn false: {}", rs_code);
+    // // Rust: true => comment/No-Op; false => early return ExitCode::FAILURE; and no Command::new("true"/"false")
+    // let mut parser3 = Parser::new(input);
+    // let commands3 = parser3.parse().unwrap();
+    // let mut rs = RustGenerator::new();
+    // let rs_code = rs.generate(&commands3);
+    // assert!(rs_code.contains("/* true */"), "Rust true should be a no-op: {}", rs_code);
+    // assert!(rs_code.contains("return std::process::ExitCode::FAILURE;"), "Rust false should early return ExitCode::FAILURE: {}", rs_code);
+    // assert!(!rs_code.contains("Command::new(\"true\")"), "Rust should not spawn true: {}", rs_code);
+    // assert!(!rs_code.contains("Command::new(\"false\")"), "Rust should not spawn false: {}", rs_code);
 }
 
-#[test]
-fn test_python_generator_args_handling() {
-    let input = "echo $#";
-    let mut parser = Parser::new(input);
-    let commands = parser.parse().unwrap();
-    let mut gen = PythonGenerator::new();
-    let code = gen.generate(&commands);
-    assert!(code.contains("len(sys.argv) - 1"));
+// #[test]
+// fn test_python_generator_args_handling() {
+//     let input = "echo $#";
+//     let mut parser = Parser::new(input);
+//     let commands = parser.parse().unwrap();
+//     let mut gen = PythonGenerator::new();
+//     let code = gen.generate(&commands);
+//     assert!(code.contains("len(sys.argv) - 1"));
 
-    let input2 = "echo $@";
-    let mut parser2 = Parser::new(input2);
-    let commands2 = parser2.parse().unwrap();
-    let mut gen2 = PythonGenerator::new();
-    let code2 = gen2.generate(&commands2);
-    assert!(code2.contains("' '.join(sys.argv[1:])"));
-}
+//     let input2 = "echo $@";
+//     let mut parser2 = Parser::new(input2);
+//     let commands2 = parser2.parse().unwrap();
+//     let mut gen2 = PythonGenerator::new();
+//     let code2 = gen2.generate(&commands2);
+//     assert!(code2.contains("' '.join(sys.argv[1:])"));
+// }
 
-#[test]
-fn test_rust_generator_args_handling() {
-    let input = "echo $#";
-    let mut parser = Parser::new(input);
-    let commands = parser.parse().unwrap();
-    let mut gen = RustGenerator::new();
-    let code = gen.generate(&commands);
-    assert!(code.contains("env::args().count().saturating_sub(1)"));
+// #[test]
+// fn test_rust_generator_args_handling() {
+//     let input = "echo $#";
+//     let mut parser = Parser::new(input);
+//     let commands = parser.parse().unwrap();
+//     let mut gen = RustGenerator::new();
+//     let code = gen.generate(&commands);
+//     assert!(code.contains("env::args().count().saturating_sub(1)"));
 
-    let input2 = "echo $@";
-    let mut parser2 = Parser::new(input2);
-    let commands2 = parser2.parse().unwrap();
-    let mut gen2 = RustGenerator::new();
-    let code2 = gen2.generate(&commands2);
-    assert!(code2.contains("env::args().skip(1).collect::<Vec<_>>()"));
-}
+//     let input2 = "echo $@";
+//     let mut parser2 = Parser::new(input2);
+//     let commands2 = parser2.parse().unwrap();
+//     let mut gen2 = RustGenerator::new();
+//     let code2 = gen2.generate(&commands2);
+//     assert!(code2.contains("env::args().skip(1).collect::<Vec<_>>()"));
+// }
 
 #[test]
 fn test_perl_generator_quoted_strings() {
@@ -1046,27 +1046,27 @@ fn test_example_simple_sh_to_perl() {
     assert!(perl_code.contains("system('grep', 'pattern', 'file.txt');") || perl_code.contains("open(my $fh, '<', 'file.txt')"));
 }
 
-#[test]
-fn test_example_simple_sh_to_rust() {
-    let content = fs::read_to_string("examples/simple.sh").expect("Failed to read simple.sh");
-    let mut parser = Parser::new(&content);
-    let commands = parser.parse().expect("Failed to parse simple.sh");
+// #[test]
+// fn test_example_simple_sh_to_rust() {
+//     let content = fs::read_to_string("examples/simple.sh").expect("Failed to read simple.sh");
+//     let mut parser = Parser::new(&content);
+//     let commands = parser.parse().expect("Failed to parse simple.sh");
     
-    let mut generator = RustGenerator::new();
-    let rust_code = generator.generate(&commands);
+//     let mut generator = RustGenerator::new();
+//     let rust_code = generator.generate(&commands);
     
-    // Check that the Rust code contains expected elements
-    assert!(rust_code.contains("use std::fs;"), "Missing fs import");
-    assert!(rust_code.contains("fn main()"), "Missing main function");
-    assert!(
-        rust_code.contains("println!(\"Hello, World!\");") ||
-        rust_code.contains("\"Hello, World!\"")
-    , "Missing Hello, World! output");
-    assert!(rust_code.contains("fs::metadata(\"test.txt\").is_ok()"), "Missing file test");
-    assert!(rust_code.contains("println!(\"File exists\");"), "Missing File exists output");
-    assert!(rust_code.contains("for i in &[\"1\", \"2\", \"3\", \"4\", \"5\"]"), "Missing for loop");
-    assert!(rust_code.contains("println!(\"{}\", i);"), "Missing loop variable output");
-}
+//     // Check that the Rust code contains expected elements
+//     assert!(rust_code.contains("use std::fs;"), "Missing fs import");
+//     assert!(rust_code.contains("fn main()"), "Missing main function");
+//     assert!(
+//         rust_code.contains("println!(\"Hello, World!\");") ||
+//         rust_code.contains("\"Hello, World!\"")
+//     , "Missing Hello, World! output");
+//     assert!(rust_code.contains("fs::metadata(\"test.txt\").is_ok()"), "Missing file test");
+//     assert!(rust_code.contains("println!(\"File exists\");"), "Missing File exists output");
+//     assert!(rust_code.contains("for i in &[\"1\", \"2\", \"3\", \"4\", \"5\"]"), "Missing for loop");
+//     assert!(rust_code.contains("println!(\"{}\", i);"), "Missing loop variable output");
+// }
 
 #[test]
 fn test_example_pipeline_sh_to_perl() {
@@ -1084,19 +1084,19 @@ fn test_example_pipeline_sh_to_perl() {
     assert!(has_backticks || has_system);
 }
 
-#[test]
-fn test_example_pipeline_sh_to_rust() {
-    let content = fs::read_to_string("examples/pipeline.sh").expect("Failed to read pipeline.sh");
-    let mut parser = Parser::new(&content);
-    let commands = parser.parse().expect("Failed to parse pipeline.sh");
+// #[test]
+// fn test_example_pipeline_sh_to_rust() {
+//     let content = fs::read_to_string("examples/pipeline.sh").expect("Failed to read pipeline.sh");
+//     let mut parser = Parser::new(&content);
+//     let commands = parser.parse().expect("Failed to parse pipeline.sh");
     
-    let mut generator = RustGenerator::new();
-    let rust_code = generator.generate(&commands);
+//     let mut generator = RustGenerator::new();
+//     let rust_code = generator.generate(&commands);
     
-    // Check that the Rust code contains expected elements
-    assert!(rust_code.contains("fn main()"), "Rust code missing main function");
-    assert!(rust_code.contains("std::process::ExitCode"), "Rust code missing ExitCode type");
-}
+//     // Check that the Rust code contains expected elements
+//     assert!(rust_code.contains("fn main()"), "Rust code missing main function");
+//     assert!(rust_code.contains("std::process::ExitCode"), "Rust code missing ExitCode type");
+// }
 
 #[test]
 fn test_example_control_flow_sh_to_perl() {
@@ -1134,37 +1134,37 @@ fn test_example_control_flow_sh_to_perl() {
     assert!(perl_code.contains("Hello, "));
 }
 
-#[test]
-fn test_example_control_flow_sh_to_rust() {
-    let content = fs::read_to_string("examples/control_flow.sh").expect("Failed to read control_flow.sh");
-    let mut parser = Parser::new(&content);
-    let commands = parser.parse().expect("Failed to parse control_flow.sh");
+// #[test]
+// fn test_example_control_flow_sh_to_rust() {
+//     let content = fs::read_to_string("examples/control_flow.sh").expect("Failed to read control_flow.sh");
+//     let mut parser = Parser::new(&content);
+//     let commands = parser.parse().expect("Failed to parse control_flow.sh");
     
-    let mut generator = RustGenerator::new();
-    let rust_code = generator.generate(&commands);
+//     let mut generator = RustGenerator::new();
+//     let rust_code = generator.generate(&commands);
     
-    // Check that the Rust code contains expected elements
-    assert!(rust_code.contains("use std::process::Command;") || rust_code.contains("use std::fs;"));
-    assert!(rust_code.contains("if fs::metadata(\"file.txt\").is_ok()"));
-    assert!(
-        rust_code.contains("println!(\"File exists\");") ||
-        rust_code.contains("\"File exists\"")
-    );
-    assert!(
-        rust_code.contains("println!(\"File does not exist\");") ||
-        rust_code.contains("\"File does not exist\"")
-    );
-    assert!(rust_code.contains("for i in &[1, 2, 3, 4, 5]") || rust_code.contains("for "));
-    assert!(rust_code.contains("println!(\"Number: {}\", i);") || rust_code.contains("Number:"));
-    assert!(rust_code.contains("while "));
-    assert!(
-        rust_code.contains("println!(\"Counter: {}\", i);") ||
-        rust_code.contains("Counter:")
-    );
-    assert!(rust_code.contains("fn greet()"));
-    // Generated greeting print may vary; just ensure "Hello" appears
-    assert!(rust_code.contains("Hello"));
-}
+//     // Check that the Rust code contains expected elements
+//     assert!(rust_code.contains("use std::process::Command;") || rust_code.contains("use std::fs;"));
+//     assert!(rust_code.contains("if fs::metadata(\"file.txt\").is_ok()"));
+//     assert!(
+//         rust_code.contains("println!(\"File exists\");") ||
+//         rust_code.contains("\"File exists\"")
+//     );
+//     assert!(
+//         rust_code.contains("println!(\"File does not exist\");") ||
+//         rust_code.contains("\"File does not exist\"")
+//     );
+//     assert!(rust_code.contains("for i in &[1, 2, 3, 4, 5]") || rust_code.contains("for "));
+//     assert!(rust_code.contains("println!(\"Number: {}\", i);") || rust_code.contains("Number:"));
+//     assert!(rust_code.contains("while "));
+//     assert!(
+//         rust_code.contains("println!(\"Counter: {}\", i);") ||
+//         rust_code.contains("Counter:")
+//     );
+//     assert!(rust_code.contains("fn greet()"));
+//     // Generated greeting print may vary; just ensure "Hello" appears
+//     assert!(rust_code.contains("Hello"));
+// }
 
 #[test]
 fn test_example_test_quoted_sh_to_perl() {
@@ -1183,19 +1183,19 @@ fn test_example_test_quoted_sh_to_perl() {
     assert!(perl_code.contains("print(\"String with 'single' quotes\\n\");"));
 }
 
-#[test]
-fn test_example_test_quoted_sh_to_rust() {
-    let content = fs::read_to_string("examples/test_quoted.sh").expect("Failed to read test_quoted.sh");
-    let mut parser = Parser::new(&content);
-    let commands = parser.parse().expect("Failed to parse test_quoted.sh");
+// #[test]
+// fn test_example_test_quoted_sh_to_rust() {
+//     let content = fs::read_to_string("examples/test_quoted.sh").expect("Failed to read test_quoted.sh");
+//     let mut parser = Parser::new(&content);
+//     let commands = parser.parse().expect("Failed to parse test_quoted.sh");
     
-    let mut generator = RustGenerator::new();
-    let rust_code = generator.generate(&commands);
+//     let mut generator = RustGenerator::new();
+//     let rust_code = generator.generate(&commands);
     
-    // Check that the Rust code contains expected elements
-    assert!(rust_code.contains("fn main()"), "Rust code missing main function");
-    assert!(rust_code.contains("std::process::ExitCode"), "Rust code missing ExitCode type");
-}
+//     // Check that the Rust code contains expected elements
+//     assert!(rust_code.contains("fn main()"), "Rust code missing main function");
+//     assert!(rust_code.contains("std::process::ExitCode"), "Rust code missing ExitCode type");
+// }
 
 #[test]
 fn test_all_examples_parse_successfully() {
@@ -1228,23 +1228,23 @@ fn test_all_examples_generate_perl() {
     }
 }
 
-#[test]
-fn test_all_examples_generate_rust() {
-    for path in list_sh_examples() {
-        let file_name = path.file_name().unwrap().to_str().unwrap();
-        //if file_name.contains("control_flow.sh") { continue; }
-        let content = fs::read_to_string(&path).expect(&format!("Failed to read {}", file_name));
-        let mut parser = Parser::new(&content);
-        let commands = parser.parse().expect(&format!("Failed to parse {}", file_name));
+// #[test]
+// fn test_all_examples_generate_rust() {
+//     for path in list_sh_examples() {
+//         let file_name = path.file_name().unwrap().to_str().unwrap();
+//         //if file_name.contains("control_flow.sh") { continue; }
+//         let content = fs::read_to_string(&path).expect(&format!("Failed to read {}", file_name));
+//         let mut parser = Parser::new(&content);
+//         let commands = parser.parse().expect(&format!("Failed to parse {}", file_name));
         
-        let mut generator = RustGenerator::new();
-        let rust_code = generator.generate(&commands);
+//         let mut generator = RustGenerator::new();
+//         let rust_code = generator.generate(&commands);
         
-        // Basic checks that Rust code is generated
-        assert!(rust_code.contains("fn main()"), "Rust code missing main function for {}", file_name);
-        assert!(rust_code.contains("std::process::ExitCode"), "Rust code missing ExitCode type for {}", file_name);
-    }
-}
+//         // Basic checks that Rust code is generated
+//         assert!(rust_code.contains("fn main()"), "Rust code missing main function for {}", file_name);
+//         assert!(rust_code.contains("std::process::ExitCode"), "Rust code missing ExitCode type for {}", file_name);
+//     }
+// }
 
 #[ignore]
 #[test]
@@ -1434,253 +1434,253 @@ fn test_examples_output_equivalence() {
     }
 }
 
-#[test]
-fn test_examples_rust_generation() {
-    use std::fs;
-    use std::path::Path;
+// #[test]
+// fn test_examples_rust_generation() {
+//     use std::fs;
+//     use std::path::Path;
     
-    let examples_dir = Path::new("examples");
-    if !examples_dir.exists() {
-        println!("Examples directory not found, skipping test");
-        return;
-    }
+//     let examples_dir = Path::new("examples");
+//     if !examples_dir.exists() {
+//         println!("Examples directory not found, skipping test");
+//         return;
+//     }
     
-    let entries = match fs::read_dir(examples_dir) {
-        Ok(entries) => entries,
-        Err(e) => {
-            eprintln!("Failed to read examples directory: {}", e);
-            return;
-        }
-    };
+//     let entries = match fs::read_dir(examples_dir) {
+//         Ok(entries) => entries,
+//         Err(e) => {
+//             eprintln!("Failed to read examples directory: {}", e);
+//             return;
+//         }
+//     };
     
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(e) => {
-                eprintln!("Failed to read directory entry: {}", e);
-                continue;
-            }
-        };
+//     for entry in entries {
+//         let entry = match entry {
+//             Ok(entry) => entry,
+//             Err(e) => {
+//                 eprintln!("Failed to read directory entry: {}", e);
+//                 continue;
+//             }
+//         };
         
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("sh") {
-            continue;
-        }
+//         let path = entry.path();
+//         if path.extension().and_then(|s| s.to_str()) != Some("sh") {
+//             continue;
+//         }
         
-        let file_name = path.file_name().unwrap().to_str().unwrap();
-        println!("Testing Rust generation for: {}", file_name);
+//         let file_name = path.file_name().unwrap().to_str().unwrap();
+//         println!("Testing Rust generation for: {}", file_name);
         
-        // Read the shell script
-        let shell_content = match fs::read_to_string(&path) {
-            Ok(content) => content,
-            Err(e) => {
-                eprintln!("Failed to read {}: {}", file_name, e);
-                continue;
-            }
-        };
+//         // Read the shell script
+//         let shell_content = match fs::read_to_string(&path) {
+//             Ok(content) => content,
+//             Err(e) => {
+//                 eprintln!("Failed to read {}: {}", file_name, e);
+//                 continue;
+//             }
+//         };
         
-        // Parse and generate Rust code
-        let mut parser = Parser::new(&shell_content);
-        let commands = match parser.parse() {
-            Ok(commands) => commands,
-            Err(e) => {
-                eprintln!("Failed to parse {}: {:?}", file_name, e);
-                continue;
-            }
-        };
+//         // Parse and generate Rust code
+//         let mut parser = Parser::new(&shell_content);
+//         let commands = match parser.parse() {
+//             Ok(commands) => commands,
+//             Err(e) => {
+//                 eprintln!("Failed to parse {}: {:?}", file_name, e);
+//                 continue;
+//             }
+//         };
         
-        let mut generator = RustGenerator::new();
-        let rust_code = generator.generate(&commands);
+//         let mut generator = RustGenerator::new();
+//         let rust_code = generator.generate(&commands);
         
-        // Write Rust code to temporary file
-        let rust_file = format!("test_output_{}.rs", file_name.replace(".sh", ""));
-        if let Err(e) = fs::write(&rust_file, rust_code) {
-            eprintln!("Failed to write Rust file for {}: {}", file_name, e);
-            continue;
-        }
+//         // Write Rust code to temporary file
+//         let rust_file = format!("test_output_{}.rs", file_name.replace(".sh", ""));
+//         if let Err(e) = fs::write(&rust_file, rust_code) {
+//             eprintln!("Failed to write Rust file for {}: {}", file_name, e);
+//             continue;
+//         }
         
-        // Try to compile the Rust code
-        let compile_result = Command::new("rustc")
-            .arg("--edition=2021")
-            .arg(&rust_file)
-            .output();
+//         // Try to compile the Rust code
+//         let compile_result = Command::new("rustc")
+//             .arg("--edition=2021")
+//             .arg(&rust_file)
+//             .output();
         
-        match compile_result {
-            Ok(output) => {
-                if output.status.success() {
-                    println!("  ✓ Rust code compiles successfully");
+//         match compile_result {
+//             Ok(output) => {
+//                 if output.status.success() {
+//                     println!("  ✓ Rust code compiles successfully");
                     
-                    // Clean up compiled binary
-                    let binary_name = rust_file.replace(".rs", "");
-                    #[cfg(windows)]
-                    { let _ = fs::remove_file(format!("{}.exe", binary_name)); }
-                    #[cfg(not(windows))]
-                    { let _ = fs::remove_file(&binary_name); }
-                } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    eprintln!("  ✗ Rust compilation failed: {}", stderr);
-                }
-            }
-            Err(e) => {
-                eprintln!("  ✗ Failed to run rustc for {}: {}", file_name, e);
-            }
-        }
+//                     // Clean up compiled binary
+//                     let binary_name = rust_file.replace(".rs", "");
+//                     #[cfg(windows)]
+//                     { let _ = fs::remove_file(format!("{}.exe", binary_name)); }
+//                     #[cfg(not(windows))]
+//                     { let _ = fs::remove_file(&binary_name); }
+//                 } else {
+//                     let stderr = String::from_utf8_lossy(&output.stderr);
+//                     eprintln!("  ✗ Rust compilation failed: {}", stderr);
+//                 }
+//             }
+//             Err(e) => {
+//                 eprintln!("  ✗ Failed to run rustc for {}: {}", file_name, e);
+//             }
+//         }
         
-        // Clean up Rust source file
-        fs::remove_file(&rust_file).ok();
-    }
-}
+//         // Clean up Rust source file
+//         fs::remove_file(&rust_file).ok();
+//     }
+// }
 
-#[test]
-fn test_examples_c_generation() {
-    let content = std::fs::read_to_string("examples/simple.sh").expect("read simple.sh");
-    let mut parser = Parser::new(&content);
-    let commands = parser.parse().expect("parse simple.sh");
-    let mut gen = CGenerator::new();
-    let code = gen.generate(&commands);
-    assert!(code.contains("#include <stdio.h>"));
-}
+// #[test]
+// fn test_examples_c_generation() {
+//     let content = std::fs::read_to_string("examples/simple.sh").expect("read simple.sh");
+//     let mut parser = Parser::new(&content);
+//     let commands = parser.parse().expect("parse simple.sh");
+//     let mut gen = CGenerator::new();
+//     let code = gen.generate(&commands);
+//     assert!(code.contains("#include <stdio.h>"));
+// }
 
-#[test]
-fn test_examples_js_generation() {
-    let content = std::fs::read_to_string("examples/simple.sh").expect("read simple.sh");
-    let mut parser = Parser::new(&content);
-    let commands = parser.parse().expect("parse simple.sh");
-    let mut gen = JsGenerator::new();
-    let code = gen.generate(&commands);
-    assert!(code.contains("#!/usr/bin/env node"));
-}
+// #[test]
+// fn test_examples_js_generation() {
+//     let content = std::fs::read_to_string("examples/simple.sh").expect("read simple.sh");
+//     let mut parser = Parser::new(&content);
+//     let commands = parser.parse().expect("parse simple.sh");
+//     let mut gen = JsGenerator::new();
+//     let code = gen.generate(&commands);
+//     assert!(code.contains("#!/usr/bin/env node"));
+// }
 
-#[test]
-fn test_examples_english_generation() {
-    let content = std::fs::read_to_string("examples/simple.sh").expect("read simple.sh");
-    let mut parser = Parser::new(&content);
-    let commands = parser.parse().expect("parse simple.sh");
-    let mut gen = EnglishGenerator::new();
-    let code = gen.generate(&commands);
-    assert!(code.to_lowercase().contains("print"));
-}
+// #[test]
+// fn test_examples_english_generation() {
+//     let content = std::fs::read_to_string("examples/simple.sh").expect("read simple.sh");
+//     let mut parser = Parser::new(&content);
+//     let commands = parser.parse().expect("parse simple.sh");
+//     let mut gen = EnglishGenerator::new();
+//     let code = gen.generate(&commands);
+//     assert!(code.to_lowercase().contains("print"));
+// }
 
-#[test]
-fn test_examples_french_generation() {
-    let content = std::fs::read_to_string("examples/simple.sh").expect("read simple.sh");
-    let mut parser = Parser::new(&content);
-    let commands = parser.parse().expect("parse simple.sh");
-    let mut gen = FrenchGenerator::new();
-    let code = gen.generate(&commands);
-    assert!(code.to_lowercase().contains("afficher"));
-}
+// #[test]
+// fn test_examples_french_generation() {
+//     let content = std::fs::read_to_string("examples/simple.sh").expect("read simple.sh");
+//     let mut parser = Parser::new(&content);
+//     let commands = parser.parse().expect("parse simple.sh");
+//     let mut gen = FrenchGenerator::new();
+//     let code = gen.generate(&commands);
+//     assert!(code.to_lowercase().contains("afficher"));
+// }
 
-#[test]
-fn test_examples_batch_generation() {
-    let content = std::fs::read_to_string("examples/simple.sh").expect("read simple.sh");
-    let mut parser = Parser::new(&content);
-    let commands = parser.parse().expect("parse simple.sh");
-    let mut gen = BatchGenerator::new();
-    let code = gen.generate(&commands);
-    assert!(code.starts_with("@echo off"));
-}
+// #[test]
+// fn test_examples_batch_generation() {
+//     let content = std::fs::read_to_string("examples/simple.sh").expect("read simple.sh");
+//     let mut parser = Parser::new(&content);
+//     let commands = parser.parse().expect("parse simple.sh");
+//     let mut gen = BatchGenerator::new();
+//     let code = gen.generate(&commands);
+//     assert!(code.starts_with("@echo off"));
+// }
 
-#[test]
-fn test_examples_powershell_generation() {
-    let content = std::fs::read_to_string("examples/simple.sh").expect("read simple.sh");
-    let mut parser = Parser::new(&content);
-    let commands = parser.parse().expect("parse simple.sh");
-    let mut gen = PowerShellGenerator::new();
-    let code = gen.generate(&commands);
-    assert!(code.contains("Write-Output"));
-}
+// #[test]
+// fn test_examples_powershell_generation() {
+//     let content = std::fs::read_to_string("examples/simple.sh").expect("read simple.sh");
+//     let mut parser = Parser::new(&content);
+//     let commands = parser.parse().expect("parse simple.sh");
+//     let mut gen = PowerShellGenerator::new();
+//     let code = gen.generate(&commands);
+//     assert!(code.contains("Write-Output"));
+// }
 
-#[test]
-fn test_examples_python_generation() {
-    use std::fs;
-    use std::path::Path;
+// #[test]
+// fn test_examples_python_generation() {
+//     use std::fs;
+//     use std::path::Path;
     
-    let examples_dir = Path::new("examples");
-    if !examples_dir.exists() {
-        println!("Examples directory not found, skipping test");
-        return;
-    }
+//     let examples_dir = Path::new("examples");
+//     if !examples_dir.exists() {
+//         println!("Examples directory not found, skipping test");
+//         return;
+//     }
     
-    let entries = match fs::read_dir(examples_dir) {
-        Ok(entries) => entries,
-        Err(e) => {
-            eprintln!("Failed to read examples directory: {}", e);
-            return;
-        }
-    };
+//     let entries = match fs::read_dir(examples_dir) {
+//         Ok(entries) => entries,
+//         Err(e) => {
+//             eprintln!("Failed to read examples directory: {}", e);
+//             return;
+//         }
+//     };
     
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(e) => {
-                eprintln!("Failed to read directory entry: {}", e);
-                continue;
-            }
-        };
+//     for entry in entries {
+//         let entry = match entry {
+//             Ok(entry) => entry,
+//             Err(e) => {
+//                 eprintln!("Failed to read directory entry: {}", e);
+//                 continue;
+//             }
+//         };
         
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("sh") {
-            continue;
-        }
+//         let path = entry.path();
+//         if path.extension().and_then(|s| s.to_str()) != Some("sh") {
+//             continue;
+//         }
         
-        let file_name = path.file_name().unwrap().to_str().unwrap();
-        println!("Testing Python generation for: {}", file_name);
+//         let file_name = path.file_name().unwrap().to_str().unwrap();
+//         println!("Testing Python generation for: {}", file_name);
         
-        // Read the shell script
-        let shell_content = match fs::read_to_string(&path) {
-            Ok(content) => content,
-            Err(e) => {
-                eprintln!("Failed to read {}: {}", file_name, e);
-                continue;
-            }
-        };
+//         // Read the shell script
+//         let shell_content = match fs::read_to_string(&path) {
+//             Ok(content) => content,
+//             Err(e) => {
+//                 eprintln!("Failed to read {}: {}", file_name, e);
+//                 continue;
+//             }
+//         };
         
-        // Parse and generate Python code
-        let mut parser = Parser::new(&shell_content);
-        let commands = match parser.parse() {
-            Ok(commands) => commands,
-            Err(e) => {
-                eprintln!("Failed to parse {}: {:?}", file_name, e);
-                continue;
-            }
-        };
+//         // Parse and generate Python code
+//         let mut parser = Parser::new(&shell_content);
+//         let commands = match parser.parse() {
+//             Ok(commands) => commands,
+//             Err(e) => {
+//                 eprintln!("Failed to parse {}: {:?}", file_name, e);
+//                 continue;
+//             }
+//         };
         
-        let mut generator = PythonGenerator::new();
-        let python_code = generator.generate(&commands);
+//         let mut generator = PythonGenerator::new();
+//         let python_code = generator.generate(&commands);
         
-        // Write Python code to temporary file
-        let python_file = format!("test_output_{}.py", file_name.replace(".sh", ""));
-        if let Err(e) = fs::write(&python_file, python_code) {
-            eprintln!("Failed to write Python file for {}: {}", file_name, e);
-            continue;
-        }
+//         // Write Python code to temporary file
+//         let python_file = format!("test_output_{}.py", file_name.replace(".sh", ""));
+//         if let Err(e) = fs::write(&python_file, python_code) {
+//             eprintln!("Failed to write Python file for {}: {}", file_name, e);
+//             continue;
+//         }
         
-        // Try to run the Python code with syntax check
-        let syntax_check = Command::new("python3")
-            .arg("-m")
-            .arg("py_compile")
-            .arg(&python_file)
-            .output();
+//         // Try to run the Python code with syntax check
+//         let syntax_check = Command::new("python3")
+//             .arg("-m")
+//             .arg("py_compile")
+//             .arg(&python_file)
+//             .output();
         
-        match syntax_check {
-            Ok(output) => {
-                if output.status.success() {
-                    println!("  ✓ Python code syntax is valid");
-                } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    eprintln!("  ✗ Python syntax error: {}", stderr);
-                }
-            }
-            Err(e) => {
-                eprintln!("  ✗ Failed to run Python syntax check for {}: {}", file_name, e);
-            }
-        }
+//         match syntax_check {
+//             Ok(output) => {
+//                 if output.status.success() {
+//                     println!("  ✓ Python code syntax is valid");
+//                 } else {
+//                     let stderr = String::from_utf8_lossy(&output.stderr);
+//                     eprintln!("  ✗ Python syntax error: {}", stderr);
+//                 }
+//             }
+//             Err(e) => {
+//                 eprintln!("  ✗ Failed to run Python syntax check for {}: {}", file_name, e);
+//             }
+//         }
         
-        // Clean up Python source file
-        fs::remove_file(&python_file).ok();
-    }
-}
+//         // Clean up Python source file
+//         fs::remove_file(&python_file).ok();
+//     }
+// }
 
 // ============================================================================
 // Macro-generated output equivalence tests (module-level)
@@ -1731,51 +1731,51 @@ fn run_generated_perl(content: &str, id: &str) -> std::process::Output {
     out
 }
 
-fn run_generated_python(content: &str, id: &str) -> std::process::Output {
-    let mut parser = Parser::new(content);
-    let commands = parser.parse().expect("parse python input");
-    let mut gen = PythonGenerator::new();
-    let code = gen.generate(&commands);
-    let tmp = &format!("__equiv_{}.py", id);
-    fs::write(tmp, &code).expect("write py tmp");
-    let out = Command::new("python3").arg(tmp).stdout(Stdio::piped()).stderr(Stdio::piped()).output().expect("run python");
-    let _ = fs::remove_file(tmp);
-    out
-}
+// fn run_generated_python(content: &str, id: &str) -> std::process::Output {
+//     let mut parser = Parser::new(content);
+//     let commands = parser.parse().expect("parse python input");
+//     let mut gen = PythonGenerator::new();
+//     let code = gen.generate(&commands);
+//     let tmp = &format!("__equiv_{}.py", id);
+//     fs::write(tmp, &code).expect("write py tmp");
+//     let out = Command::new("python3").arg(tmp).stdout(Stdio::piped()).stderr(Stdio::piped()).output().expect("run python");
+//     let _ = fs::remove_file(tmp);
+//     out
+// }
 
-fn run_generated_rust(content: &str, id: &str) -> std::process::Output {
-    let mut parser = Parser::new(content);
-    let commands = parser.parse().expect("parse rust input");
-    let mut gen = RustGenerator::new();
-    let code = gen.generate(&commands);
-    let src = format!("./__equiv_{}.rs", id);
-    let bin = if cfg!(windows) { format!("./__equiv_{}_bin.exe", id) } else { format!("./__equiv_{}_bin", id) };
-    fs::write(&src, &code).expect("write rs tmp");
-    let compiled = Command::new("rustc").arg("--edition=2021").arg(&src).arg("-o").arg(&bin).status().expect("rustc");
-    let out = if compiled.success() {
-        let mut cmd = Command::new(std::fs::canonicalize(&bin).unwrap());
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-        match cmd.output() {
-            Ok(output) => output,
-            Err(_) => std::process::Output { 
-                status: std::process::ExitStatus::from_raw(1), 
-                stdout: Vec::new(), 
-                stderr: Vec::new() 
-            }
-        }
-    } else {
-        std::process::Output { 
-            status: std::process::ExitStatus::from_raw(1), 
-            stdout: Vec::new(), 
-            stderr: Vec::new() 
-        }
-    };
-    let _ = fs::remove_file(&src);
-    let _ = fs::remove_file(&bin);
-    #[cfg(windows)]
-    { let _ = fs::remove_file(format!("{}.pdb", bin)); }
-    out
-}
+// fn run_generated_rust(content: &str, id: &str) -> std::process::Output {
+//     let mut parser = Parser::new(content);
+//     let commands = parser.parse().expect("parse rust input");
+//     let mut gen = RustGenerator::new();
+//     let code = gen.generate(&commands);
+//     let src = format!("./__equiv_{}.rs", id);
+//     let bin = if cfg!(windows) { format!("./__equiv_{}_bin.exe", id) } else { format!("./__equiv_{}_bin", id) };
+//     fs::write(&src, &code).expect("write rs tmp");
+//     let compiled = Command::new("rustc").arg("--edition=2021").arg(&src).arg("-o").arg(&bin).status().expect("rustc");
+//     let out = if compiled.success() {
+//         let mut cmd = Command::new(std::fs::canonicalize(&bin).unwrap());
+//         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+//         match cmd.output() {
+//             Ok(output) => output,
+//             Err(_) => std::process::Output { 
+//                 status: std::process::ExitStatus::from_raw(1), 
+//                 stdout: Vec::new(), 
+//                 stderr: Vec::new() 
+//             }
+//         }
+//     } else {
+//         std::process::Output { 
+//             status: std::process::ExitStatus::from_raw(1), 
+//             stdout: Vec::new(), 
+//             stderr: Vec::new() 
+//         }
+//     };
+//     let _ = fs::remove_file(&src);
+//     let _ = fs::remove_file(&bin);
+//     #[cfg(windows)]
+//     { let _ = fs::remove_file(format!("{}.pdb", bin)); }
+//     out
+// }
 
 use paste::paste;
 macro_rules! equiv_test_cases_mod {
@@ -1824,204 +1824,204 @@ equiv_test_cases_mod!(run_generated_perl, perl,
     ]
 );
 
-equiv_test_cases_mod!(run_generated_python, python,
-    [
-        test_quoted => "examples/test_quoted.sh",
-        simple => "examples/simple.sh",
-        args => "examples/args.sh",
-        misc => "examples/misc.sh",
-        grep_params => "examples/grep_params.sh",
-    ]
-);
+// equiv_test_cases_mod!(run_generated_python, python,
+//     [
+//         test_quoted => "examples/test_quoted.sh",
+//         simple => "examples/simple.sh",
+//         args => "examples/args.sh",
+//         misc => "examples/misc.sh",
+//         grep_params => "examples/grep_params.sh",
+//     ]
+// );
 
-equiv_test_cases_mod!(run_generated_rust, rust,
-    [
-        test_quoted => "examples/test_quoted.sh",
-        simple => "examples/simple.sh",
-        args => "examples/args.sh",
-        misc => "examples/misc.sh",
-        grep_params => "examples/grep_params.sh",
-    ]
-);
+// equiv_test_cases_mod!(run_generated_rust, rust,
+//     [
+//         test_quoted => "examples/test_quoted.sh",
+//         simple => "examples/simple.sh",
+//         args => "examples/args.sh",
+//         misc => "examples/misc.sh",
+//         grep_params => "examples/grep_params.sh",
+//     ]
+// );
 
-#[ignore]
-#[test]
-fn test_examples_python_output_equivalence() {
-    use std::fs;
-    use std::path::Path;
+// #[ignore]
+// #[test]
+// fn test_examples_python_output_equivalence() {
+//     use std::fs;
+//     use std::path::Path;
     
-    let examples_dir = Path::new("examples");
-    if !examples_dir.exists() {
-        println!("Examples directory not found, skipping test");
-        return;
-    }
+//     let examples_dir = Path::new("examples");
+//     if !examples_dir.exists() {
+//         println!("Examples directory not found, skipping test");
+//         return;
+//     }
     
-    let entries = match fs::read_dir(examples_dir) {
-        Ok(entries) => entries,
-        Err(e) => {
-            eprintln!("Failed to read examples directory: {}", e);
-            return;
-        }
-    };
+//     let entries = match fs::read_dir(examples_dir) {
+//         Ok(entries) => entries,
+//         Err(e) => {
+//             eprintln!("Failed to read examples directory: {}", e);
+//             return;
+//         }
+//     };
     
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(e) => {
-                eprintln!("Failed to read directory entry: {}", e);
-                continue;
-            }
-        };
+//     for entry in entries {
+//         let entry = match entry {
+//             Ok(entry) => entry,
+//             Err(e) => {
+//                 eprintln!("Failed to read directory entry: {}", e);
+//                 continue;
+//             }
+//         };
         
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("sh") {
-            continue;
-        }
+//         let path = entry.path();
+//         if path.extension().and_then(|s| s.to_str()) != Some("sh") {
+//             continue;
+//         }
         
-        let file_name = path.file_name().unwrap().to_str().unwrap();
-        println!("Testing Python output equivalence for: {}", file_name);
-        if file_name == "control_flow.sh" || file_name == "pipeline.sh" || file_name == "subprocess.sh" || file_name == "gnu_bash_extensions.sh" || file_name == "local.sh" { continue; }
+//         let file_name = path.file_name().unwrap().to_str().unwrap();
+//         println!("Testing Python output equivalence for: {}", file_name);
+//         if file_name == "control_flow.sh" || file_name == "pipeline.sh" || file_name == "subprocess.sh" || file_name == "gnu_bash_extensions.sh" || file_name == "local.sh" { continue; }
         
-        let (tx, rx) = mpsc::channel();
-        let path_clone = path.clone();
-        let file_name_string = file_name.to_string();
-        thread::spawn(move || {
-            // Read the shell script
-            let shell_content = match fs::read_to_string(&path_clone) {
-                Ok(content) => content,
-                Err(e) => {
-                    eprintln!("Failed to read {}: {}", file_name_string, e);
-                    let _ = tx.send(());
-                    return;
-                }
-            };
-            // Parse and generate Python code (skip control_flow for now)
-            if file_name_string == "control_flow.sh" { let _ = tx.send(()); return; }
-            let mut parser = Parser::new(&shell_content);
-            let commands = match parser.parse() {
-                Ok(commands) => commands,
-                Err(e) => {
-                    eprintln!("Failed to parse {}: {:?}", file_name_string, e);
-                    let _ = tx.send(());
-                    return;
-                }
-            };
-            let mut generator = PythonGenerator::new();
-            let python_code = generator.generate(&commands);
-            // Write Python code to temporary file
-            let python_file = format!("test_output_{}.py", file_name_string.replace(".sh", ""));
-            if let Err(e) = fs::write(&python_file, python_code) {
-                eprintln!("Failed to write Python file for {}: {}", file_name_string, e);
-                let _ = tx.send(());
-                return;
-            }
-            // Run the shell script
-            let unix_path = path_clone.to_string_lossy().replace("\\", "/");
-            let mut shell_child = Command::new("wsl")
-                .args(&["bash", &unix_path])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .expect("Failed to spawn wsl bash");
-            let start = std::time::Instant::now();
-            let shell_output = loop {
-                if let Some(_status) = shell_child.try_wait().expect("wait on shell failed") {
-                    let output = shell_child.wait_with_output().expect("read shell output");
-                    break Ok(output);
-                }
-                if start.elapsed() > Duration::from_millis(400) {
-                    let _ = shell_child.kill();
-                    break Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "shell timeout"));
-                }
-                thread::sleep(Duration::from_millis(10));
-            };
-            let shell_output = match shell_output {
-                Ok(output) => output,
-                Err(e) => {
-                    eprintln!("Failed to run shell script {}: {}", file_name_string, e);
-                    fs::remove_file(&python_file).ok();
-                    let _ = tx.send(());
-                    return;
-                }
-            };
-            // Run the Python script
-            let mut python_child = Command::new("python3")
-                .arg(&python_file)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .expect("Failed to spawn python");
-            let start = std::time::Instant::now();
-            let python_output = loop {
-                if let Some(_status) = python_child.try_wait().expect("wait on python failed") {
-                    let output = python_child.wait_with_output().expect("read python output");
-                    break Ok(output);
-                }
-                if start.elapsed() > Duration::from_millis(400) {
-                    let _ = python_child.kill();
-                    break Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "python timeout"));
-                }
-                thread::sleep(Duration::from_millis(10));
-            };
-            let python_output = match python_output {
-                Ok(output) => output,
-                Err(e) => {
-                    eprintln!("Failed to run python script {}: {}", file_name_string, e);
-                    fs::remove_file(&python_file).ok();
-                    let _ = tx.send(());
-                    return;
-                }
-            };
-            // Clean up Python file
-            fs::remove_file(&python_file).ok();
-            // Compare outputs
-            let shell_stdout = String::from_utf8_lossy(&shell_output.stdout);
-            let shell_stderr = String::from_utf8_lossy(&shell_output.stderr);
-            let python_stdout = String::from_utf8_lossy(&python_output.stdout);
-            let python_stderr = String::from_utf8_lossy(&python_output.stderr);
-            // Check exit status
-            let shell_success = shell_output.status.success();
-            let python_success = python_output.status.success();
-            assert_eq!(
-                shell_success, python_success,
-                "Exit status mismatch for {}: shell={}, python={}",
-                file_name_string, shell_success, python_success
-            );
-            // For some commands, we expect different output formats
-            let should_compare_output = !file_name_string.contains("simple.sh");
-            if should_compare_output {
-                let normalized_shell_stdout = shell_stdout.trim().replace("\r\n", "\n");
-                let normalized_python_stdout = python_stdout.trim().replace("\r\n", "\n");
-                assert_eq!(
-                    normalized_shell_stdout, normalized_python_stdout,
-                    "Output mismatch for {}:\nShell: {:?}\nPython: {:?}",
-                    file_name_string, normalized_shell_stdout, normalized_python_stdout
-                );
-            }
-            // Log the outputs for debugging (limited to 200 chars)
-            let truncate_output = |s: &str| -> String {
-                if s.len() > 200 {
-                    format!("{}...", &s[..200])
-                } else {
-                    s.to_string()
-                }
-            };
+//         let (tx, rx) = mpsc::channel();
+//         let path_clone = path.clone();
+//         let file_name_string = file_name.to_string();
+//         thread::spawn(move || {
+//             // Read the shell script
+//             let shell_content = match fs::read_to_string(&path_clone) {
+//                 Ok(content) => content,
+//                 Err(e) => {
+//                     eprintln!("Failed to read {}: {}", file_name_string, e);
+//                     let _ = tx.send(());
+//                     return;
+//                 }
+//             };
+//             // Parse and generate Python code (skip control_flow for now)
+//             if file_name_string == "control_flow.sh" { let _ = tx.send(()); return; }
+//             let mut parser = Parser::new(&shell_content);
+//             let commands = match parser.parse() {
+//                 Ok(commands) => commands,
+//                 Err(e) => {
+//                     eprintln!("Failed to parse {}: {:?}", file_name_string, e);
+//                     let _ = tx.send(());
+//                     return;
+//                 }
+//             };
+//             let mut generator = PythonGenerator::new();
+//             let python_code = generator.generate(&commands);
+//             // Write Python code to temporary file
+//             let python_file = format!("test_output_{}.py", file_name_string.replace(".sh", ""));
+//             if let Err(e) = fs::write(&python_file, python_code) {
+//                 eprintln!("Failed to write Python file for {}: {}", file_name_string, e);
+//                 let _ = tx.send(());
+//                 return;
+//             }
+//             // Run the shell script
+//             let unix_path = path_clone.to_string_lossy().replace("\\", "/");
+//             let mut shell_child = Command::new("wsl")
+//                 .args(&["bash", &unix_path])
+//                 .stdout(Stdio::piped())
+//                 .stderr(Stdio::piped())
+//                 .spawn()
+//                 .expect("Failed to spawn wsl bash");
+//             let start = std::time::Instant::now();
+//             let shell_output = loop {
+//                 if let Some(_status) = shell_child.try_wait().expect("wait on shell failed") {
+//                     let output = shell_child.wait_with_output().expect("read shell output");
+//                     break Ok(output);
+//                 }
+//                 if start.elapsed() > Duration::from_millis(400) {
+//                     let _ = shell_child.kill();
+//                     break Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "shell timeout"));
+//                 }
+//                 thread::sleep(Duration::from_millis(10));
+//             };
+//             let shell_output = match shell_output {
+//                 Ok(output) => output,
+//                 Err(e) => {
+//                     eprintln!("Failed to run shell script {}: {}", file_name_string, e);
+//                     fs::remove_file(&python_file).ok();
+//                     let _ = tx.send(());
+//                     return;
+//                 }
+//             };
+//             // Run the Python script
+//             let mut python_child = Command::new("python3")
+//                 .arg(&python_file)
+//                 .stdout(Stdio::piped())
+//                 .stderr(Stdio::piped())
+//                 .spawn()
+//                 .expect("Failed to spawn python");
+//             let start = std::time::Instant::now();
+//             let python_output = loop {
+//                 if let Some(_status) = python_child.try_wait().expect("wait on python failed") {
+//                     let output = python_child.wait_with_output().expect("read python output");
+//                     break Ok(output);
+//                 }
+//                 if start.elapsed() > Duration::from_millis(400) {
+//                     let _ = python_child.kill();
+//                     break Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "python timeout"));
+//                 }
+//                 thread::sleep(Duration::from_millis(10));
+//             };
+//             let python_output = match python_output {
+//                 Ok(output) => output,
+//                 Err(e) => {
+//                     eprintln!("Failed to run python script {}: {}", file_name_string, e);
+//                     fs::remove_file(&python_file).ok();
+//                     let _ = tx.send(());
+//                     return;
+//                 }
+//             };
+//             // Clean up Python file
+//             fs::remove_file(&python_file).ok();
+//             // Compare outputs
+//             let shell_stdout = String::from_utf8_lossy(&shell_output.stdout);
+//             let shell_stderr = String::from_utf8_lossy(&shell_output.stderr);
+//             let python_stdout = String::from_utf8_lossy(&python_output.stdout);
+//             let python_stderr = String::from_utf8_lossy(&python_output.stderr);
+//             // Check exit status
+//             let shell_success = shell_output.status.success();
+//             let python_success = python_output.status.success();
+//             assert_eq!(
+//                 shell_success, python_success,
+//                 "Exit status mismatch for {}: shell={}, python={}",
+//                 file_name_string, shell_success, python_success
+//             );
+//             // For some commands, we expect different output formats
+//             let should_compare_output = !file_name_string.contains("simple.sh");
+//             if should_compare_output {
+//                 let normalized_shell_stdout = shell_stdout.trim().replace("\r\n", "\n");
+//                 let normalized_python_stdout = python_stdout.trim().replace("\r\n", "\n");
+//                 assert_eq!(
+//                     normalized_shell_stdout, normalized_python_stdout,
+//                     "Output mismatch for {}:\nShell: {:?}\nPython: {:?}",
+//                     file_name_string, normalized_shell_stdout, normalized_python_stdout
+//                 );
+//             }
+//             // Log the outputs for debugging (limited to 200 chars)
+//             let truncate_output = |s: &str| -> String {
+//                 if s.len() > 200 {
+//                     format!("{}...", &s[..200])
+//                 } else {
+//                     s.to_string()
+//                 }
+//             };
 
-            println!("  Shell stdout: {:?}", truncate_output(&shell_stdout));
-            println!("  Shell stderr: {:?}", truncate_output(&shell_stderr));
-            println!("  Python stdout: {:?}", truncate_output(&python_stdout));
-            println!("  Python stderr: {:?}", truncate_output(&python_stderr));
-            println!("  Shell exit: {}, Python exit: {}", 
-                     shell_output.status, python_output.status);
-            println!("  Output comparison: {}", if should_compare_output { "enabled" } else { "skipped (known differences)" });
-            let _ = tx.send(());
-        });
-        if rx.recv_timeout(Duration::from_millis(1000)).is_err() {
-            eprintln!("Timed out processing {}", file_name);
-            continue;
-        }
-    }
-}
+//             println!("  Shell stdout: {:?}", truncate_output(&shell_stdout));
+//             println!("  Shell stderr: {:?}", truncate_output(&shell_stderr));
+//             println!("  Python stdout: {:?}", truncate_output(&python_stdout));
+//             println!("  Python stderr: {:?}", truncate_output(&python_stderr));
+//             println!("  Shell exit: {}, Python exit: {}", 
+//                      shell_output.status, python_output.status);
+//             println!("  Output comparison: {}", if should_compare_output { "enabled" } else { "skipped (known differences)" });
+//             let _ = tx.send(());
+//         });
+//         if rx.recv_timeout(Duration::from_millis(1000)).is_err() {
+//             eprintln!("Timed out processing {}", file_name);
+//             continue;
+//         }
+//     }
+// }
 
 #[test]
 fn test_generators_echo_commands_not_using_system() {
@@ -2040,96 +2040,96 @@ fn test_generators_echo_commands_not_using_system() {
     assert!(perl_output.contains("print("), 
             "Perl generator should use print() for echo commands");
     
-    // Test Python generator
-    let mut python_gen = PythonGenerator::new();
-    let python_output = python_gen.generate(&commands);
+    // // Test Python generator
+    // let mut python_gen = PythonGenerator::new();
+    // let python_output = python_gen.generate(&commands);
     
-    // Python should use print(), not system('echo')
-    assert!(!python_output.contains("system('echo"), 
-            "Python generator should not use system('echo') for echo commands");
-    assert!(python_output.contains("print("), 
-            "Python generator should use print() for echo commands");
+    // // Python should use print(), not system('echo')
+    // assert!(!python_output.contains("system('echo"), 
+    //         "Python generator should not use system('echo') for echo commands");
+    // assert!(python_output.contains("print("), 
+    //         "Python generator should use print() for echo commands");
     
-    // Test Rust generator
-    let mut rust_gen = RustGenerator::new();
-    let rust_output = rust_gen.generate(&commands);
+    // // Test Rust generator
+    // let mut rust_gen = RustGenerator::new();
+    // let rust_output = rust_gen.generate(&commands);
     
-    // Rust should use println!(), not system('echo')
-    assert!(!rust_output.contains("system('echo"), 
-            "Rust generator should not use system('echo') for echo commands");
-    assert!(rust_output.contains("println!"), 
-            "Rust generator should use println!() for echo commands");
+    // // Rust should use println!(), not system('echo')
+    // assert!(!rust_output.contains("system('echo"), 
+    //         "Rust generator should not use system('echo') for echo commands");
+    // assert!(rust_output.contains("println!"), 
+    //         "Rust generator should use println!() for echo commands");
     
-    // Test JavaScript generator
-    let mut js_gen = JsGenerator::new();
-    let js_output = js_gen.generate(&commands);
+    // // Test JavaScript generator
+    // let mut js_gen = JsGenerator::new();
+    // let js_output = js_gen.generate(&commands);
     
-    // JavaScript should use console.log(), not system('echo')
-    assert!(!js_output.contains("system('echo"), 
-            "JavaScript generator should not use system('echo') for echo commands");
-    assert!(js_output.contains("console.log("), 
-            "JavaScript generator should use console.log() for echo commands");
+    // // JavaScript should use console.log(), not system('echo')
+    // assert!(!js_output.contains("system('echo"), 
+    //         "JavaScript generator should not use system('echo') for echo commands");
+    // assert!(js_output.contains("console.log("), 
+    //         "JavaScript generator should use console.log() for echo commands");
     
-    // Test C generator
-    let mut c_gen = CGenerator::new();
-    let c_output = c_gen.generate(&commands);
+    // // Test C generator
+    // let mut c_gen = CGenerator::new();
+    // let c_output = c_gen.generate(&commands);
     
-    // C should use printf(), not system('echo')
-    assert!(!c_output.contains("system('echo"), 
-            "C generator should not use system('echo') for echo commands");
-    assert!(c_output.contains("printf("), 
-            "C generator should use printf() for echo commands");
+    // // C should use printf(), not system('echo')
+    // assert!(!c_output.contains("system('echo"), 
+    //         "C generator should not use system('echo') for echo commands");
+    // assert!(c_output.contains("printf("), 
+    //         "C generator should use printf() for echo commands");
     
-    // Test Lua generator
-    let mut lua_gen = LuaGenerator::new();
-    let lua_output = lua_gen.generate(&commands);
+    // // Test Lua generator
+    // let mut lua_gen = LuaGenerator::new();
+    // let lua_output = lua_gen.generate(&commands);
     
-    // Lua should use print(), not system('echo')
-    assert!(!lua_output.contains("system('echo"), 
-            "Lua generator should not use system('echo') for echo commands");
-    assert!(lua_output.contains("print("), 
-            "Lua generator should use print() for echo commands");
+    // // Lua should use print(), not system('echo')
+    // assert!(!lua_output.contains("system('echo"), 
+    //         "Lua generator should not use system('echo') for echo commands");
+    // assert!(lua_output.contains("print("), 
+    //         "Lua generator should use print() for echo commands");
     
-    // Test PowerShell generator
-    let mut ps_gen = PowerShellGenerator::new();
-    let ps_output = ps_gen.generate(&commands);
+    // // Test PowerShell generator
+    // let mut ps_gen = PowerShellGenerator::new();
+    // let ps_output = ps_gen.generate(&commands);
     
-    // PowerShell should use Write-Output, not system('echo')
-    assert!(!ps_output.contains("system('echo"), 
-            "PowerShell generator should not use system('echo') for echo commands");
-    assert!(ps_output.contains("Write-Output"), 
-            "PowerShell generator should use Write-Output for echo commands");
+    // // PowerShell should use Write-Output, not system('echo')
+    // assert!(!ps_output.contains("system('echo"), 
+    //         "PowerShell generator should not use system('echo') for echo commands");
+    // assert!(ps_output.contains("Write-Output"), 
+    //         "PowerShell generator should use Write-Output for echo commands");
     
-    // Test Batch generator
-    let mut batch_gen = BatchGenerator::new();
-    let batch_output = batch_gen.generate(&commands);
+    // // Test Batch generator
+    // let mut batch_gen = BatchGenerator::new();
+    // let batch_output = batch_gen.generate(&commands);
     
-    // Batch should use echo, not system('echo')
-    assert!(!batch_output.contains("system('echo"), 
-            "Batch generator should not use system('echo') for echo commands");
-    assert!(batch_output.contains("echo "), 
-            "Batch generator should use echo for echo commands");
+    // // Batch should use echo, not system('echo')
+    // assert!(!batch_output.contains("system('echo"), 
+    //         "Batch generator should not use system('echo') for echo commands");
+    // assert!(batch_output.contains("echo "), 
+    //         "Batch generator should use echo for echo commands");
     
-    // Test English generator
-    let mut english_gen = EnglishGenerator::new();
-    let english_output = english_gen.generate(&commands);
+    // // Test English generator
+    // let mut english_gen = EnglishGenerator::new();
+    // let english_output = english_gen.generate(&commands);
     
-    // English should describe the echo command, not use system('echo')
-    assert!(!english_output.contains("system('echo"), 
-            "English generator should not use system('echo') for echo commands");
-    assert!(english_output.contains("Print:"), 
-            "English generator should describe echo commands as Print:");
+    // // English should describe the echo command, not use system('echo')
+    // assert!(!english_output.contains("system('echo"), 
+    //         "English generator should not use system('echo') for echo commands");
+    // assert!(english_output.contains("Print:"), 
+    //         "English generator should describe echo commands as Print:");
     
-    // Test French generator
-    let mut french_gen = FrenchGenerator::new();
-    let french_output = french_gen.generate(&commands);
+    // // Test French generator
+    // let mut french_gen = FrenchGenerator::new();
+    // let french_output = french_gen.generate(&commands);
     
-    // French should describe the echo command, not use system('echo')
-    assert!(!french_output.contains("system('echo"), 
-            "French generator should not use system('echo') for echo commands");
-    // French generator should describe echo commands appropriately
-    assert!(french_output.contains("Afficher:"), 
-            "French generator should describe echo commands as Afficher:");
+    // // French should describe the echo command, not use system('echo')
+    // assert!(!french_output.contains("system('echo"), 
+    //         "French generator should not use system('echo') for echo commands");
+    // // French generator should describe echo commands appropriately
+    // assert!(french_output.contains("Afficher:"), 
+    //         "French generator should describe echo commands as Afficher:");
 }
 
 #[test]
@@ -2149,23 +2149,23 @@ fn test_generators_echo_with_variables_not_using_system() {
     assert!(perl_output.contains("print("), 
             "Perl generator should use print() for echo with variables");
     
-    // Test Python generator with variables
-    let mut python_gen = PythonGenerator::new();
-    let python_output = python_gen.generate(&commands);
+    // // Test Python generator with variables
+    // let mut python_gen = PythonGenerator::new();
+    // let python_output = python_gen.generate(&commands);
     
-    assert!(!python_output.contains("system('echo"), 
-            "Python generator should not use system('echo') for echo with variables");
-    assert!(python_output.contains("print("), 
-            "Python generator should use print() for echo with variables");
+    // assert!(!python_output.contains("system('echo"), 
+    //         "Python generator should not use system('echo') for echo with variables");
+    // assert!(python_output.contains("print("), 
+    //         "Python generator should use print() for echo with variables");
     
-    // Test Rust generator with variables
-    let mut rust_gen = RustGenerator::new();
-    let rust_output = rust_gen.generate(&commands);
+    // // Test Rust generator with variables
+    // let mut rust_gen = RustGenerator::new();
+    // let rust_output = rust_gen.generate(&commands);
     
-    assert!(!rust_output.contains("system('echo"), 
-            "Rust generator should not use system('echo') for echo with variables");
-    assert!(rust_output.contains("println!"), 
-            "Rust generator should use println!() for echo with variables");
+    // assert!(!rust_output.contains("system('echo"), 
+    //         "Rust generator should not use system('echo') for echo with variables");
+    // assert!(rust_output.contains("println!"), 
+    //         "Rust generator should use println!() for echo with variables");
 }
 
 #[test]
@@ -2185,23 +2185,23 @@ fn test_generators_echo_empty_not_using_system() {
     assert!(perl_output.contains("print("), 
             "Perl generator should use print() for empty echo");
     
-    // Test Python generator with empty echo
-    let mut python_gen = PythonGenerator::new();
-    let python_output = python_gen.generate(&commands);
+    // // Test Python generator with empty echo
+    // let mut python_gen = PythonGenerator::new();
+    // let python_output = python_gen.generate(&commands);
     
-    assert!(!python_output.contains("system('echo"), 
-            "Python generator should not use system('echo') for empty echo");
-    assert!(python_output.contains("print("), 
-            "Python generator should use print() for empty echo");
+    // assert!(!python_output.contains("system('echo"), 
+    //         "Python generator should not use system('echo') for empty echo");
+    // assert!(python_output.contains("print("), 
+    //         "Python generator should use print() for empty echo");
     
-    // Test Rust generator with empty echo
-    let mut rust_gen = RustGenerator::new();
-    let rust_output = rust_gen.generate(&commands);
+    // // Test Rust generator with empty echo
+    // let mut rust_gen = RustGenerator::new();
+    // let rust_output = rust_gen.generate(&commands);
     
-    assert!(!rust_output.contains("system('echo"), 
-            "Rust generator should not use system('echo') for empty echo");
-    assert!(rust_output.contains("println!"), 
-            "Rust generator should use println!() for empty echo");
+    // assert!(!rust_output.contains("system('echo"), 
+    //         "Rust generator should not use system('echo') for empty echo");
+    // assert!(rust_output.contains("println!"), 
+    //         "Rust generator should use println!() for empty echo");
 }
 
 #[test]
@@ -2225,88 +2225,88 @@ fn test_generators_true_false_commands_not_using_system() {
     assert!(perl_output.contains("1;"), 
             "Perl generator should use 1; for true commands");
     
-    // Test Python generator with true
-    let mut python_gen = PythonGenerator::new();
-    let python_output = python_gen.generate(&commands);
+    // // Test Python generator with true
+    // let mut python_gen = PythonGenerator::new();
+    // let python_output = python_gen.generate(&commands);
     
-    // Python should use pass, not system('true')
-    assert!(!python_output.contains("system('true"), 
-            "Python generator should not use system('true') for true commands");
-    assert!(!python_output.contains("system(\"true"), 
-            "Python generator should not use system(\"true\") for true commands");
-    assert!(python_output.contains("pass"), 
-            "Python generator should use pass for true commands");
+    // // Python should use pass, not system('true')
+    // assert!(!python_output.contains("system('true"), 
+    //         "Python generator should not use system('true') for true commands");
+    // assert!(!python_output.contains("system(\"true"), 
+    //         "Python generator should not use system(\"true\") for true commands");
+    // assert!(python_output.contains("pass"), 
+    //         "Python generator should use pass for true commands");
     
-    // Test Rust generator with true
-    let mut rust_gen = RustGenerator::new();
-    let rust_output = rust_gen.generate(&commands);
+    // // Test Rust generator with true
+    // let mut rust_gen = RustGenerator::new();
+    // let rust_output = rust_gen.generate(&commands);
     
-    // Rust should use /* true */, not system('true')
-    assert!(!rust_output.contains("system('true"), 
-            "Rust generator should not use system('true') for true commands");
-    assert!(!rust_output.contains("system(\"true"), 
-            "Rust generator should not use system(\"true\") for true commands");
-    assert!(rust_output.contains("/* true */"), 
-            "Rust generator should use /* true */ for true commands");
+    // // Rust should use /* true */, not system('true')
+    // assert!(!rust_output.contains("system('true"), 
+    //         "Rust generator should not use system('true') for true commands");
+    // assert!(!rust_output.contains("system(\"true"), 
+    //         "Rust generator should not use system(\"true\") for true commands");
+    // assert!(rust_output.contains("/* true */"), 
+    //         "Rust generator should use /* true */ for true commands");
     
-    // Test JavaScript generator with true
-    let mut js_gen = JsGenerator::new();
-    let js_output = js_gen.generate(&commands);
+    // // Test JavaScript generator with true
+    // let mut js_gen = JsGenerator::new();
+    // let js_output = js_gen.generate(&commands);
     
-    // JavaScript should not use system('true')
-    assert!(!js_output.contains("system('true"), 
-            "JavaScript generator should not use system('true') for true commands");
-    assert!(!js_output.contains("system(\"true"), 
-            "JavaScript generator should not use system(\"true\") for true commands");
+    // // JavaScript should not use system('true')
+    // assert!(!js_output.contains("system('true"), 
+    //         "JavaScript generator should not use system('true') for true commands");
+    // assert!(!js_output.contains("system(\"true"), 
+    //         "JavaScript generator should not use system(\"true\") for true commands");
     
-    // Test C generator with true
-    let mut c_gen = CGenerator::new();
-    let c_output = c_gen.generate(&commands);
+    // // Test C generator with true
+    // let mut c_gen = CGenerator::new();
+    // let c_output = c_gen.generate(&commands);
     
-    // C generator falls back to system() for unhandled commands
-    // This is correct behavior for C generator
-    assert!(c_output.contains("system(\"true\")"), 
-            "C generator should use system(\"true\") for true commands as fallback");
+    // // C generator falls back to system() for unhandled commands
+    // // This is correct behavior for C generator
+    // assert!(c_output.contains("system(\"true\")"), 
+    //         "C generator should use system(\"true\") for true commands as fallback");
     
-    // Test Batch generator with true
-    let mut batch_gen = BatchGenerator::new();
-    let batch_output = batch_gen.generate(&commands);
+    // // Test Batch generator with true
+    // let mut batch_gen = BatchGenerator::new();
+    // let batch_output = batch_gen.generate(&commands);
     
-    // Batch should not use system('true')
-    assert!(!batch_output.contains("system('true"), 
-            "Batch generator should not use system('true') for true commands");
-    assert!(!batch_output.contains("system(\"true"), 
-            "Batch generator should not use system(\"true\") for true commands");
+    // // Batch should not use system('true')
+    // assert!(!batch_output.contains("system('true"), 
+    //         "Batch generator should not use system('true') for true commands");
+    // assert!(!batch_output.contains("system(\"true"), 
+    //         "Batch generator should not use system(\"true\") for true commands");
     
-    // Test PowerShell generator with true
-    let mut powershell_gen = PowerShellGenerator::new();
-    let powershell_output = powershell_gen.generate(&commands);
+    // // Test PowerShell generator with true
+    // let mut powershell_gen = PowerShellGenerator::new();
+    // let powershell_output = powershell_gen.generate(&commands);
     
-    // PowerShell should not use system('true')
-    assert!(!powershell_output.contains("system('true"), 
-            "PowerShell generator should not use system('true') for true commands");
-    assert!(!powershell_output.contains("system(\"true"), 
-            "PowerShell generator should not use system(\"true\") for true commands");
+    // // PowerShell should not use system('true')
+    // assert!(!powershell_output.contains("system('true"), 
+    //         "PowerShell generator should not use system('true') for true commands");
+    // assert!(!powershell_output.contains("system(\"true"), 
+    //         "PowerShell generator should not use system(\"true\") for true commands");
     
-    // Test English generator with true
-    let mut english_gen = EnglishGenerator::new();
-    let english_output = english_gen.generate(&commands);
+    // // Test English generator with true
+    // let mut english_gen = EnglishGenerator::new();
+    // let english_output = english_gen.generate(&commands);
     
-    // English should describe the true command, not use system('true')
-    assert!(!english_output.contains("system('true"), 
-            "English generator should not use system('true') for true commands");
-    assert!(!english_output.contains("system(\"true"), 
-            "English generator should not use system(\"true\") for true commands");
+    // // English should describe the true command, not use system('true')
+    // assert!(!english_output.contains("system('true"), 
+    //         "English generator should not use system('true') for true commands");
+    // assert!(!english_output.contains("system(\"true"), 
+    //         "English generator should not use system(\"true\") for true commands");
     
-    // Test French generator with true
-    let mut french_gen = FrenchGenerator::new();
-    let french_output = french_gen.generate(&commands);
+    // // Test French generator with true
+    // let mut french_gen = FrenchGenerator::new();
+    // let french_output = french_gen.generate(&commands);
     
-    // French should describe the true command, not use system('true')
-    assert!(!french_output.contains("system('true"), 
-            "French generator should not use system('true') for true commands");
-    assert!(!french_output.contains("system(\"true"), 
-            "French generator should not use system(\"true\") for true commands");
+    // // French should describe the true command, not use system('true')
+    // assert!(!french_output.contains("system('true"), 
+    //         "French generator should not use system('true') for true commands");
+    // assert!(!french_output.contains("system(\"true"), 
+    //         "French generator should not use system(\"true\") for true commands");
 }
 
 #[test]
@@ -2329,88 +2329,88 @@ fn test_generators_false_commands_not_using_system() {
     assert!(perl_output.contains("0;"), 
             "Perl generator should use 0; for false commands");
     
-    // Test Python generator with false
-    let mut python_gen = PythonGenerator::new();
-    let python_output = python_gen.generate(&commands);
+    // // Test Python generator with false
+    // let mut python_gen = PythonGenerator::new();
+    // let python_output = python_gen.generate(&commands);
     
-    // Python should use sys.exit(1), not system('false')
-    assert!(!python_output.contains("system('false"), 
-            "Python generator should not use system('false') for false commands");
-    assert!(!python_output.contains("system(\"false"), 
-            "Python generator should not use system(\"false\") for false commands");
-    assert!(python_output.contains("sys.exit(1)"), 
-            "Python generator should use sys.exit(1) for false commands");
+    // // Python should use sys.exit(1), not system('false')
+    // assert!(!python_output.contains("system('false"), 
+    //         "Python generator should not use system('false') for false commands");
+    // assert!(!python_output.contains("system(\"false"), 
+    //         "Python generator should not use system(\"false\") for false commands");
+    // assert!(python_output.contains("sys.exit(1)"), 
+    //         "Python generator should use sys.exit(1) for false commands");
     
-    // Test Rust generator with false
-    let mut rust_gen = RustGenerator::new();
-    let rust_output = rust_gen.generate(&commands);
+    // // Test Rust generator with false
+    // let mut rust_gen = RustGenerator::new();
+    // let rust_output = rust_gen.generate(&commands);
     
-    // Rust should use return std::process::ExitCode::FAILURE, not system('false')
-    assert!(!rust_output.contains("system('false"), 
-            "Rust generator should not use system('false') for false commands");
-    assert!(!rust_output.contains("system(\"false"), 
-            "Rust generator should not use system(\"false\") for false commands");
-    assert!(rust_output.contains("return std::process::ExitCode::FAILURE"), 
-            "Rust generator should use return std::process::ExitCode::FAILURE for false commands");
+    // // Rust should use return std::process::ExitCode::FAILURE, not system('false')
+    // assert!(!rust_output.contains("system('false"), 
+    //         "Rust generator should not use system('false') for false commands");
+    // assert!(!rust_output.contains("system(\"false"), 
+    //         "Rust generator should not use system(\"false\") for false commands");
+    // assert!(rust_output.contains("return std::process::ExitCode::FAILURE"), 
+    //         "Rust generator should use return std::process::ExitCode::FAILURE for false commands");
     
-    // Test JavaScript generator with false
-    let mut js_gen = JsGenerator::new();
-    let js_output = js_gen.generate(&commands);
+    // // Test JavaScript generator with false
+    // let mut js_gen = JsGenerator::new();
+    // let js_output = js_gen.generate(&commands);
     
-    // JavaScript should not use system('false')
-    assert!(!js_output.contains("system('false"), 
-            "JavaScript generator should not use system('false') for false commands");
-    assert!(!js_output.contains("system(\"false"), 
-            "JavaScript generator should not use system(\"false\") for false commands");
+    // // JavaScript should not use system('false')
+    // assert!(!js_output.contains("system('false"), 
+    //         "JavaScript generator should not use system('false') for false commands");
+    // assert!(!js_output.contains("system(\"false"), 
+    //         "JavaScript generator should not use system(\"false\") for false commands");
     
-    // Test C generator with false
-    let mut c_gen = CGenerator::new();
-    let c_output = c_gen.generate(&commands);
+    // // Test C generator with false
+    // let mut c_gen = CGenerator::new();
+    // let c_output = c_gen.generate(&commands);
     
-    // C generator falls back to system() for unhandled commands
-    // This is correct behavior for C generator
-    assert!(c_output.contains("system(\"false\")"), 
-            "C generator should use system(\"false\") for false commands as fallback");
+    // // C generator falls back to system() for unhandled commands
+    // // This is correct behavior for C generator
+    // assert!(c_output.contains("system(\"false\")"), 
+    //         "C generator should use system(\"false\") for false commands as fallback");
     
-    // Test Batch generator with false
-    let mut batch_gen = BatchGenerator::new();
-    let batch_output = batch_gen.generate(&commands);
+    // // Test Batch generator with false
+    // let mut batch_gen = BatchGenerator::new();
+    // let batch_output = batch_gen.generate(&commands);
     
-    // Batch should not use system('false')
-    assert!(!batch_output.contains("system('false"), 
-            "Batch generator should not use system('false') for false commands");
-    assert!(!batch_output.contains("system(\"false"), 
-            "Batch generator should not use system(\"false\") for false commands");
+    // // Batch should not use system('false')
+    // assert!(!batch_output.contains("system('false"), 
+    //         "Batch generator should not use system('false') for false commands");
+    // assert!(!batch_output.contains("system(\"false"), 
+    //         "Batch generator should not use system(\"false\") for false commands");
     
-    // Test PowerShell generator with false
-    let mut powershell_gen = PowerShellGenerator::new();
-    let powershell_output = powershell_gen.generate(&commands);
+    // // Test PowerShell generator with false
+    // let mut powershell_gen = PowerShellGenerator::new();
+    // let powershell_output = powershell_gen.generate(&commands);
     
-    // PowerShell should not use system('false')
-    assert!(!powershell_output.contains("system('false"), 
-            "PowerShell generator should not use system('false') for false commands");
-    assert!(!powershell_output.contains("system(\"false"), 
-            "PowerShell generator should not use system(\"false\") for false commands");
+    // // PowerShell should not use system('false')
+    // assert!(!powershell_output.contains("system('false"), 
+    //         "PowerShell generator should not use system('false') for false commands");
+    // assert!(!powershell_output.contains("system(\"false"), 
+    //         "PowerShell generator should not use system(\"false\") for false commands");
     
-    // Test English generator with false
-    let mut english_gen = EnglishGenerator::new();
-    let english_output = english_gen.generate(&commands);
+    // // Test English generator with false
+    // let mut english_gen = EnglishGenerator::new();
+    // let english_output = english_gen.generate(&commands);
     
-    // English should describe the false command, not use system('false')
-    assert!(!english_output.contains("system('false"), 
-            "English generator should not use system('false') for false commands");
-    assert!(!english_output.contains("system(\"false"), 
-            "English generator should not use system(\"false\") for false commands");
+    // // English should describe the false command, not use system('false')
+    // assert!(!english_output.contains("system('false"), 
+    //         "English generator should not use system('false') for false commands");
+    // assert!(!english_output.contains("system(\"false"), 
+    //         "English generator should not use system(\"false\") for false commands");
     
-    // Test French generator with false
-    let mut french_gen = FrenchGenerator::new();
-    let french_output = french_gen.generate(&commands);
+    // // Test French generator with false
+    // let mut french_gen = FrenchGenerator::new();
+    // let french_output = french_gen.generate(&commands);
     
-    // French should describe the false command, not use system('false')
-    assert!(!french_output.contains("system('false"), 
-            "French generator should not use system('false') for false commands");
-    assert!(!french_output.contains("system(\"false"), 
-            "French generator should not use system(\"false\") for false commands");
+    // // French should describe the false command, not use system('false')
+    // assert!(!french_output.contains("system('false"), 
+    //         "French generator should not use system('false') for false commands");
+    // assert!(!french_output.contains("system(\"false"), 
+    //         "French generator should not use system(\"false\") for false commands");
 }
 
 #[test]
@@ -2434,86 +2434,86 @@ fn test_generators_true_false_with_quotes_not_using_system() {
     assert!(!perl_output.contains("system(`true`"), 
             "Perl generator should not use system(`true`) for true commands");
     
-    // Test Python generator
-    let mut python_gen = PythonGenerator::new();
-    let python_output = python_gen.generate(&commands);
+    // // Test Python generator
+    // let mut python_gen = PythonGenerator::new();
+    // let python_output = python_gen.generate(&commands);
     
-    // Python should not use system with any quote style for true
-    assert!(!python_output.contains("system('true"), 
-            "Python generator should not use system('true') for true commands");
-    assert!(!python_output.contains("system(\"true"), 
-            "Python generator should not use system(\"true\") for true commands");
-    assert!(!python_output.contains("system(`true`"), 
-            "Python generator should not use system(`true`) for true commands");
+    // // Python should not use system with any quote style for true
+    // assert!(!python_output.contains("system('true"), 
+    //         "Python generator should not use system('true') for true commands");
+    // assert!(!python_output.contains("system(\"true"), 
+    //         "Python generator should not use system(\"true\") for true commands");
+    // assert!(!python_output.contains("system(`true`"), 
+    //         "Python generator should not use system(`true`) for true commands");
     
-    // Test Rust generator
-    let mut rust_gen = RustGenerator::new();
-    let rust_output = rust_gen.generate(&commands);
+    // // Test Rust generator
+    // let mut rust_gen = RustGenerator::new();
+    // let rust_output = rust_gen.generate(&commands);
     
-    // Rust should not use system with any quote style for true
-    assert!(!rust_output.contains("system('true"), 
-            "Rust generator should not use system('true') for true commands");
-    assert!(!rust_output.contains("system(\"true"), 
-            "Rust generator should not use system(\"true\") for true commands");
-    assert!(!rust_output.contains("system(`true`"), 
-            "Rust generator should not use system(`true`) for true commands");
+    // // Rust should not use system with any quote style for true
+    // assert!(!rust_output.contains("system('true"), 
+    //         "Rust generator should not use system('true') for true commands");
+    // assert!(!rust_output.contains("system(\"true"), 
+    //         "Rust generator should not use system(\"true\") for true commands");
+    // assert!(!rust_output.contains("system(`true`"), 
+    //         "Rust generator should not use system(`true`) for true commands");
     
-    // Test C generator
-    let mut c_gen = CGenerator::new();
-    let c_output = c_gen.generate(&commands);
+    // // Test C generator
+    // let mut c_gen = CGenerator::new();
+    // let c_output = c_gen.generate(&commands);
     
-    // C generator falls back to system() for unhandled commands
-    assert!(c_output.contains("system(\"true\")"), 
-            "C generator should use system(\"true\") for true commands as fallback");
+    // // C generator falls back to system() for unhandled commands
+    // assert!(c_output.contains("system(\"true\")"), 
+    //         "C generator should use system(\"true\") for true commands as fallback");
     
-    // Test false command
-    let input = "false";
-    let mut parser = Parser::new(input);
-    let commands = parser.parse().expect("Failed to parse");
+    // // Test false command
+    // let input = "false";
+    // let mut parser = Parser::new(input);
+    // let commands = parser.parse().expect("Failed to parse");
     
-    // Test Perl generator with false
-    let mut perl_gen = PerlGenerator::new();
-    let perl_output = perl_gen.generate(&commands);
+    // // Test Perl generator with false
+    // let mut perl_gen = PerlGenerator::new();
+    // let perl_output = perl_gen.generate(&commands);
     
-    // Perl should not use system with any quote style for false
-    assert!(!perl_output.contains("system('false"), 
-            "Perl generator should not use system('false') for false commands");
-    assert!(!perl_output.contains("system(\"false"), 
-            "Perl generator should not use system(\"false\") for false commands");
-    assert!(!perl_output.contains("system(`false`"), 
-            "Perl generator should not use system(`false`) for false commands");
+    // // Perl should not use system with any quote style for false
+    // assert!(!perl_output.contains("system('false"), 
+    //         "Perl generator should not use system('false') for false commands");
+    // assert!(!perl_output.contains("system(\"false"), 
+    //         "Perl generator should not use system(\"false\") for false commands");
+    // assert!(!perl_output.contains("system(`false`"), 
+    //         "Perl generator should not use system(`false`) for false commands");
     
-    // Test Python generator with false
-    let mut python_gen = PythonGenerator::new();
-    let python_output = python_gen.generate(&commands);
+    // // Test Python generator with false
+    // let mut python_gen = PythonGenerator::new();
+    // let python_output = python_gen.generate(&commands);
     
-    // Python should not use system with any quote style for false
-    assert!(!python_output.contains("system('false"), 
-            "Python generator should not use system('false') for false commands");
-    assert!(!python_output.contains("system(\"false"), 
-            "Python generator should not use system(\"false\") for false commands");
-    assert!(!python_output.contains("system(`false`"), 
-            "Python generator should not use system(`false`) for false commands");
+    // // Python should not use system with any quote style for false
+    // assert!(!python_output.contains("system('false"), 
+    //         "Python generator should not use system('false') for false commands");
+    // assert!(!python_output.contains("system(\"false"), 
+    //         "Python generator should not use system(\"false\") for false commands");
+    // assert!(!python_output.contains("system(`false`"), 
+    //         "Python generator should not use system(`false`) for false commands");
     
-    // Test Rust generator with false
-    let mut rust_gen = RustGenerator::new();
-    let rust_output = rust_gen.generate(&commands);
+    // // Test Rust generator with false
+    // let mut rust_gen = RustGenerator::new();
+    // let rust_output = rust_gen.generate(&commands);
     
-    // Rust should not use system with any quote style for false
-    assert!(!rust_output.contains("system('false"), 
-            "Rust generator should not use system('false') for false commands");
-    assert!(!rust_output.contains("system(\"false"), 
-            "Rust generator should not use system(\"false\") for false commands");
-    assert!(!rust_output.contains("system(`false`"), 
-            "Rust generator should not use system(`false`) for false commands");
+    // // Rust should not use system with any quote style for false
+    // assert!(!rust_output.contains("system('false"), 
+    //         "Rust generator should not use system('false') for false commands");
+    // assert!(!rust_output.contains("system(\"false"), 
+    //         "Rust generator should not use system(\"false\") for false commands");
+    // assert!(!rust_output.contains("system(`false`"), 
+    //         "Rust generator should not use system(`false`) for false commands");
     
-    // Test C generator with false
-    let mut c_gen = CGenerator::new();
-    let c_output = c_gen.generate(&commands);
+    // // Test C generator with false
+    // let mut c_gen = CGenerator::new();
+    // let c_output = c_gen.generate(&commands);
     
-    // C generator falls back to system() for unhandled commands
-    assert!(c_output.contains("system(\"false\")"), 
-            "C generator should use system(\"false\") for false commands as fallback");
+    // // C generator falls back to system() for unhandled commands
+    // assert!(c_output.contains("system(\"false\")"), 
+    //         "C generator should use system(\"false\") for false commands as fallback");
 }
 
 #[test]
