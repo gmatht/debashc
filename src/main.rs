@@ -939,6 +939,60 @@ fn run_generated(lang: &str, input: &str) {
     }
 }
 
+fn exec_bash_script_and_get_output(filename: &str) -> Result<std::process::Output, String> {
+    // Create a temporary file with Unix line endings for WSL/Unix
+    let shell_content = fs::read_to_string(filename).unwrap_or_default();
+    let unix_content = shell_content.replace("\r\n", "\n");
+    let wsl_script_path = "__wsl_script.sh";
+    fs::write(wsl_script_path, &unix_content).unwrap();
+
+    #[cfg(windows)]
+    let mut child = match Command::new("wsl")
+        .args(&["bash", wsl_script_path])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = fs::remove_file(wsl_script_path);
+            return Err(format!("Failed to spawn wsl bash: {}", e));
+        }
+    };
+
+    #[cfg(not(windows))]
+    let mut child = match Command::new("/bin/bash")
+        .arg(wsl_script_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = fs::remove_file(wsl_script_path);
+            return Err(format!("Failed to spawn /bin/bash: {}", e));
+        }
+    };
+
+    let start = std::time::Instant::now();
+    let output: std::process::Output = loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break child.wait_with_output().unwrap(),
+            Ok(None) => {
+                if start.elapsed() > Duration::from_millis(1000) {
+                    let _ = child.kill();
+                    break child.wait_with_output().unwrap();
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => break child.wait_with_output().unwrap(),
+        }
+    };
+    // Cleanup script file
+    let _ = fs::remove_file(wsl_script_path);
+    Ok(output)
+}
+
 fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
     // Read shell script content
     let shell_content = match fs::read_to_string(filename) {
@@ -964,41 +1018,7 @@ fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
     };
 
     // Run shell script using WSL bash for proper Unix command compatibility
-    let shell_output = {
-        // Create a temporary file with Unix line endings for WSL
-        let shell_content = fs::read_to_string(filename).unwrap_or_default();
-        let unix_content = shell_content.replace("\r\n", "\n");
-        let wsl_script_path = "__wsl_script.sh";
-        fs::write(wsl_script_path, unix_content).unwrap();
-        
-        let mut child = match Command::new("wsl").args(&["bash", wsl_script_path]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
-            Ok(c) => c,
-            Err(e) => { 
-                let _ = fs::remove_file(wsl_script_path);
-                return Err(format!("Failed to spawn wsl bash: {}", e)); 
-            }
-        };
-        
-        let start = std::time::Instant::now();
-        let output = loop {
-            match child.try_wait() {
-                Ok(Some(_)) => break child.wait_with_output().unwrap(),
-                Ok(None) => {
-                    if start.elapsed() > Duration::from_millis(1000) { 
-                        let _ = child.kill(); 
-                        break child.wait_with_output().unwrap(); 
-                    }
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(_) => break child.wait_with_output().unwrap(),
-            }
-        };
-        
-        // Cleanup WSL script file
-        let _ = fs::remove_file(wsl_script_path);
-        
-        output
-    };
+    let shell_output = exec_bash_script_and_get_output(filename)?;
 
     // Run translated program
     let translated_output = {
@@ -1155,42 +1175,7 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
     // If no cached output, we need to run the shell script
     if shell_output.is_none() {
         // Run the shell script and cache the output
-        let output = {
-            // Create a temporary file with Unix line endings for WSL
-            let shell_content = fs::read_to_string(filename).unwrap_or_default();
-            let unix_content = shell_content.replace("\r\n", "\n");
-            let wsl_script_path = "__wsl_script.sh";
-            fs::write(wsl_script_path, unix_content).unwrap();
-            
-            let mut child = match Command::new("wsl").args(&["bash", wsl_script_path]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
-                Ok(c) => c,
-                Err(e) => { 
-                    let _ = fs::remove_file(wsl_script_path);
-                    return Err(format!("Failed to spawn wsl bash: {}", e)); 
-                }
-            };
-            
-            let start = std::time::Instant::now();
-            let output = loop {
-                match child.try_wait() {
-                    Ok(Some(_)) => break child.wait_with_output().unwrap(),
-                    Ok(None) => {
-                        if start.elapsed() > Duration::from_millis(1000) { 
-                            let _ = child.kill(); 
-                            break child.wait_with_output().unwrap(); 
-                        }
-                        thread::sleep(Duration::from_millis(10));
-                    }
-                    Err(_) => break child.wait_with_output().unwrap(),
-                }
-            };
-            
-            // Cleanup WSL script file
-            let _ = fs::remove_file(wsl_script_path);
-            
-            output
-        };
-        
+        let output = exec_bash_script_and_get_output(filename)?;
         // Cache the output
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
