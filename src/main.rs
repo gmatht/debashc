@@ -19,7 +19,12 @@ use std::thread;
 use std::collections::HashMap;
 
 use std::time::SystemTime;
+
+#[cfg(windows)]
 use std::os::windows::process::ExitStatusExt;
+#[cfg(not(windows))]
+use std::os::unix::process::ExitStatusExt;
+
 use serde::{Serialize, Deserialize};
 
 // Use the debug module for controlling DEBUG output
