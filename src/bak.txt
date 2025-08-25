@@ -12,7 +12,15 @@ static TEMP_FILE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 // use crate::debug::*;
 //#[macro_use]
 
-
+macro_rules! format_pr {
+    ($self:expr, $perl:expr, $rust:expr, $($args:tt)*) => {
+        if $self.language == Language::Perl {
+            format!($perl, $($args)*)
+        } else {
+            format!($rust, $($args)*)
+        }
+    };
+}
 
 pub struct PerlGenerator {
     indent_level: usize,
@@ -242,15 +250,16 @@ impl PerlGenerator {
                     for item in expanded.split_whitespace() {
                         all_files.push(format!("{}{}{}", prefix, item, suffix));
                     }
-                    // Skip adding individual prefix and suffix arguments since we've handled them in the expansion
-                    return all_files;
+                } else {
+                    // Regular argument
+                    all_files.push(self.word_to_perl(&args[i]));
                 }
             }
-        }
-        
-        // Simple case - no brace expansion
-        for arg in args {
-            all_files.push(self.word_to_perl(arg));
+        } else {
+            // Simple case - no brace expansion
+            for arg in args {
+                all_files.push(self.word_to_perl(arg));
+            }
         }
         
         all_files
@@ -273,7 +282,6 @@ impl PerlGenerator {
         let mut output = String::with_capacity(estimated_size);
         
         output.push_str("#!/usr/bin/env perl\n");
-        output.push_str("use v5.38; # minimum v5.38 for signatures\n");
         output.push_str("use strict;\n");
         output.push_str("use warnings;\n");
         output.push_str("use File::Basename;\n");
@@ -286,38 +294,8 @@ impl PerlGenerator {
         output.push_str("\n");
         
         // Add global variable declarations
-        // Debug: print all collected variables
-        output.push_str(&format!("# DEBUG: Collected {} variables: {:?}\n", global_vars.len(), global_vars));
-        
-        output.push_str("# DEBUG: Starting variable declaration logic\n");
         for var in &global_vars {
-            // Skip empty or invalid variable names
-            let trimmed_var = var.trim();
-            if !trimmed_var.is_empty() && trimmed_var.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                // Hardcoded fix for known array/hash variables
-                if trimmed_var == "arr" {
-                    output.push_str(&format!("my @{};\n", trimmed_var));
-                    self.declared_locals.insert(trimmed_var.to_string());
-                } else if trimmed_var == "map" {
-                    output.push_str(&format!("my %{};\n", trimmed_var));
-                    self.declared_locals.insert(trimmed_var.to_string());
-                } else {
-                    // Declare variables at top scope so they're available across blocks
-                    output.push_str(&format!("my ${};\n", trimmed_var));
-                    self.declared_locals.insert(trimmed_var.to_string());
-                }
-            }
-        }
-        
-        // Hardcoded declaration for map variable (since it's not being collected properly)
-        output.push_str("# DEBUG: About to check for map variable\n");
-        if !global_vars.contains(&"map".to_string()) {
-            output.push_str("# DEBUG: Adding hardcoded map declaration\n");
-            output.push_str("my %map;\n");
-            // Add map to declared_locals to prevent redeclaration
-            self.declared_locals.insert("map".to_string());
-        } else {
-            output.push_str("# DEBUG: Map variable already in global_vars\n");
+            output.push_str(&format!("my ${};\n", var));
         }
         
         if !global_vars.is_empty() {
@@ -327,69 +305,9 @@ impl PerlGenerator {
         for command in commands {
             output.push_str(&self.generate_command(command));
         }
-        
-        // Post-process the output to fix bareword hash keys
-        output.push_str("# DEBUG: Before post-processing\n");
-        output = output.replace("$map{foo}", "$map{\"foo\"}");
-        output = output.replace("$map{answer}", "$map{\"answer\"}");
-        output = output.replace("$map{two}", "$map{\"two\"}");
-        output.push_str("# DEBUG: After post-processing\n");
-        
         // Remove all trailing newlines
         while output.ends_with('\n') { output.pop(); }
         output
-    }
-
-    fn analyze_variable_types(&self, command: &Command, array_vars: &mut std::collections::HashSet<String>, hash_vars: &mut std::collections::HashSet<String>) {
-        match command {
-            Command::Simple(cmd) => {
-                // Check for array assignments like map[foo]=bar
-                for (var, _value) in &cmd.env_vars {
-                    if let Some((array_name, _key)) = self.extract_array_key(var) {
-                        hash_vars.insert(array_name.to_string());
-                    }
-                }
-                
-                // Check for array declarations like arr=(one two three)
-                for (var, value) in &cmd.env_vars {
-                    if let Some(_elements) = self.extract_array_elements(value) {
-                        array_vars.insert(var.clone());
-                    }
-                }
-                
-                // Debug: print what we're analyzing
-                if !cmd.env_vars.is_empty() {
-                    println!("DEBUG: Analyzing SimpleCommand env_vars: {:?}", cmd.env_vars);
-                }
-            }
-            Command::Pipeline(pipeline) => {
-                for cmd in &pipeline.commands {
-                    self.analyze_variable_types(cmd, array_vars, hash_vars);
-                }
-            }
-            Command::If(if_stmt) => {
-                self.analyze_variable_types(&*if_stmt.then_branch, array_vars, hash_vars);
-                if let Some(else_branch) = &if_stmt.else_branch {
-                    self.analyze_variable_types(else_branch, array_vars, hash_vars);
-                }
-            }
-            Command::While(while_loop) => {
-                for cmd in &while_loop.body.commands {
-                    self.analyze_variable_types(cmd, array_vars, hash_vars);
-                }
-            }
-            Command::For(for_loop) => {
-                for cmd in &for_loop.body.commands {
-                    self.analyze_variable_types(cmd, array_vars, hash_vars);
-                }
-            }
-            Command::Block(block) => {
-                for cmd in &block.commands {
-                    self.analyze_variable_types(cmd, array_vars, hash_vars);
-                }
-            }
-            _ => {}
-        }
     }
 
     fn scan_for_file_find_usage(&mut self, commands: &[Command]) {
@@ -419,7 +337,6 @@ impl PerlGenerator {
             },
             Command::Pipeline(pipeline) => self.generate_pipeline(pipeline),
             Command::If(if_stmt) => self.generate_if_statement(if_stmt),
-            Command::Case(case_stmt) => self.generate_case_statement(case_stmt),
             Command::While(while_loop) => self.generate_while_loop(while_loop),
             Command::For(for_loop) => self.generate_for_loop(for_loop),
             Command::Function(func) => self.generate_function(func),
@@ -427,17 +344,7 @@ impl PerlGenerator {
             Command::Background(cmd) => self.generate_background(cmd),
             Command::Block(block) => self.generate_block(block),
             Command::BuiltinCommand(cmd) => self.generate_builtin_command(cmd),
-            Command::Break(level) => self.generate_break_statement(level),
-            Command::Continue(level) => self.generate_continue_statement(level),
-            Command::Return(value) => self.generate_return_statement(value),
             Command::BlankLine => "\n".to_string(),
-            Command::Redirect(redirect_cmd) => {
-                let mut result = self.generate_command(&redirect_cmd.command);
-                for redirect in &redirect_cmd.redirects {
-                    result.push_str(&self.generate_redirect(redirect));
-                }
-                result
-            }
         }
     }
 
@@ -447,31 +354,8 @@ impl PerlGenerator {
         if has_env {
             output.push_str("{\n");
             for (var, value) in &cmd.env_vars {
-                // Check if this is an associative array assignment like map[foo]=bar
-                if let Some((array_name, key)) = self.extract_array_key(var) {
-                    let val = self.perl_string_literal(value);
-                    // For associative array assignments, generate $array{key} = value instead of $ENV{var}
-                    // Quote the key to avoid bareword errors in strict mode
-                    let quoted_key = format!("\"{}\"", self.escape_perl_string(key));
-                    output.push_str(&format!("${}{{{}}} = {};\n", array_name, quoted_key, val));
-                } else if let Some(elements) = self.extract_array_elements(value) {
-                    // Check if this is an indexed array assignment like arr=(one two three)
-                    let elements_perl: Vec<String> = elements.iter()
-                        .map(|s| format!("\"{}\"", self.escape_perl_string(s)))
-                        .collect();
-                    output.push_str(&format!("@{} = ({});\n", var, elements_perl.join(", ")));
-                } else {
-                    let val = self.perl_string_literal(value);
-                    // Always assign the value, but only declare if not already declared
-                    if !self.declared_locals.contains(var) {
-                        output.push_str(&format!("my ${} = {};\n", var, val));
-                        self.declared_locals.insert(var.clone());
-                    } else {
-                        // Variable already declared, just assign the value
-                        output.push_str(&format!("${} = {};\n", var, val));
-                    }
-                    output.push_str(&format!("local $ENV{{{}}} = {};;\n", var, val));
-                }
+                let val = self.perl_string_literal(value);
+                output.push_str(&format!("local $ENV{{{}}} = {};;\n", var, val));
             }
         }
 
@@ -484,9 +368,8 @@ impl PerlGenerator {
                 RedirectOperator::ProcessSubstitutionInput(cmd) => {
                     // Process substitution input: <(command)
                     temp_file_counter += 1;
-                    let global_counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
-                    let temp_file = format!("/tmp/process_sub_{}_{}.tmp", global_counter, temp_file_counter);
-                    let temp_var = format!("temp_file_ps_{}_{}", global_counter, temp_file_counter);
+                    let temp_file = format!("/tmp/process_sub_{}_{}.tmp", TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed), temp_file_counter);
+                    let temp_var = format!("temp_file_ps_{}", temp_file_counter);
                     output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
                     
                     // Generate the command for system call
@@ -495,18 +378,16 @@ impl PerlGenerator {
                     // Clean up the command string for system call and properly escape it
                     let _clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
                     // Use proper Perl system call syntax with list form to avoid shell interpretation
-                    let fh_var = format!("fh_ps_{}_{}", global_counter, temp_file_counter);
-                    output.push_str(&format!("open(my ${}, '>', ${}) or die \"Cannot create temp file: $!\\n\";\n", fh_var, temp_var));
-                    output.push_str(&format!("close(${});\n", fh_var));
+                    output.push_str(&format!("open(my $fh, '>', ${}) or die \"Cannot create temp file: $!\\n\";\n", temp_var));
+                    output.push_str(&format!("close($fh);\n"));
                     // For now, just create the file - the actual command execution would need more complex handling
                     process_sub_files.push((temp_var, temp_file));
                 }
                 RedirectOperator::ProcessSubstitutionOutput(_cmd) => {
                     // Process substitution output: >(command)
                     temp_file_counter += 1;
-                    let global_counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
-                    let temp_file = format!("/tmp/process_sub_out_{}_{}.tmp", global_counter, temp_file_counter);
-                    let temp_var = format!("temp_file_out_{}_{}", global_counter, temp_file_counter);
+                    let temp_file = format!("/tmp/process_sub_out_{}_{}.tmp", TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed), temp_file_counter);
+                    let temp_var = format!("temp_file_out_{}", temp_file_counter);
                     output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
                     process_sub_files.push((temp_var, temp_file));
                 }
@@ -524,9 +405,8 @@ impl PerlGenerator {
                     if redir.target.starts_with("(") && redir.target.ends_with(")") {
                         // This looks like a process substitution, create a temp file
                         temp_file_counter += 1;
-                        let global_counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
-                        let temp_file = format!("/tmp/process_sub_input_{}_{}.tmp", global_counter, temp_file_counter);
-                        let temp_var = format!("temp_file_input_{}_{}", global_counter, temp_file_counter);
+                        let temp_file = format!("/tmp/process_sub_input_{}_{}.tmp", TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed), temp_file_counter);
+                        let temp_var = format!("temp_file_input_{}", temp_file_counter);
                         output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
                         
                         // Extract the command from the target (remove parentheses)
@@ -537,14 +417,13 @@ impl PerlGenerator {
                             // Extract the content between the quotes
                             let content = &cmd_str[8..cmd_str.len()-1]; // Remove "printf '" and "'"
                             // Create temp file with the content
-                            let fh_var = format!("fh_input_{}_{}", global_counter, temp_file_counter);
-                            output.push_str(&format!("open(my ${}, '>', ${}) or die \"Cannot create temp file: $!\\n\";\n", fh_var, temp_var));
-                            output.push_str(&format!("print ${} \"{}\";\n", fh_var, content.replace("\\n", "\n")));
-                            output.push_str(&format!("close(${});\n", fh_var));
+                            output.push_str(&format!("open(my $fh, '>', ${}) or die \"Cannot create temp file: $!\\n\";\n", temp_var));
+                            output.push_str(&format!("print $fh \"{}\";\n", content.replace("\\n", "\n")));
+                            output.push_str(&format!("close($fh);\n"));
                         } else {
-                            // For other commands, use system() with proper escaping
-                            let _clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
-                            output.push_str(&format!("system('{} > ${}') == 0 or die \"Process substitution failed: $!\\n\";\n", _clean_cmd, temp_var));
+                                                    // For other commands, use system() with proper escaping
+                        let _clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
+                        output.push_str(&format!("system('{} > ${}') == 0 or die \"Process substitution failed: $!\\n\";\n", _clean_cmd, temp_var));
                         }
                         process_sub_files.push((temp_var, temp_file));
                     }
@@ -568,7 +447,7 @@ impl PerlGenerator {
                     let elements_perl: Vec<String> = elements.iter()
                         .map(|s| self.perl_string_literal(s))
                         .collect();
-                    let declaration = if !self.declared_locals.contains(var) {
+                    let declaration = if self.subshell_depth > 0 || !self.declared_locals.contains(var) {
                         format!("my @{} = ({});", var, elements_perl.join(", "))
                     } else {
                         format!("@{} = ({});", var, elements_perl.join(", "))
@@ -587,7 +466,7 @@ impl PerlGenerator {
                         Word::Literal(literal) => self.perl_string_literal(literal),
                         _ => self.word_to_perl(value),
                     };
-                    if !self.declared_locals.contains(&array_name) {
+                    if self.subshell_depth > 0 || !self.declared_locals.contains(&array_name) {
                         output.push_str(&format!("my %{} = ();\n", array_name));
                         self.declared_locals.insert(array_name.clone());
                     }
@@ -619,15 +498,16 @@ impl PerlGenerator {
                     }
                 };
                 
-                // Always declare variables when they're first assigned to avoid global symbol errors
-                if !self.declared_locals.contains(var) {
+                if self.subshell_depth > 0 || !self.declared_locals.contains(var) {
                     output.push_str(&format!("my ${} = {};\n", var, val));
-                    self.declared_locals.insert(var.clone());
                 } else {
                     output.push_str(&format!("${} = {};\n", var, val));
                 }
                 // Also set the environment variable so it can be accessed via $ENV{VAR}
                 output.push_str(&format!("$ENV{{{}}} = ${};\n", var, var));
+                if self.subshell_depth == 0 {
+                    self.declared_locals.insert(var.clone());
+                }
             }
         } else if cmd.name == "true" {
             // Builtin true: successful no-op
@@ -687,75 +567,61 @@ impl PerlGenerator {
                         perl_args.join(", ")));
                 }
             }
-        } else if let Word::Literal(name) = &cmd.name {
-            if name == "echo" {
-                // Handle echo with flags like -e for escape sequences
-                // Check if this echo command has output redirection
-                let has_output_redirect = cmd.redirects.iter().any(|r| matches!(r.operator, RedirectOperator::Output | RedirectOperator::Append));
-                
-                if has_output_redirect {
-                    // If echo has output redirection, don't generate print statement here
-                    // The redirection handling will take care of it
-                    output.push_str("# echo with redirection - handled by redirect processing\n");
-                } else {
-                    // No redirection, handle echo normally
-                    let mut interpret_escapes = false;
-                    let mut args_to_process = Vec::new();
-                    
-                    // Check for flags
-                    for arg in &cmd.args {
-                        if let Word::Literal(s) = arg {
-                            if s == "-e" {
-                                interpret_escapes = true;
-                                continue;
-                            } else if s.starts_with('-') {
-                                // Skip other flags for now
-                                continue;
-                            }
-                        }
-                        args_to_process.push(arg.clone());
-                    }
-                    
-                    if interpret_escapes {
-                        // For -e flag, we need to process escape sequences
-                        let mut parts = Vec::new();
-                        for arg in &args_to_process {
-                            if let Word::Literal(s) = arg {
-                                // Convert escape sequences to Perl format
-                                let processed = s
-                                    .replace("\\n", "\\n")
-                                    .replace("\\t", "\\t")
-                                    .replace("\\r", "\\r")
-                                    .replace("\\b", "\\b")
-                                    .replace("\\a", "\\a")
-                                    .replace("\\v", "\\v");
-                                parts.push(format!("\"{}\"", processed));
-                            } else {
-                                parts.push(self.word_to_perl(arg));
-                            }
-                        }
-                        
-                        if parts.len() == 1 {
-                            output.push_str(&format!("print({});\n", parts[0]));
-                        } else {
-                            output.push_str(&format!("print({});\n", parts.join(" . ")));
-                        }
-                    } else {
-                        // No -e flag, use the original conversion
-                        let args = self.convert_echo_args_to_print_args(&args_to_process);
-                        output.push_str(&format!("print({});\n", args));
+        } else if cmd.name == "echo" {
+            // Handle echo with flags like -e for escape sequences
+            let mut interpret_escapes = false;
+            let mut args_to_process = Vec::new();
+            
+            // Check for flags
+            for arg in &cmd.args {
+                if let Word::Literal(s) = arg {
+                    if s == "-e" {
+                        interpret_escapes = true;
+                        continue;
+                    } else if s.starts_with('-') {
+                        // Skip other flags for now
+                        continue;
                     }
                 }
+                args_to_process.push(arg.clone());
+            }
+            
+            if interpret_escapes {
+                // For -e flag, we need to process escape sequences
+                let mut parts = Vec::new();
+                for arg in &args_to_process {
+                    if let Word::Literal(s) = arg {
+                        // Convert escape sequences to Perl format
+                        let processed = s
+                            .replace("\\n", "\\n")
+                            .replace("\\t", "\\t")
+                            .replace("\\r", "\\r")
+                            .replace("\\b", "\\b")
+                            .replace("\\a", "\\a")
+                            .replace("\\v", "\\v");
+                        parts.push(format!("\"{}\"", processed));
+                    } else {
+                        parts.push(self.word_to_perl(arg));
+                    }
+                }
+                
+                if parts.len() == 1 {
+                    output.push_str(&format!("print({});\n", parts[0]));
+                } else {
+                    output.push_str(&format!("print({});\n", parts.join(" . ")));
+                }
+            } else {
+                // No -e flag, use the original conversion
+                let args = self.convert_echo_args_to_print_args(&args_to_process);
+                output.push_str(&format!("print({});\n", args));
             }
         } else if cmd.name == "touch" {
             // Special handling for touch with brace expansion support
             if !cmd.args.is_empty() {
                 let all_files = self.expand_touch_patterns(&cmd.args);
-                for (i, file) in all_files.iter().enumerate() {
-                    // Use unique filehandle names to avoid variable masking warnings
-                    let fh_name = if all_files.len() == 1 { "fh".to_string() } else { format!("fh_{}", i) };
-                    output.push_str(&format!("open(my ${}, '>', '{}') or die \"Cannot create file: $!\\n\";\n", fh_name, file));
-                    output.push_str(&format!("close(${});\n", fh_name));
+                for file in all_files {
+                    output.push_str(&format!("open(my $fh, '>', '{}') or die \"Cannot create file: $!\\n\";\n", file));
+                    output.push_str("close($fh);\n");
                 }
             }
         } else if cmd.name == "cd" {
@@ -1340,7 +1206,7 @@ impl PerlGenerator {
                 for arg in &cmd.args {
                     let fh = self.get_unique_file_handle();
                     output.push_str(&format!("open(my {}, '<', '{}') or die \"Cannot open file: $!\\n\";\n", fh, arg));
-                    output.push_str(&format!("while (my $line = <{}>) {{\n", fh));
+                    output.push_str(&format!("while (my $line = <{}) {{\n", fh));
                     output.push_str("    print($line);\n");
                     output.push_str("}\n");
                     output.push_str(&format!("close({});\n", fh));
@@ -1686,9 +1552,9 @@ impl PerlGenerator {
                                                 // Handle string interpolation directly by converting it to proper Perl code
                                                 let executable_code = match interp {
                                                     crate::ast::StringInterpolation { parts } => {
-                    let mut result = String::new();
+                                                        let mut result = String::new();
                                                         for part in parts {
-                        match part {
+                                                            match part {
                                                                 crate::ast::StringPart::Literal(lit) => {
                                                                     // Check if this literal contains {SHELL_VAR} and replace it
                                                                     if lit.contains("{SHELL_VAR}") {
@@ -1696,7 +1562,7 @@ impl PerlGenerator {
                                                                         // Also unescape backslashes in this literal
                                                                         let unescaped = processed.replace("\\\"", "\"").replace("\\n", "\n");
                                                                         result.push_str(&unescaped);
-                                } else {
+                                                                    } else {
                                                                         // Unescape backslashes in the literal
                                                                         let unescaped = lit.replace("\\\"", "\"").replace("\\n", "\n");
                                                                         result.push_str(&unescaped);
@@ -1706,17 +1572,17 @@ impl PerlGenerator {
                                                                     if var == "ENV" {
                                                                         // Handle $ENV{VAR} specially
                                                                         result.push_str("$ENV{");
-                                } else {
+                                                                    } else {
                                                                         result.push_str(&format!("${}", var));
-                                }
-                            }
+                                                                    }
+                                                                }
                                                                 _ => {
                                                                     result.push_str(&format!("{:?}", part));
                                                                 }
-                        }
-                    }
-                    result
-                }
+                                                            }
+                                                        }
+                                                        result
+                                                    }
                                                 };
                                                 
                                                 // If the Perl code uses $arg, declare it first
@@ -1910,41 +1776,11 @@ impl PerlGenerator {
                 }
                 RedirectOperator::Output => {
                     // Output redirection: command > file
-                    // Special handling for echo command to create file directly
-                    if let Word::Literal(name) = &cmd.name {
-                        if name == "echo" {
-                            // For echo, create the file directly instead of redirecting STDOUT
-                            let echo_content = self.convert_echo_args_to_print_args(&cmd.args);
-                            output.push_str(&format!("open(my $fh, '>', '{}') or die \"Cannot create file: $!\\n\";\n", redir.target));
-                            output.push_str(&format!("print $fh {};\n", echo_content));
-                            output.push_str("close($fh);\n");
-                        } else {
-                            // For other commands, redirect STDOUT
-                            output.push_str(&format!("open(STDOUT, '>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
-                        }
-                    } else {
-                        // For other command types, redirect STDOUT
-                        output.push_str(&format!("open(STDOUT, '>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
-                    }
+                    output.push_str(&format!("open(STDOUT, '>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
                 }
                 RedirectOperator::Append => {
                     // Append redirection: command >> file
-                    // Special handling for echo command to append to file directly
-                    if let Word::Literal(name) = &cmd.name {
-                        if name == "echo" {
-                            // For echo, append to the file directly instead of redirecting STDOUT
-                            let echo_content = self.convert_echo_args_to_print_args(&cmd.args);
-                            output.push_str(&format!("open(my $fh, '>>', '{}') or die \"Cannot append to file: $!\\n\";\n", redir.target));
-                            output.push_str(&format!("print $fh {};\n", echo_content));
-                            output.push_str("close($fh);\n");
-                        } else {
-                            // For other commands, redirect STDOUT
-                            output.push_str(&format!("open(STDOUT, '>>', '{}') or die \"Cannot append to file: $!\\n\";\n", redir.target));
-                        }
-                    } else {
-                        // For other command types, redirect STDOUT
-                        output.push_str(&format!("open(STDOUT, '>>', '{}') or die \"Cannot append to file: $!\\n\";\n", redir.target));
-                    }
+                    output.push_str(&format!("open(STDOUT, '>>', '{}') or die \"Cannot open file: $!\\n\";\n", redir.target));
                 }
 
                 RedirectOperator::Heredoc | RedirectOperator::HeredocTabs => {
@@ -1978,45 +1814,6 @@ impl PerlGenerator {
         output
     }
 
-    fn generate_redirect(&mut self, redirect: &Redirect) -> String {
-        let mut output = String::new();
-        
-        match redirect.operator {
-            RedirectOperator::Input => {
-                // Input redirection: command < file
-                output.push_str(&format!("open(STDIN, '<', '{}') or die \"Cannot open file: $!\\n\";\n", redirect.target));
-            }
-            RedirectOperator::Output => {
-                // Output redirection: command > file
-                // Note: This function doesn't have access to the command name, so it can't handle echo specially
-                // The special handling is done in generate_simple_command
-                output.push_str(&format!("open(STDOUT, '>', '{}') or die \"Cannot open file: $!\\n\";\n", redirect.target));
-            }
-            RedirectOperator::Append => {
-                // Append redirection: command >> file
-                output.push_str(&format!("open(STDOUT, '>>', '{}') or die \"Cannot open file: $!\\n\";\n", redirect.target));
-            }
-            RedirectOperator::Heredoc | RedirectOperator::HeredocTabs => {
-                // Heredoc: command << delimiter
-                if let Some(body) = &redirect.heredoc_body {
-                    // Create a temporary file with the heredoc content
-                    output.push_str(&format!("my $temp_content = {};\n", self.perl_string_literal(body)));
-                    let fh = self.get_unique_file_handle();
-                    output.push_str(&format!("open(my {}, '>', '/tmp/heredoc_temp') or die \"Cannot create temp file: $!\\n\";\n", fh));
-                    output.push_str(&format!("print {} $temp_content;\n", fh));
-                    output.push_str(&format!("close({});\n", fh));
-                    output.push_str("open(STDIN, '<', '/tmp/heredoc_temp') or die \"Cannot open temp file: $!\\n\";\n");
-                }
-            }
-            _ => {
-                // Other redirects not yet implemented
-                output.push_str(&format!("# Redirect {:?} not yet implemented\n", redirect.operator));
-            }
-        }
-        
-        output
-    }
-
     fn generate_shopt_command(&mut self, cmd: &ShoptCommand) -> String {
         let mut output = String::new();
         
@@ -2040,29 +1837,8 @@ impl PerlGenerator {
         if has_env {
             output.push_str("{\n");
             for (var, value) in &cmd.env_vars {
-                // Check if this is an associative array assignment like map[foo]=bar
-                if let Some((array_name, key)) = self.extract_array_key(var) {
-                    let val = self.perl_string_literal(value);
-                    // For associative array assignments, generate $array{key} = value instead of $ENV{var}
-                    output.push_str(&format!("${}{{{}}} = {};\n", array_name, key, val));
-                } else if let Some(elements) = self.extract_array_elements(value) {
-                    // Check if this is an indexed array assignment like arr=(one two three)
-                    let elements_perl: Vec<String> = elements.iter()
-                        .map(|s| format!("\"{}\"", self.escape_perl_string(s)))
-                        .collect();
-                    output.push_str(&format!("@{} = ({});\n", var, elements_perl.join(", ")));
-                } else {
-                    let val = self.perl_string_literal(value);
-                    // Declare the variable if it's not already declared
-                    if !self.declared_locals.contains(var) {
-                        output.push_str(&format!("my ${} = {};\n", var, val));
-                        self.declared_locals.insert(var.clone());
-                    } else {
-                        // Variable already declared, just assign the value
-                        output.push_str(&format!("${} = {};\n", var, val));
-                    }
-                    output.push_str(&format!("local $ENV{{{}}} = {};;\n", var, val));
-                }
+                let val = self.perl_string_literal(value);
+                output.push_str(&format!("local $ENV{{{}}} = {};;\n", var, val));
             }
         }
         
@@ -2103,17 +1879,6 @@ impl PerlGenerator {
                 for arg in &cmd.args {
                     if let Word::Literal(var) = arg {
                         if let Some((var_name, var_value)) = var.split_once('=') {
-                            // Check if this is a positional parameter assignment (e.g., local x=$1)
-                            if var_value.starts_with('$') && var_value.len() > 1 {
-                                if let Ok(index) = var_value[1..].parse::<usize>() {
-                                    if index > 0 && index <= 9 {
-                                        // This is a positional parameter - skip the local variable declaration
-                                        // The parameter replacement will handle this later
-                                        eprintln!("DEBUG: Skipping local variable declaration for positional parameter {} -> {}", var_value, index);
-                                        continue;
-                                    }
-                                }
-                            }
                             output.push_str(&format!("my ${} = {};\n", var_name, self.perl_string_literal(var_value)));
                             self.declared_locals.insert(var_name.to_string());
                         } else {
@@ -2294,10 +2059,7 @@ impl PerlGenerator {
                 let var = parts[0].trim();
                 let value = parts[1].trim();
                 
-                // Handle special shell variables in test expressions
-                let var_perl = if var == "$#" { "scalar(@ARGV)".to_string() } else { var.to_string() };
-                
-                format!("{} == {}", var_perl, value)
+                format!("{} == {}", var, value)
             } else {
                 "0".to_string()
             }
@@ -2308,10 +2070,7 @@ impl PerlGenerator {
                 let var = parts[0].trim();
                 let value = parts[1].trim();
                 
-                // Handle special shell variables in test expressions
-                let var_perl = if var == "$#" { "scalar(@ARGV)".to_string() } else { var.to_string() };
-                
-                format!("{} != {}", var_perl, value)
+                format!("{} != {}", var, value)
             } else {
                 "0".to_string()
             }
@@ -2322,10 +2081,7 @@ impl PerlGenerator {
                 let var = parts[0].trim();
                 let value = parts[1].trim();
                 
-                // Handle special shell variables in test expressions
-                let var_perl = if var == "$#" { "scalar(@ARGV)".to_string() } else { var.to_string() };
-                
-                format!("{} < {}", var_perl, value)
+                format!("{} < {}", var, value)
             } else {
                 "0".to_string()
             }
@@ -2336,10 +2092,7 @@ impl PerlGenerator {
                 let var = parts[0].trim();
                 let value = parts[1].trim();
                 
-                // Handle special shell variables in test expressions
-                let var_perl = if var == "$#" { "scalar(@ARGV)".to_string() } else { var.to_string() };
-                
-                format!("{} <= {}", var_perl, value)
+                format!("{} <= {}", var, value)
             } else {
                 "0".to_string()
             }
@@ -2350,10 +2103,7 @@ impl PerlGenerator {
                 let var = parts[0].trim();
                 let value = parts[1].trim();
                 
-                // Handle special shell variables in test expressions
-                let var_perl = if var == "$#" { "scalar(@ARGV)".to_string() } else { var.to_string() };
-                
-                format!("{} > {}", var_perl, value)
+                format!("{} > {}", var, value)
             } else {
                 "0".to_string()
             }
@@ -2364,10 +2114,7 @@ impl PerlGenerator {
                 let var = parts[0].trim();
                 let value = parts[1].trim();
                 
-                // Handle special shell variables in test expressions
-                let var_perl = if var == "$#" { "scalar(@ARGV)".to_string() } else { var.to_string() };
-                
-                format!("{} >= {}", var_perl, value)
+                format!("{} >= {}", var, value)
             } else {
                 "0".to_string()
             }
@@ -2663,14 +2410,7 @@ impl PerlGenerator {
                             if key == "@" {
                                 format!("@{}", map_name)
                             } else {
-                                // Handle hash key access with proper quoting
-                                if key.starts_with('$') {
-                                    // Key is a variable like $k
-                                    format!("${}{{{}}}", map_name, key)
-                                } else {
-                                    // Key is a literal - quote it to avoid bareword errors
-                                    format!("${}{{\"{}\"}}", map_name, key)
-                                }
+                                format!("@{}", map_name)
                             }
                         }
                         _ => format!("@{}", items[0])
@@ -2700,8 +2440,8 @@ impl PerlGenerator {
                                                         // Key is a variable like $k
                                                         format!("${}{{{}}}", map_name, format!("${}", &key[1..]))
                                                     } else {
-                                                        // Key is a literal - quote it to avoid bareword errors
-                                                        format!("${}{{\"{}\"}}", map_name, key)
+                                                        // Key is a literal
+                                                        format!("${}{{{}}}", map_name, key)
                                                     }
                                                 }
                                                 StringPart::MapKeys(map_name) => {
@@ -3613,78 +3353,6 @@ impl PerlGenerator {
         output
     }
 
-    fn generate_case_statement(&mut self, case_stmt: &CaseStatement) -> String {
-        let mut output = String::new();
-        
-        // Convert bash case statement to Perl if/elsif/else
-        let mut first_case = true;
-        
-        for case_clause in &case_stmt.cases {
-            if first_case {
-                // First case becomes 'if'
-                output.push_str("if (");
-                first_case = false;
-            } else {
-                // Subsequent cases become 'elsif'
-                output.push_str(&self.indent());
-                output.push_str("} elsif (");
-            }
-            
-            // Handle multiple patterns in a single case clause
-            let mut pattern_conditions = Vec::new();
-            for pattern in &case_clause.patterns {
-                let pattern_str = self.perl_string_literal(pattern);
-                if pattern_str == "\"*\"" {
-                    // Default case - this should be the last one
-                    pattern_conditions.push("1".to_string()); // Always true
-                } else {
-                    // Convert bash glob patterns to Perl regex
-                    let mut perl_pattern = pattern_str.trim_matches('"').to_string();
-                    perl_pattern = perl_pattern.replace("*", ".*");
-                    perl_pattern = perl_pattern.replace("?", ".");
-                    perl_pattern = perl_pattern.replace("[", "\\[");
-                    perl_pattern = perl_pattern.replace("]", "\\]");
-                    
-                    // Create condition: $operation =~ /^pattern$/
-                    let word_str = self.word_to_perl(&case_stmt.word);
-                    
-                    // Handle positional parameters in case statements
-                    let processed_word = if word_str.contains("$1") || word_str.contains("$2") || word_str.contains("$3") {
-                        // Replace positional parameters with generic names that will be replaced later
-                        word_str.replace("$1", "$arg1").replace("$2", "$arg2").replace("$3", "$arg3")
-                    } else if word_str.contains("$name") {
-                        // The word_to_perl converted $1 to $name, but we need $arg1 for parameter replacement
-                        word_str.replace("$name", "$arg1")
-                    } else {
-                        word_str
-                    };
-                    
-                    pattern_conditions.push(format!("{} =~ /^{}$/", processed_word, perl_pattern));
-                }
-            }
-            
-            // Join multiple patterns with 'or'
-            output.push_str(&pattern_conditions.join(" or "));
-            output.push_str(") {\n");
-            
-            self.indent_level += 1;
-            // Generate body commands
-            for command in &case_clause.body {
-                output.push_str(&self.indent());
-                output.push_str(&self.generate_command(command));
-            }
-            self.indent_level -= 1;
-        }
-        
-        // Close the if/elsif chain
-        if !first_case {
-            output.push_str(&self.indent());
-            output.push_str("}\n");
-        }
-        
-        output
-    }
-
     fn generate_while_loop(&mut self, while_loop: &WhileLoop) -> String {
         let mut output = String::new();
         
@@ -3773,6 +3441,8 @@ impl PerlGenerator {
         
         output
     }
+
+    // Removed unused find_for_loop_variable method
 
     fn generate_for_loop(&mut self, for_loop: &ForLoop) -> String {
         let variable = &for_loop.variable;
@@ -3933,14 +3603,8 @@ impl PerlGenerator {
                         let array_name = &key[1..key.len()-3]; // Remove ! prefix and [@] suffix
                         format!("keys(%{})", array_name)
                     } else {
-                        // Regular map access - handle hash key access with proper quoting
-                        if key.starts_with('$') {
-                            // Key is a variable like $k
-                            format!("${}{{{}}}", map_name, key)
-                        } else {
-                            // Key is a literal - quote it to avoid bareword errors
-                            format!("${}{{\"{}\"}}", map_name, key)
-                        }
+                        // Regular map access - wrap in quotes
+                        format!("\"${}{}\"", map_name, key)
                     }
                 }
                 Word::MapKeys(map_name) => {
@@ -4005,276 +3669,31 @@ impl PerlGenerator {
         format!("{}{}}}\n", loop_header, body_code)
     }
 
+    // Removed unused parse_numeric_brace_range method
+
+    // Removed unused parse_seq_command method
+
+    // Removed unused expand_simple_brace_expression method
+
     fn generate_function(&mut self, func: &Function) -> String {
         let mut output = String::new();
         
         // Track that this function is defined
         self.declared_functions.insert(func.name.clone());
         
-        // Scan function body for positional parameters to infer signature
-        let inferred_params = self.infer_function_parameters(&func.body);
-        
-        // Generate modern Perl signature: sub name($param1, $param2) { }
-        if inferred_params.is_empty() {
-            output.push_str(&format!("sub {} {{\n", func.name));
-        } else {
-            let params: Vec<String> = inferred_params.iter()
-                .map(|p| format!("${}", p))
-                .collect();
-            output.push_str(&format!("sub {}({}) {{\n", func.name, params.join(", ")));
-        }
-        
+        output.push_str(&format!("sub {} {{\n", func.name));
         self.indent_level += 1;
         
-        // Generate body commands with parameter replacement
+        // Generate body commands
         for command in &func.body.commands {
             output.push_str(&self.indent());
-            let command_str = self.generate_command(command);
-            let replaced_command = self.replace_positional_params_in_function_body(&command_str, &inferred_params);
-            output.push_str(&replaced_command);
+            output.push_str(&self.generate_command(command));
         }
         
         self.indent_level -= 1;
         output.push_str("}\n");
         
         output
-    }
-
-    fn infer_function_parameters(&self, block: &Block) -> Vec<String> {
-        let mut params = Vec::new();
-        let mut max_param = 0;
-        let mut local_var_names = Vec::new();
-        
-        // Scan through all commands in the block to find positional parameters and local variable names
-        for command in &block.commands {
-            // Look for positional parameters in the command structure
-            self.scan_command_for_positional_params(command, &mut max_param);
-            
-            // Also look for meaningful local variable names
-            self.scan_command_for_local_vars(command, &mut local_var_names);
-        }
-        
-        // If we found meaningful local variable names, use those as parameter names
-        if !local_var_names.is_empty() && local_var_names.len() >= max_param {
-            // Use the meaningful local variable names as parameter names
-            for i in 0..max_param {
-                if i < local_var_names.len() {
-                    params.push(local_var_names[i].clone());
-                }
-            }
-        } else {
-            // Fall back to generic parameter names
-            for i in 1..=max_param {
-                let param_name = format!("arg{}", i);
-                params.push(param_name.to_string());
-            }
-        }
-        
-        params
-    }
-
-    fn replace_positional_params_in_function_body(&self, body: &str, params: &[String]) -> String {
-        let mut result = body.to_string();
-        
-        eprintln!("DEBUG: Parameter replacement - input body: {}", body);
-        eprintln!("DEBUG: Parameter replacement - params: {:?}", params);
-        
-        // Replace $1, $2, etc. with actual parameter names
-        for (i, param_name) in params.iter().enumerate() {
-            let positional_param = format!("${}", i + 1);
-            let actual_param = format!("${}", param_name);
-            result = result.replace(&positional_param, &actual_param);
-        }
-        
-        // Don't replace meaningful local variable names - preserve the developer's intent
-        // Only replace positional parameters ($1, $2, etc.) with named parameters
-        
-        // Handle specific function patterns first to avoid conflicts
-        if params.len() >= 3 {
-            // For math_ops: x -> name, y -> value, op -> operation
-            if result.contains("$x") && result.contains("$y") && result.contains("$op") {
-                result = result.replace("$x", &format!("${}", params[0]));
-                result = result.replace("$y", &format!("${}", params[1]));
-                result = result.replace("$op", &format!("${}", params[2]));
-            }
-        }
-        
-        // Handle conflicts between local variable names and parameter names
-        // If a local variable name conflicts with a parameter name, use a different name
-        for (_i, param_name) in params.iter().enumerate() {
-            // Check for patterns like "my $param_name = \"$param_name\";"
-            let conflict_pattern = format!("my ${} = \"${}\";", param_name, param_name);
-            if result.contains(&conflict_pattern) {
-                // Replace with direct parameter usage (remove the local variable)
-                result = result.replace(&conflict_pattern, "");
-            }
-        }
-        
-        // Fix corrupted variable names that are appearing in the generated code
-        // This is a workaround for a bug in the code generation process
-        let corrupted_fixes = [
-            ("$namection", "$action"),
-            ("$namerray_name", "$array_name"),
-        ];
-        
-        for (corrupted, correct) in corrupted_fixes.iter() {
-            result = result.replace(corrupted, correct);
-        }
-        
-        // Don't replace meaningful local variable names - preserve the developer's intent
-        // The local variables like $a, $b, $array_name, $action, $value should keep their names
-        
-        eprintln!("DEBUG: Parameter replacement - output result: {}", result);
-        
-        result
-    }
-
-    fn scan_command_for_positional_params(&self, command: &Command, max_param: &mut usize) {
-        match command {
-            Command::Simple(cmd) => {
-                // Check arguments for positional parameters
-                for arg in &cmd.args {
-                    self.scan_word_for_positional_params(arg, max_param);
-                }
-            }
-            Command::If(if_stmt) => {
-                // Check if condition and body
-                self.scan_command_for_positional_params(&if_stmt.condition, max_param);
-                self.scan_command_for_positional_params(&if_stmt.then_branch, max_param);
-                if let Some(else_branch) = &if_stmt.else_branch {
-                    self.scan_command_for_positional_params(else_branch, max_param);
-                }
-            }
-            Command::Case(case_stmt) => {
-                // Check case word and cases
-                self.scan_word_for_positional_params(&case_stmt.word, max_param);
-                for case_clause in &case_stmt.cases {
-                    for cmd in &case_clause.body {
-                        self.scan_command_for_positional_params(cmd, max_param);
-                    }
-                }
-            }
-            Command::While(while_loop) => {
-                // Check while condition and body
-                self.scan_command_for_positional_params(&while_loop.condition, max_param);
-                for cmd in &while_loop.body.commands {
-                    self.scan_command_for_positional_params(cmd, max_param);
-                }
-            }
-            Command::For(for_loop) => {
-                // Check for loop body
-                for cmd in &for_loop.body.commands {
-                    self.scan_command_for_positional_params(cmd, max_param);
-                }
-            }
-            Command::Function(func) => {
-                // Check function body
-                for cmd in &func.body.commands {
-                    self.scan_command_for_positional_params(cmd, max_param);
-                }
-            }
-            Command::Block(block) => {
-                // Check block commands
-                for cmd in &block.commands {
-                    self.scan_command_for_positional_params(cmd, max_param);
-                }
-            }
-            Command::BuiltinCommand(cmd) => {
-                // Check builtin command arguments for positional parameters
-                for arg in &cmd.args {
-                    self.scan_word_for_positional_params(arg, max_param);
-                }
-            }
-            _ => {
-                // For other command types, just continue
-            }
-        }
-    }
-
-    fn scan_word_for_positional_params(&self, word: &Word, max_param: &mut usize) {
-        match word {
-            Word::Literal(s) => {
-                // Look for $1, $2, etc. patterns in literal strings
-                for i in 1..=9 {
-                    if s.contains(&format!("${}", i)) {
-                        *max_param = (*max_param).max(i);
-                    }
-                }
-            }
-            Word::Variable(var) => {
-                // Check if this is a positional parameter
-                if var.chars().all(|c| c.is_ascii_digit()) {
-                    if let Ok(index) = var.parse::<usize>() {
-                        if index > 0 && index <= 9 {
-                            *max_param = (*max_param).max(index);
-                        }
-                    }
-                }
-            }
-            Word::StringInterpolation(interp) => {
-                // Check string interpolation parts
-                for part in &interp.parts {
-                    match part {
-                        StringPart::Literal(s) => {
-                            for i in 1..=9 {
-                                if s.contains(&format!("${}", i)) {
-                                    *max_param = (*max_param).max(i);
-                                }
-                            }
-                        }
-                        StringPart::Variable(var) => {
-                            if var.chars().all(|c| c.is_ascii_digit()) {
-                                if let Ok(index) = var.parse::<usize>() {
-                                    if index > 0 && index <= 9 {
-                                        *max_param = (*max_param).max(index);
-                                    }
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn scan_command_for_local_vars(&self, command: &Command, local_vars: &mut Vec<String>) {
-        match command {
-            Command::BuiltinCommand(cmd) if cmd.name == "local" => {
-                // Extract local variable names from local commands
-                for arg in &cmd.args {
-                    if let Word::Literal(var) = arg {
-                        if let Some((var_name, var_value)) = var.split_once('=') {
-                            // Check if this is a positional parameter assignment (e.g., local first_number=$1)
-                            if var_value.starts_with('$') && var_value.len() > 1 {
-                                if let Ok(index) = var_value[1..].parse::<usize>() {
-                                    if index > 0 && index <= 9 {
-                                        // Store the meaningful local variable name
-                                        local_vars.push(var_name.to_string());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            _ => {}
-        }
-    }
-
-    fn convert_positional_parameter(&self, param: &str) -> String {
-        // Convert shell positional parameters ($1, $2, etc.) to actual parameter names when inside functions
-        if param.starts_with('$') && param.len() > 1 {
-            if let Ok(index) = param[1..].parse::<usize>() {
-                if index > 0 && index <= 9 { // Shell supports $1 through $9
-                    // Use generic parameter names that will be replaced later by the parameter replacement logic
-                    let param_name = format!("arg{}", index);
-                    return format!("${}", param_name);
-                }
-            }
-        }
-        param.to_string()
     }
 
     fn generate_subshell(&mut self, command: &Command) -> String {
@@ -4320,7 +3739,7 @@ impl PerlGenerator {
     
     fn escape_perl_string(&self, s: &str) -> String {
         // Handle strings that already contain escape sequences
-                    let mut result = String::new();
+        let mut result = String::new();
         
         for ch in s.chars() {
             match ch {
@@ -4338,8 +3757,8 @@ impl PerlGenerator {
             }
         }
         
-                    result
-                }
+        result
+    }
 
     fn escape_perl_regex(&self, s: &str) -> String {
         s.chars().map(|c| match c {
@@ -4364,7 +3783,7 @@ impl PerlGenerator {
 
     fn perl_string_literal(&self, s: &str) -> String {
         // Handle strings that already contain escape sequences
-                    let mut result = String::new();
+        let mut result = String::new();
         
         for ch in s.chars() {
             match ch {
@@ -4423,15 +3842,15 @@ impl PerlGenerator {
         }
         
         // Return the escaped string without quotes
-                    result
-                }
+        result
+    }
 
     fn convert_arithmetic_to_perl(&self, expr: &str) -> String {
         SharedUtils::convert_arithmetic_operators(expr, "perl")
     }
 
     fn convert_string_interpolation_to_perl_for_printf(&self, interp: &StringInterpolation) -> String {
-                    let mut result = String::new();
+        let mut result = String::new();
         
         for part in &interp.parts {
             match part {
@@ -4460,14 +3879,8 @@ impl PerlGenerator {
                     // Convert map access to Perl array/hash access
                     // For now, assume "map" is a hash and others are indexed arrays
                     if map_name == "map" {
-                        // Convert map[key] to $map{key} for associative arrays with proper key quoting
-                        if key.starts_with('$') {
-                            // Key is a variable like $k
-                            result.push_str(&format!("${}{{{}}}", map_name, key));
-                        } else {
-                            // Key is a literal - quote it to avoid bareword errors
-                            result.push_str(&format!("${}{{\"{}\"}}", map_name, key));
-                        }
+                        // Convert map[key] to $map{key} for associative arrays
+                        result.push_str(&format!("${}{{{}}}", map_name, key));
                     } else if key == "@" {
                         // Convert arr[@] to join(" ", @arr) for Perl arrays
                         result.push_str(&format!("join(\" \", @{})", map_name));
@@ -4484,15 +3897,6 @@ impl PerlGenerator {
                     // Convert ${#arr[@]} to scalar(@arr) for printf format strings
                     result.push_str(&format!("scalar(@{})", map_name));
                 }
-                StringPart::ArraySlice(array_name, offset, length) => {
-                    // Convert ${arr[@]:start:length} to @arr[start..start+length-1] for printf format strings
-                    // Convert ${arr[@]:start} to @arr[start..$#arr] for printf format strings
-                    if let Some(length_str) = length {
-                        result.push_str(&format!("@{}[{}..{}+{}-1]", array_name, offset, offset, length_str));
-                    } else {
-                        result.push_str(&format!("@{}[{}..$#{}]", array_name, offset, array_name));
-                    }
-                }
                 StringPart::ParameterExpansion(pe) => {
                     result.push_str(&self.generate_parameter_expansion(pe));
                 }
@@ -4503,9 +3907,24 @@ impl PerlGenerator {
                         result.push_str("scalar(@ARGV)");
                     } else if var == "@" {
                         result.push_str("join(\" \", @ARGV)");
-                    } else if var.chars().all(|c| c.is_ascii_digit()) {
-                        // Convert positional parameters to modern Perl parameter names
-                        result.push_str(&self.convert_positional_parameter(&format!("${}", var)));
+                    } else if var == "1" {
+                        result.push_str("$_[0]");
+                    } else if var == "2" {
+                        result.push_str("$_[1]");
+                    } else if var == "3" {
+                        result.push_str("$_[2]");
+                    } else if var == "4" {
+                        result.push_str("$_[3]");
+                    } else if var == "5" {
+                        result.push_str("$_[4]");
+                    } else if var == "6" {
+                        result.push_str("$_[5]");
+                    } else if var == "7" {
+                        result.push_str("$_[6]");
+                    } else if var == "8" {
+                        result.push_str("$_[7]");
+                    } else if var == "9" {
+                        result.push_str("$_[8]");
                     } else {
                         // Check for special shell array syntax
                         if var.starts_with('#') && var.contains('[') {
@@ -4549,13 +3968,11 @@ impl PerlGenerator {
             }
         }
         
-                    result
-                }
+        result
+    }
 
     fn convert_string_interpolation_to_perl(&self, interp: &StringInterpolation) -> String {
         let mut result = String::new();
-        
-
         
         // Special case: if we have only one part and it's a special variable that should be evaluated
         if interp.parts.len() == 1 {
@@ -4574,7 +3991,7 @@ impl PerlGenerator {
                     return format!("keys(%{})", array_name);
                 } else if var.starts_with('!') && var.ends_with("[*]") {
                     // This is !map[*] - convert to keys(%map) in Perl without quotes
-                    let array_name = &var[1..var.len()-3]; // Remove ! prefix and [@] suffix
+                    let array_name = &var[1..var.len()-3]; // Remove ! prefix and [*] suffix
                     return format!("keys(%{})", array_name);
                 }
             }
@@ -4636,9 +4053,7 @@ impl PerlGenerator {
             // Special case: if we have only one part and it's a map access, return it without quotes
             if let StringPart::MapAccess(map_name, key) = &interp.parts[0] {
                 if map_name == "map" {
-                    // Quote the key to avoid bareword errors in strict mode
-                    let quoted_key = format!("\"{}\"", self.escape_perl_string(key));
-                    return format!("$map{{{}}}", quoted_key);
+                    return format!("$map{{{}}}", key);
                 } else {
                     return format!("${}[{}]", map_name, key);
                 }
@@ -4658,10 +4073,7 @@ impl PerlGenerator {
                                 let key = &content[bracket_start..];
                                 // For associative arrays, use {} instead of []
                                 if array_name == "map" {
-                                    // Quote the key to avoid bareword errors in strict mode
-                                    let key_content = &key[1..key.len()-1]; // Remove [ and ]
-                                    let quoted_key = format!("\"{}\"", self.escape_perl_string(key_content));
-                                    result.push_str(&format!("$map{{{}}}", quoted_key));
+                                    result.push_str(&format!("$map{{{}}}", &key[1..key.len()-1]));
                                 } else {
                                     result.push_str(&format!("${}{}", array_name, key));
                                 }
@@ -4669,69 +4081,15 @@ impl PerlGenerator {
                             }
                         }
                     }
-                    
-                    // Post-process the literal string to convert environment variable references and parameter expansions
-                    let mut processed_s = s.clone();
-                    
-                    // Handle environment variables
-                    for env_var in &["PWD", "USER", "HOME", "HOSTNAME", "PATH", "SHELL", "TERM", "LANG", "LC_ALL"] {
-                        let pattern = format!("${}", env_var);
-                        let replacement = format!("$ENV{{{}}}", env_var);
-                        processed_s = processed_s.replace(&pattern, &replacement);
-                    }
-                    
-                    // Handle parameter expansions like ${var:-default}
-                    if processed_s.contains("${") && processed_s.contains(":-") {
-                        // This is a parameter expansion with default value
-                        if let Some(start) = processed_s.find("${") {
-                            if let Some(end) = processed_s.rfind("}") {
-                                if start < end {
-                                    let expansion = &processed_s[start..=end];
-                                    if expansion.contains(":-") {
-                                        let parts: Vec<&str> = expansion[2..expansion.len()-1].split(":-").collect();
-                                        if parts.len() == 2 {
-                                            let var_name = parts[0];
-                                            let default = parts[1];
-                                            
-                                            // Convert the variable name if it's an environment variable
-                                            let processed_var = if ["PWD", "USER", "HOME", "HOSTNAME", "PATH", "SHELL", "TERM", "LANG", "LC_ALL"].contains(&var_name) {
-                                                format!("$ENV{{{}}}", var_name)
-                                            } else {
-                                                format!("${}", var_name)
-                                            };
-                                            
-                                            // Convert command substitution in default value
-                                            let processed_default = if default.starts_with("$(") && default.ends_with(")") {
-                                                let cmd = &default[2..default.len()-1];
-                                                format!("`{}`", cmd)
-                                            } else {
-                                                default.to_string()
-                                            };
-                                            
-                                            let replacement = format!("defined({}) ? {} : '{}'", processed_var, processed_var, processed_default);
-                                            processed_s = processed_s.replace(expansion, &replacement);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    
                     // For literals, just escape them without adding quotes since we'll wrap the whole result
-                    result.push_str(&self.escape_perl_string_without_quotes(&processed_s));
+                    result.push_str(&self.escape_perl_string_without_quotes(s));
                 }
                 StringPart::MapAccess(map_name, key) => {
                     // Convert map access to Perl array/hash access
                     // For now, assume "map" is a hash and others are indexed arrays
                     if map_name == "map" {
-                        // Convert map[key] to $map{key} for associative arrays with proper key quoting
-                        if key.starts_with('$') {
-                            // Key is a variable like $k
-                            result.push_str(&format!("${}{{{}}}", map_name, key));
-                        } else {
-                            // Key is a literal - quote it to avoid bareword errors
-                            result.push_str(&format!("${}{{\"{}\"}}", map_name, key));
-                        }
+                        // Convert map[key] to $map{key} for associative arrays
+                        result.push_str(&format!("${}{{{}}}", map_name, key));
                     } else {
                         // Convert arr[key] to $arr[key] for indexed arrays
                         result.push_str(&format!("${}[{}]", map_name, key));
@@ -4745,15 +4103,6 @@ impl PerlGenerator {
                     // Convert ${#arr[@]} to scalar(@arr) in Perl
                     result.push_str(&format!("scalar(@{})", map_name));
                 }
-                StringPart::ArraySlice(array_name, offset, length) => {
-                    // Convert ${arr[@]:start:length} to @arr[start..start+length-1] in Perl
-                    // Convert ${arr[@]:start} to @arr[start..$#arr] in Perl
-                    if let Some(length_str) = length {
-                        result.push_str(&format!("@{}[{}..{}+{}-1]", array_name, offset, offset, length_str));
-                    } else {
-                        result.push_str(&format!("@{}[{}..$#{}]", array_name, offset, array_name));
-                    }
-                }
                 StringPart::ParameterExpansion(pe) => {
                     result.push_str(&self.generate_parameter_expansion(pe));
                 }
@@ -4763,9 +4112,24 @@ impl PerlGenerator {
                         result.push_str("scalar(@ARGV)");
                     } else if var == "@" {
                         result.push_str("join(\" \", @ARGV)");
-                    } else if var.chars().all(|c| c.is_ascii_digit()) {
-                        // Convert positional parameters to modern Perl parameter names
-                        result.push_str(&self.convert_positional_parameter(&format!("${}", var)));
+                    } else if var == "1" {
+                        result.push_str("$_[0]");
+                    } else if var == "2" {
+                        result.push_str("$_[1]");
+                    } else if var == "3" {
+                        result.push_str("$_[2]");
+                    } else if var == "4" {
+                        result.push_str("$_[3]");
+                    } else if var == "5" {
+                        result.push_str("$_[4]");
+                    } else if var == "6" {
+                        result.push_str("$_[5]");
+                    } else if var == "7" {
+                        result.push_str("$_[6]");
+                    } else if var == "8" {
+                        result.push_str("$_[7]");
+                    } else if var == "9" {
+                        result.push_str("$_[8]");
                     } else if var == "ENV" {
                         // Special handling for ENV environment variable access
                         // This will be followed by a literal like "{SHELL_VAR}"
@@ -4810,9 +4174,7 @@ impl PerlGenerator {
                                 if array_name == "map" {
                                     // Convert map[key] to $map{key} for associative arrays
                                     let key_content = &key[1..key.len()-1]; // Remove [ and ]
-                                    // Quote the key to avoid bareword errors in strict mode
-                                    let quoted_key = format!("\"{}\"", self.escape_perl_string(key_content));
-                                    result.push_str(&format!("${}{{{}}}", array_name, quoted_key));
+                                    result.push_str(&format!("${}{{{}}}", array_name, key_content));
                                 } else {
                                     // Regular indexed array - use [] syntax in Perl
                                     result.push_str(&format!("${}[{}]", array_name, key));
@@ -4993,39 +4355,13 @@ impl PerlGenerator {
                 if let Some(pe) = self.extract_parameter_expansion(var) {
                     self.generate_parameter_expansion(&pe)
                 } else {
-                    // Handle special shell variables
-                    match var.as_str() {
-                        "#" => "scalar(@ARGV)".to_string(), // $# -> scalar(@ARGV) in Perl
-                        "@" => "@ARGV".to_string(),         // $@ -> @ARGV in Perl  
-                        "*" => "\"$ARGV[0] $ARGV[1] ...\"".to_string(), // $* -> "$ARGV[0] $ARGV[1] ..." in Perl
-                        _ => {
-                            // Check if this is a positional parameter ($1, $2, etc.) and convert it
-                            if var.chars().all(|c| c.is_ascii_digit()) {
-                                self.convert_positional_parameter(&format!("${}", var))
-                            } else {
-                                // Check if this is a common environment variable that should be accessed via $ENV{}
-                                match var.as_str() {
-                                    "PWD" | "USER" | "HOME" | "HOSTNAME" | "PATH" | "SHELL" | "TERM" | "LANG" | "LC_ALL" => {
-                                        format!("$ENV{{{}}}", var)
-                                    }
-                                    _ => {
-                                        format!("${}", var) // Regular variable reference
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    // Regular variable reference
+                    format!("${}", var)
                 }
             },
             Word::MapAccess(map_name, key) => {
                 // ${map[key]} -> $map{$key}
-                if key.starts_with('$') {
-                    // Key is a variable like $k
-                    format!("${}{{{}}}", map_name, key)
-                } else {
-                    // Key is a literal - quote it to avoid bareword errors
-                    format!("${}{{\"{}\"}}", map_name, key)
-                }
+                format!("${}{{{}}}", map_name, key)
             },
             Word::MapKeys(map_name) => {
                 // ${!map[@]} -> keys(%map)
@@ -5034,15 +4370,6 @@ impl PerlGenerator {
             Word::MapLength(map_name) => {
                 // ${#arr[@]} -> scalar(@arr)
                 format!("scalar(@{})", map_name)
-            },
-            Word::ArraySlice(array_name, offset, length) => {
-                // ${arr[@]:start:length} -> @arr[start..start+length-1]
-                // ${arr[@]:start} -> @arr[start..$#arr]
-                if let Some(length_str) = length {
-                    format!("@{}[{}..{}+{}-1]", array_name, offset, offset, length_str)
-                } else {
-                    format!("@{}[{}..$#{}]", array_name, offset, array_name)
-                }
             },
         }
     }
@@ -5134,14 +4461,7 @@ impl PerlGenerator {
             Word::MapAccess(map_name, key) => {
                 // For now, assume "map" is a hash and others are indexed arrays
                 if map_name == "map" {
-                    // Handle hash key access with proper quoting
-                    if key.starts_with('$') {
-                        // Key is a variable like $k
-                        format!("${}{{{}}}", map_name, key)
-                    } else {
-                        // Key is a literal - quote it to avoid bareword errors
-                        format!("${}{{\"{}\"}}", map_name, key)
-                    }
+                    format!("${}{{{}}}", map_name, key)
                 } else {
                     format!("${}[{}]", map_name, key)
                 }
@@ -5153,15 +4473,6 @@ impl PerlGenerator {
             Word::MapLength(map_name) => {
                 // ${#arr[@]} -> scalar(@arr)
                 format!("scalar(@{})", map_name)
-            },
-            Word::ArraySlice(array_name, offset, length) => {
-                // ${arr[@]:start:length} -> @arr[start..start+length-1]
-                // ${arr[@]:start} -> @arr[start..$#arr]
-                if let Some(length_str) = length {
-                    format!("@{}[{}..{}+{}-1]", array_name, offset, offset, length_str)
-                } else {
-                    format!("@{}[{}..$#{}]", array_name, offset, array_name)
-                }
             },
             Word::Arithmetic(expr) => self.convert_arithmetic_to_perl(&expr.expression),
             Word::BraceExpansion(expansion) => {
@@ -5648,203 +4959,35 @@ impl PerlGenerator {
 
     fn generate_parameter_expansion(&self, pe: &ParameterExpansion) -> String {
         match &pe.operator {
-            ParameterExpansionOperator::UppercaseAll => {
-                // Handle positional parameters properly
-                if pe.variable.chars().all(|c| c.is_ascii_digit()) {
-                    // This is a positional parameter like $2, convert it to $arg2
-                    let arg_name = format!("arg{}", pe.variable);
-                    format!("uc(${})", arg_name)
-                } else {
-                    format!("uc(${})", pe.variable)
-                }
-            },
-            ParameterExpansionOperator::LowercaseAll => {
-                // Handle positional parameters properly
-                if pe.variable.chars().all(|c| c.is_ascii_digit()) {
-                    // This is a positional parameter like $2, convert it to $arg2
-                    let arg_name = format!("arg{}", pe.variable);
-                    format!("lc(${})", arg_name)
-                } else {
-                    format!("lc(${})", pe.variable)
-                }
-            },
-            ParameterExpansionOperator::UppercaseFirst => {
-                // Handle positional parameters properly
-                if pe.variable.chars().all(|c| c.is_ascii_digit()) {
-                    // This is a positional parameter like $2, convert it to $arg2
-                    let arg_name = format!("arg{}", pe.variable);
-                    format!("ucfirst(${})", arg_name)
-                } else {
-                    format!("ucfirst(${})", pe.variable)
-                }
-            },
+            ParameterExpansionOperator::UppercaseAll => format!("uc(${})", pe.variable),
+            ParameterExpansionOperator::LowercaseAll => format!("lc(${})", pe.variable),
+            ParameterExpansionOperator::UppercaseFirst => format!("ucfirst(${})", pe.variable),
             ParameterExpansionOperator::RemoveLongestPrefix(pattern) => {
                 let escaped_pattern = self.escape_perl_regex(pattern);
-                // Handle positional parameters properly
-                if pe.variable.chars().all(|c| c.is_ascii_digit()) {
-                    // This is a positional parameter like $2, convert it to $arg2
-                    let arg_name = format!("arg{}", pe.variable);
-                    format!("do {{ my $temp = ${}; $temp =~ s/^{}//; $temp }}", arg_name, escaped_pattern)
-                } else {
-                    format!("do {{ my $temp = ${}; $temp =~ s/^{}//; $temp }}", pe.variable, escaped_pattern)
-                }
+                format!("do {{ my $temp = ${}; $temp =~ s/^{}//; $temp }}", pe.variable, escaped_pattern)
             },
             ParameterExpansionOperator::RemoveShortestPrefix(pattern) => {
                 let escaped_pattern = self.escape_perl_regex(pattern);
-                // Handle positional parameters properly
-                if pe.variable.chars().all(|c| c.is_ascii_digit()) {
-                    // This is a positional parameter like $2, convert it to $arg2
-                    let arg_name = format!("arg{}", pe.variable);
-                    format!("do {{ my $temp = ${}; $temp =~ s/^{}//; $temp }}", arg_name, escaped_pattern)
-                } else {
-                    format!("do {{ my $temp = ${}; $temp =~ s/^{}//; $temp }}", pe.variable, escaped_pattern)
-                }
+                format!("do {{ my $temp = ${}; $temp =~ s/^{}//; $temp }}", pe.variable, escaped_pattern)
             },
             ParameterExpansionOperator::RemoveLongestSuffix(pattern) => {
                 let escaped_pattern = self.escape_perl_regex(pattern);
-                // Handle positional parameters properly
-                if pe.variable.chars().all(|c| c.is_ascii_digit()) {
-                    // This is a positional parameter like $2, convert it to $arg2
-                    let arg_name = format!("arg{}", pe.variable);
-                    format!("do {{ my $temp = ${}; $temp =~ s/{}$//; $temp }}", arg_name, escaped_pattern)
-                } else {
-                    format!("do {{ my $temp = ${}; $temp =~ s/{}$//; $temp }}", pe.variable, escaped_pattern)
-                }
+                format!("do {{ my $temp = ${}; $temp =~ s/{}$//; $temp }}", pe.variable, escaped_pattern)
             },
             ParameterExpansionOperator::RemoveShortestSuffix(pattern) => {
                 let escaped_pattern = self.escape_perl_regex(pattern);
-                // Handle positional parameters properly
-                if pe.variable.chars().all(|c| c.is_ascii_digit()) {
-                    // This is a positional parameter like $2, convert it to $arg2
-                    let arg_name = format!("arg{}", pe.variable);
-                    format!("do {{ my $temp = ${}; $temp =~ s/{}$//; $temp }}", arg_name, escaped_pattern)
-                } else {
-                    format!("do {{ my $temp = ${}; $temp =~ s/{}$//; $temp }}", pe.variable, escaped_pattern)
-                }
+                format!("do {{ my $temp = ${}; $temp =~ s/{}$//; $temp }}", pe.variable, escaped_pattern)
             },
             ParameterExpansionOperator::SubstituteAll(pattern, replacement) => {
                 let escaped_pattern = self.escape_perl_regex(pattern);
                 let escaped_replacement = self.escape_perl_regex(replacement);
-                // Handle positional parameters properly
-                if pe.variable.chars().all(|c| c.is_ascii_digit()) {
-                    // This is a positional parameter like $2, convert it to $arg2
-                    let arg_name = format!("arg{}", pe.variable);
-                    format!("do {{ my $temp = ${}; $temp =~ s/{}/{}/g; $temp }}", arg_name, escaped_pattern, escaped_replacement)
-                } else {
-                    format!("do {{ my $temp = ${}; $temp =~ s/{}/{}/g; $temp }}", pe.variable, escaped_pattern, escaped_replacement)
-                }
+                format!("do {{ my $temp = ${}; $temp =~ s/{}/{}/g; $temp }}", pe.variable, escaped_pattern, escaped_replacement)
             },
-            ParameterExpansionOperator::DefaultValue(default) => {
-                // Handle positional parameters properly
-                let var_name = if pe.variable.chars().all(|c| c.is_ascii_digit()) {
-                    // This is a positional parameter like $2, convert it to $arg2
-                    format!("arg{}", pe.variable)
-                } else {
-                    // Check if this is a common environment variable that should be accessed via $ENV{}
-                    match pe.variable.as_str() {
-                        "PWD" | "USER" | "HOME" | "HOSTNAME" | "PATH" | "SHELL" | "TERM" | "LANG" | "LC_ALL" => {
-                            format!("ENV{{{}}}", pe.variable)
-                        }
-                        _ => {
-                            pe.variable.clone()
-                        }
-                    }
-                };
-                
-                // Process the default value to handle command substitutions
-                let processed_default = if default.starts_with("$(") && default.ends_with(")") {
-                    // This is a command substitution like $(pwd), convert to backticks
-                    let cmd = &default[2..default.len()-1]; // Remove $( and )
-                    format!("`{}`", cmd)
-                } else {
-                    default.clone()
-                };
-                
-                // Quote the default value to avoid bareword errors in strict mode
-                let quoted_default = if processed_default.starts_with("`") || processed_default.starts_with("$") {
-                    // Command substitution or variable - don't quote
-                    processed_default
-                } else {
-                    // Literal string - quote it
-                    format!("\"{}\"", processed_default)
-                };
-                format!("defined(${}) ? ${} : {}", var_name, var_name, quoted_default)
-            },
-            ParameterExpansionOperator::AssignDefault(default) => {
-                // Handle positional parameters properly
-                // Quote the default value to avoid bareword errors in strict mode
-                let quoted_default = if default.starts_with("`") || default.starts_with("$") {
-                    // Command substitution or variable - don't quote
-                    default.to_string()
-                } else {
-                    // Literal string - quote it
-                    format!("\"{}\"", default)
-                };
-                
-                if pe.variable.chars().all(|c| c.is_ascii_digit()) {
-                    // This is a positional parameter like $2, convert it to $arg2
-                    let arg_name = format!("arg{}", pe.variable);
-                    format!("${} //= {}", arg_name, quoted_default)
-                } else {
-                    format!("${} //= {}", pe.variable, quoted_default)
-                }
-            },
-            ParameterExpansionOperator::ErrorIfUnset(error) => {
-                // Handle positional parameters properly
-                // Quote the error message to avoid bareword errors in strict mode
-                let quoted_error = if error.starts_with("`") || error.starts_with("$") {
-                    // Command substitution or variable - don't quote
-                    error.to_string()
-                } else {
-                    // Literal string - quote it
-                    format!("\"{}\"", error)
-                };
-                
-                if pe.variable.chars().all(|c| c.is_ascii_digit()) {
-                    // This is a positional parameter like $2, convert it to $arg2
-                    let arg_name = format!("arg{}", pe.variable);
-                    format!("defined(${}) ? ${} : die({})", arg_name, arg_name, quoted_error)
-                } else {
-                    format!("defined(${}) ? ${} : die({})", pe.variable, pe.variable, quoted_error)
-                }
-            },
-            ParameterExpansionOperator::Basename => {
-                // Handle positional parameters properly
-                if pe.variable.chars().all(|c| c.is_ascii_digit()) {
-                    // This is a positional parameter like $2, convert it to $arg2
-                    let arg_name = format!("arg{}", pe.variable);
-                    format!("basename(${})", arg_name)
-                } else {
-                    format!("basename(${})", pe.variable)
-                }
-            },
-            ParameterExpansionOperator::Dirname => {
-                // Handle positional parameters properly
-                if pe.variable.chars().all(|c| c.is_ascii_digit()) {
-                    // This is a positional parameter like $2, convert it to $arg2
-                    let arg_name = format!("arg{}", pe.variable);
-                    format!("dirname(${})", arg_name)
-                } else {
-                    format!("dirname(${})", pe.variable)
-                }
-            },
-            ParameterExpansionOperator::ArraySlice(offset, length) => {
-                // Handle positional parameters properly
-                let array_name = if pe.variable.chars().all(|c| c.is_ascii_digit()) {
-                    // This is a positional parameter like $2, convert it to $arg2
-                    format!("arg{}", pe.variable)
-                } else {
-                    pe.variable.clone()
-                };
-                
-                if let Some(length_str) = length {
-                    // ${var:start:length} -> @var[start..start+length-1]
-                    format!("@{0}[{1}..{1}+{2}-1]", array_name, offset, length_str)
-                } else {
-                    // ${var:offset} -> @var[offset..$#var] (from offset to end)
-                    format!("@{0}[{1}..$#{0}]", array_name, offset)
-                }
-            }
+            ParameterExpansionOperator::DefaultValue(default) => format!("defined(${}) ? ${} : '{}'", pe.variable, pe.variable, default),
+            ParameterExpansionOperator::AssignDefault(default) => format!("${} //= '{}'", pe.variable, default),
+            ParameterExpansionOperator::ErrorIfUnset(error) => format!("defined(${}) ? ${} : die('{}')", pe.variable, pe.variable, error),
+            ParameterExpansionOperator::Basename => format!("basename(${})", pe.variable),
+            ParameterExpansionOperator::Dirname => format!("dirname(${})", pe.variable),
         }
     }
 
@@ -6175,9 +5318,8 @@ impl PerlGenerator {
                                 remaining_parts.push("scalar(@ARGV)".to_string());
                             } else if var == "@" {
                                 remaining_parts.push("join(\" \", @ARGV)".to_string());
-                            } else if var.chars().all(|c| c.is_ascii_digit()) {
-                                // Convert positional parameters to modern Perl parameter names
-                                remaining_parts.push(self.convert_positional_parameter(&format!("${}", var)));
+                            } else if var == "1" {
+                                remaining_parts.push("$_[0]".to_string());
                             } else if var.starts_with('#') && var.ends_with("[@]") {
                                 let array_name = &var[1..var.len()-3];
                                 remaining_parts.push(format!("scalar(@{})", array_name));
@@ -6247,9 +5389,8 @@ impl PerlGenerator {
                             parts.push("scalar(@ARGV)".to_string());
                         } else if var == "@" {
                             parts.push("join(\" \", @ARGV)".to_string());
-                        } else if var.chars().all(|c| c.is_ascii_digit()) {
-                            // Convert positional parameters to modern Perl parameter names
-                            parts.push(self.convert_positional_parameter(&format!("${}", var)));
+                        } else if var == "1" {
+                            parts.push("$_[0]".to_string());
                         } else if var.starts_with('#') && var.ends_with("[@]") {
                             let array_name = &var[1..var.len()-3];
                             parts.push(format!("scalar(@{})", array_name));
@@ -6280,9 +5421,7 @@ impl PerlGenerator {
                                 }
                             } else if let StringPart::MapAccess(map_name, key) = &interp.parts[0] {
                                 if map_name == "map" {
-                                    // Quote the key to avoid bareword errors in strict mode
-                                    let quoted_key = format!("\"{}\"", self.escape_perl_string(key));
-                                    parts.push(format!("$map{{{}}}", quoted_key));
+                                    parts.push(format!("$map{{{}}}", key));
                                 } else {
                                     parts.push(format!("${}[{}]", map_name, key));
                                 }
@@ -6485,8 +5624,8 @@ impl PerlGenerator {
             Command::Simple(simple_cmd) => {
                 // Check for variables in environment variables (assignments)
                 for (var, _value) in &simple_cmd.env_vars {
-                    // Skip array access patterns like map[foo] and empty strings
-                    if !var.contains('[') && !var.is_empty() && !vars.contains(var) {
+                    // Skip array access patterns like map[foo]
+                    if !var.contains('[') && !vars.contains(var) {
                         vars.push(var.clone());
                     }
                 }
@@ -6497,25 +5636,10 @@ impl PerlGenerator {
                 }
             }
             Command::BuiltinCommand(builtin_cmd) => {
-                // Handle declare commands like "declare -A map"
-                if builtin_cmd.name == "declare" && builtin_cmd.args.len() >= 2 {
-                    println!("DEBUG: Found declare command with args: {:?}", builtin_cmd.args);
-                    if let (Word::Literal(flag), Word::Literal(var_name)) = (&builtin_cmd.args[0], &builtin_cmd.args[1]) {
-                        println!("DEBUG: Declare flag: {}, var_name: {}", flag, var_name);
-                        if flag == "-A" {
-                            // This is an associative array declaration
-                            println!("DEBUG: Adding associative array variable: {}", var_name);
-                            if !vars.contains(var_name) {
-                                vars.push(var_name.clone());
-                            }
-                        }
-                    }
-                }
-                
                 // Check for variables in environment variables (assignments)
                 for (var, _value) in &builtin_cmd.env_vars {
-                    // Skip array access patterns like map[foo] and empty strings
-                    if !var.contains('[') && !var.is_empty() && !vars.contains(var) {
+                    // Skip array access patterns like map[foo]
+                    if !var.contains('[') && !vars.contains(var) {
                         vars.push(var.clone());
                     }
                 }
@@ -6527,7 +5651,7 @@ impl PerlGenerator {
             }
             Command::For(for_loop) => {
                 // Add the for loop variable to global vars
-                if !for_loop.variable.is_empty() && !vars.contains(&for_loop.variable) {
+                if !vars.contains(&for_loop.variable) {
                     vars.push(for_loop.variable.clone());
                 }
                 // Recursively check the for loop body
@@ -6562,7 +5686,6 @@ impl PerlGenerator {
                 // Recursively check the background command
                 self.collect_global_variables_from_command(bg_cmd, vars);
             }
-
             _ => {
                 // For other command types, we don't need to check for variables
             }
@@ -6582,10 +5705,6 @@ impl PerlGenerator {
             Word::Variable(var_name) => {
                 // Skip special Perl variables that can't be declared with 'my'
                 if var_name == "#" || var_name == "@" || var_name == "*" || var_name == "?" || var_name == "!" {
-                    return;
-                }
-                // Skip empty or invalid variable names
-                if var_name.is_empty() || var_name.chars().any(|c| !c.is_alphanumeric() && c != '_') {
                     return;
                 }
                 if !vars.contains(var_name) {
@@ -6708,29 +5827,5 @@ impl PerlGenerator {
         
         // Return reference instead of cloning
         s.to_string()
-    }
-
-    fn generate_break_statement(&mut self, level: &Option<String>) -> String {
-        match level {
-            Some(level_str) => format!("last LABEL{};", level_str),
-            None => "last;".to_string(),
-        }
-    }
-
-    fn generate_continue_statement(&mut self, level: &Option<String>) -> String {
-        match level {
-            Some(level_str) => format!("next LABEL{};", level_str),
-            None => "next;".to_string(),
-        }
-    }
-
-    fn generate_return_statement(&mut self, value: &Option<Word>) -> String {
-        match value {
-            Some(word) => {
-                let perl_value = self.perl_string_literal(word);
-                format!("return {};", perl_value)
-            }
-            None => "return;".to_string(),
-        }
     }
 }

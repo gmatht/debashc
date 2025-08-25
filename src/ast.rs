@@ -137,6 +137,7 @@ pub struct ParameterExpansion {
 impl std::fmt::Display for ParameterExpansion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.operator {
+            ParameterExpansionOperator::None => write!(f, "${{{}}}", self.variable),
             ParameterExpansionOperator::UppercaseAll => write!(f, "${{{0}^^}}", self.variable),
             ParameterExpansionOperator::LowercaseAll => write!(f, "${{{0},,}}", self.variable),
             ParameterExpansionOperator::UppercaseFirst => write!(f, "${{{0}^}}", self.variable),
@@ -163,6 +164,9 @@ impl std::fmt::Display for ParameterExpansion {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParameterExpansionOperator {
+    // No operator (simple variable reference)
+    None,
+    
     // Case modification
     UppercaseAll,      // ^^
     LowercaseAll,      // ,,
@@ -214,6 +218,7 @@ impl std::fmt::Display for Word {
             Word::Variable(var) => write!(f, "${}", var),
             Word::ParameterExpansion(pe) => {
                 match &pe.operator {
+                    ParameterExpansionOperator::None => write!(f, "${{{}}}", pe.variable),
                     ParameterExpansionOperator::UppercaseAll => write!(f, "${{{}}}", pe.variable),
                     ParameterExpansionOperator::LowercaseAll => write!(f, "${{{}}}", pe.variable),
                     ParameterExpansionOperator::UppercaseFirst => write!(f, "${{{}}}", pe.variable),
@@ -287,6 +292,7 @@ impl std::fmt::Display for Word {
                         StringPart::Variable(var) => result.push_str(&format!("${}", var)),
                         StringPart::ParameterExpansion(pe) => {
                             match &pe.operator {
+                                ParameterExpansionOperator::None => result.push_str(&format!("${{{}}}", pe.variable)),
                                 ParameterExpansionOperator::UppercaseAll => result.push_str(&format!("${{{}}}", pe.variable)),
                                 ParameterExpansionOperator::LowercaseAll => result.push_str(&format!("${{{}}}", pe.variable)),
                                 ParameterExpansionOperator::UppercaseFirst => result.push_str(&format!("${{{}}}", pe.variable)),
@@ -337,6 +343,7 @@ impl Word {
             Word::Variable(var) => format!("${}", var),
             Word::ParameterExpansion(pe) => {
                 match &pe.operator {
+                    ParameterExpansionOperator::None => format!("${{{}}}", pe.variable),
                     ParameterExpansionOperator::UppercaseAll => format!("${{{}}}", pe.variable),
                     ParameterExpansionOperator::LowercaseAll => format!("${{{}}}", pe.variable),
                     ParameterExpansionOperator::UppercaseFirst => format!("${{{}}}", pe.variable),
@@ -410,6 +417,7 @@ impl Word {
                         StringPart::Variable(var) => result.push_str(&format!("${}", var)),
                         StringPart::ParameterExpansion(pe) => {
                             match &pe.operator {
+                                ParameterExpansionOperator::None => result.push_str(&format!("${{{}}}", pe.variable)),
                                 ParameterExpansionOperator::UppercaseAll => result.push_str(&format!("${{{}}}", pe.variable)),
                                 ParameterExpansionOperator::LowercaseAll => result.push_str(&format!("${{{}}}", pe.variable)),
                                 ParameterExpansionOperator::UppercaseFirst => result.push_str(&format!("${{{}}}", pe.variable)),
