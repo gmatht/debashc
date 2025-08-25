@@ -1,0 +1,583 @@
+use crate::ast::*;
+use crate::lexer::{Lexer, Token};
+use crate::parser::errors::ParserError;
+use crate::parser::utilities::ParserUtilities;
+use crate::parser::words::parse_word;
+use crate::parser::redirects::parse_redirect;
+use crate::parser::assignments::parse_environment_variable_value;
+use crate::parser::assignments::parse_array_elements;
+use crate::parser::control_flow::*;
+use std::collections::HashMap;
+
+pub struct Parser {
+    pub lexer: Lexer,
+    shopt_state: TestModifiers,
+}
+
+impl Parser {
+    pub fn new(input: &str) -> Self {
+        Self {
+            lexer: Lexer::new(input),
+            shopt_state: TestModifiers::default(),
+        }
+    }
+
+    pub fn new_with_lexer(lexer: Lexer) -> Self {
+        Self {
+            lexer,
+            shopt_state: TestModifiers::default(),
+        }
+    }
+
+    pub fn parse(&mut self) -> Result<Vec<Command>, ParserError> {
+        let mut commands = Vec::new();
+        
+        // Skip initial whitespace and comments
+        self.lexer.skip_whitespace_and_comments();
+        
+        while !self.lexer.is_eof() {
+            // Progress guard to prevent hangs: ensure each loop consumes or advances tokens
+            let loop_start_pos = self.lexer.current_position();
+            
+            // Check if we're at EOF after skipping whitespace and comments
+            if self.lexer.is_eof() {
+                break;
+            }
+            
+            // Check if we're at a newline/semicolon/& (empty command or separator)
+            if let Some(token) = self.lexer.peek() {
+                match token {
+                    Token::Newline => {
+                        // Consume consecutive newlines
+                        let mut count = 0usize;
+                        while matches!(self.lexer.peek(), Some(Token::Newline)) {
+                            self.lexer.next();
+                            count += 1;
+                        }
+                        // If two or more, record a blank line in AST
+                        if count >= 2 {
+                            commands.push(Command::BlankLine);
+                        }
+                        self.lexer.skip_whitespace_and_comments();
+                        continue;
+                    }
+                    Token::Semicolon | Token::CarriageReturn | Token::Background => {
+                        self.lexer.next();
+                        self.lexer.skip_whitespace_and_comments();
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            
+            let mut command = self.parse_command()?;
+
+            // Check if this command is followed by a pipeline or logical operator
+            if let Some(token) = self.lexer.peek() {
+                match token {
+                    Token::Pipe => {
+                        command = self.parse_pipeline_from_command(command)?;
+                    }
+                    Token::Or | Token::And => {
+                        command = self.parse_pipeline_from_command(command)?;
+                    }
+                    _ => {}
+                }
+            }
+
+            // If a background '&' follows immediately, wrap the command
+            if let Some(Token::Background) = self.lexer.peek() {
+                self.lexer.next();
+                command = Command::Background(Box::new(command));
+            }
+
+            commands.push(command);
+            
+            // Handle semicolons, newlines, and background '&'
+            let mut newline_count = 0usize;
+            while let Some(token) = self.lexer.peek() {
+                match token {
+                    Token::Semicolon | Token::Background => {
+                        self.lexer.next();
+                    }
+                    Token::Newline => {
+                        self.lexer.next();
+                        newline_count += 1;
+                    }
+                    _ => break,
+                }
+            }
+            if newline_count >= 2 {
+                commands.push(Command::BlankLine);
+            }
+            
+            // Skip whitespace and comments before next command
+            self.lexer.skip_whitespace_and_comments();
+
+            // If no progress was made in this iteration, advance by one token to avoid infinite loop
+            let loop_end_pos = self.lexer.current_position();
+            if loop_end_pos == loop_start_pos {
+                // Consume one token defensively. If already EOF, break.
+                if self.lexer.next().is_none() {
+                    break;
+                }
+            }
+        }
+        
+        Ok(commands)
+    }
+
+    fn parse_command(&mut self) -> Result<Command, ParserError> {
+        // Skip whitespace and comments
+        self.lexer.skip_whitespace_and_comments();
+        
+        if self.lexer.is_eof() {
+            return Err(ParserError::UnexpectedEOF);
+        }
+
+        let command = match self.lexer.peek() {
+            Some(Token::If) => parse_if_statement(&mut self.lexer),
+            Some(Token::Case) => parse_case_statement(&mut self.lexer),
+            Some(Token::While) => parse_while_loop(&mut self.lexer),
+            Some(Token::For) => parse_for_loop(&mut self.lexer),
+            Some(Token::Function) => parse_function(&mut self.lexer),
+            Some(Token::Break) => parse_break_statement(&mut self.lexer),
+            Some(Token::Continue) => parse_continue_statement(&mut self.lexer),
+            Some(Token::Return) => parse_return_statement(&mut self.lexer),
+            // POSIX-style function definition: name() { ... }
+            Some(Token::Identifier) => {
+                // Check if this is a function definition: identifier() { ... }
+                let paren1 = self.lexer.peek_n(1);
+                let paren2 = self.lexer.peek_n(2);
+                if matches!(paren1, Some(Token::ParenOpen)) 
+                    && matches!(paren2, Some(Token::ParenClose)) {
+                    // Check if the next non-whitespace token is a brace
+                    let mut pos = 3;
+                    while pos < 10 && matches!(self.lexer.peek_n(pos), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+                        pos += 1;
+                    }
+                    let brace_token = self.lexer.peek_n(pos);
+                    if matches!(brace_token, Some(Token::BraceOpen)) {
+                        parse_posix_function(&mut self.lexer)
+                    } else {
+                        self.parse_pipeline()
+                    }
+                } else {
+                    // Check if this is a standalone variable assignment: identifier=value
+                    let mut pos = 1;
+                    while pos < 10 && matches!(self.lexer.peek_n(pos), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+                        pos += 1;
+                    }
+                    if matches!(self.lexer.peek_n(pos), Some(Token::Assign | Token::PlusAssign | Token::MinusAssign | Token::StarAssign | Token::SlashAssign | Token::PercentAssign)) {
+                        self.parse_standalone_assignment()
+                    } else {
+                        self.parse_pipeline()
+                    }
+                }
+            }
+            // Bash arithmetic evaluation: (( ... ))
+            Some(Token::ParenOpen) if matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) => {
+                self.parse_double_paren_command()
+            }
+            Some(Token::ParenOpen) => self.parse_subshell(),
+            Some(Token::BraceOpen) => parse_block(&mut self.lexer),
+            Some(Token::Semicolon) | Some(Token::Newline) | Some(Token::CarriageReturn) => {
+                // Skip semicolon and continue parsing
+                self.lexer.next();
+                self.parse_command()
+            }
+            _ => self.parse_pipeline(),
+        }?;
+
+        // Check for redirects that follow the command
+        self.parse_command_redirects(command)
+    }
+
+    fn parse_command_redirects(&mut self, command: Command) -> Result<Command, ParserError> {
+        // Check if there are redirects following the command
+        let mut redirects = Vec::new();
+        
+        // Skip whitespace and comments
+        self.lexer.skip_whitespace_and_comments();
+        
+        // Parse redirects until we hit a command separator or other non-redirect token
+        while let Some(token) = self.lexer.peek() {
+            match token {
+                Token::Number | Token::RedirectIn | Token::RedirectOut | Token::RedirectAppend | 
+                Token::RedirectInOut | Token::Heredoc | Token::HeredocTabs | Token::HereString |
+                Token::RedirectOutErr | Token::RedirectInErr | Token::RedirectOutClobber | 
+                Token::RedirectAll | Token::RedirectAllAppend => {
+                    redirects.push(parse_redirect(&mut self.lexer)?);
+                }
+                _ => break,
+            }
+        }
+        
+        if redirects.is_empty() {
+            Ok(command)
+        } else {
+            // Wrap the command with redirects
+            Ok(Command::Redirect(RedirectCommand {
+                command: Box::new(command),
+                redirects,
+            }))
+        }
+    }
+
+    fn parse_pipeline(&mut self) -> Result<Command, ParserError> {
+        let first_command = self.parse_simple_command()?;
+        self.parse_pipeline_from_command(first_command)
+    }
+
+    fn parse_pipeline_from_command(&mut self, first_command: Command) -> Result<Command, ParserError> {
+        let mut commands = Vec::new();
+        let mut operators = Vec::new();
+        
+        commands.push(first_command);
+        
+        while let Some(_) = self.lexer.peek() {
+            // Skip any whitespace/comments before checking for an operator
+            self.lexer.skip_whitespace_and_comments();
+            let Some(token) = self.lexer.peek() else { break; };
+            match token {
+                Token::Pipe => {
+                    self.lexer.next();
+                    operators.push(PipeOperator::Pipe);
+                    self.lexer.skip_whitespace_and_comments();
+                    commands.push(self.parse_simple_command()?);
+                }
+                Token::And => {
+                    self.lexer.next();
+                    operators.push(PipeOperator::And);
+                    self.lexer.skip_whitespace_and_comments();
+                    commands.push(self.parse_simple_command()?);
+                }
+                Token::Or => {
+                    self.lexer.next();
+                    operators.push(PipeOperator::Or);
+                    self.lexer.skip_whitespace_and_comments();
+                    commands.push(self.parse_simple_command()?);
+                }
+                Token::Semicolon | Token::Newline => {
+                    // Stop parsing pipeline when we hit a command separator
+                    break;
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+        
+        if commands.len() == 1 {
+            Ok(commands.remove(0))
+        } else {
+            Ok(Command::Pipeline(Pipeline { commands, operators }))
+        }
+    }
+
+    fn parse_simple_command(&mut self) -> Result<Command, ParserError> {
+        let mut args = Vec::new();
+        let mut redirects = Vec::new();
+        let mut env_vars = HashMap::new();
+        
+        // Parse environment variable-style assignments at the start
+        while let Some(token) = self.lexer.peek() {
+            match token {
+                Token::Identifier => {
+                    // Handle compound assignment operators
+                    let compound_op = self.lexer.peek_n(1).cloned();
+                    if let Some(compound_op) = compound_op {
+                        match compound_op {
+                            Token::PlusAssign => {
+                                // Handle array append (var+=(...)) or compound assignment (var+=value)
+                                if matches!(self.lexer.peek_n(2), Some(Token::ParenOpen)) {
+                                    // Handle array append like: var+=(value)
+                                    let var_name = self.lexer.get_identifier_text()?;
+                                    self.lexer.next(); // consume +=
+                                    self.lexer.next(); // consume (
+                                    let elements = parse_array_elements(&mut self.lexer)?;
+                                    
+                                    let array_word = Word::Array(var_name.clone(), elements);
+                                    env_vars.insert(var_name, array_word);
+                                    self.lexer.skip_whitespace_and_comments();
+                                } else {
+                                    // Handle compound assignment like: var+=value
+                                    let var_name = self.lexer.get_identifier_text()?;
+                                    self.lexer.next(); // consume +=
+                                    
+                                    let value_word = parse_environment_variable_value(&mut self.lexer)?;
+                                    
+                                    let arithmetic_expr = format!("{}+{}", var_name, value_word.to_string());
+                                    let compound_word = Word::Arithmetic(ArithmeticExpression {
+                                        expression: arithmetic_expr,
+                                        tokens: vec![],
+                                    });
+                                    
+                                    env_vars.insert(var_name, compound_word);
+                                    self.lexer.skip_whitespace_and_comments();
+                                }
+                            }
+                            Token::Assign => {
+                                if matches!(self.lexer.peek_n(2), Some(Token::ParenOpen)) {
+                                    // Handle array declaration like: arr=(one two three)
+                                    let var_name = self.lexer.get_identifier_text()?;
+                                    self.lexer.next(); // consume =
+                                    self.lexer.next(); // consume (
+                                    let elements = parse_array_elements(&mut self.lexer)?;
+                                    let array_word = Word::Array(var_name.clone(), elements);
+                                    env_vars.insert(var_name, array_word);
+                                    self.lexer.skip_whitespace_and_comments();
+                                } else {
+                                    // Handle regular assignment like: var=value
+                                    let var_name = self.lexer.get_identifier_text()?;
+                                    self.lexer.next(); // consume =
+                                    let value_word = parse_environment_variable_value(&mut self.lexer)?;
+                                    env_vars.insert(var_name, value_word);
+                                    self.lexer.skip_whitespace_and_comments();
+                                }
+                            }
+                            _ => {
+                                break;
+                            }
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        
+        // Parse command name
+        let mut is_double_bracket = false;
+        let name = if let Some(token) = self.lexer.peek() {
+            match token {
+                Token::Identifier => {
+                    Word::Literal(self.lexer.get_identifier_text()?)
+                }
+                Token::Set | Token::Export | Token::Readonly | Token::Local | Token::Declare | Token::Typeset |
+                Token::Unset | Token::Shift | Token::Eval | Token::Exec | Token::Source | Token::Trap | Token::Wait | Token::Shopt | Token::Exit => {
+                    Word::Literal(self.lexer.get_raw_token_text()?)
+                }
+                Token::TestBracket => {
+                    self.lexer.next(); // consume the first [
+                    if let Some(Token::TestBracket) = self.lexer.peek() {
+                        self.lexer.next(); // consume the second [
+                        is_double_bracket = true;
+                        Word::Literal("[[".to_string())
+                    } else {
+                        Word::Literal("[".to_string())
+                    }
+                }
+                Token::True => {
+                    self.lexer.next(); // consume true
+                    Word::Literal("true".to_string())
+                }
+                Token::False => {
+                    self.lexer.next(); // consume false
+                    Word::Literal("false".to_string())
+                }
+                Token::Dollar | Token::DollarBrace | Token::DollarParen
+                | Token::DollarBraceHash | Token::DollarBraceBang | Token::DollarBraceStar | Token::DollarBraceAt
+                | Token::DollarBraceHashStar | Token::DollarBraceHashAt | Token::DollarBraceBangStar | Token::DollarBraceBangAt => {
+                    self.parse_variable_expansion()?
+                }
+                _ => {
+                    let (line, col) = self.lexer.offset_to_line_col(0);
+                    return Err(ParserError::UnexpectedToken { token: token.to_owned(), line, col });
+                }
+            }
+        } else {
+            return Err(ParserError::UnexpectedEOF);
+        };
+        
+        // Skip inline whitespace before parsing arguments (but stop at newlines)
+        self.lexer.skip_inline_whitespace_and_comments();
+        
+        // Special handling for Bash double-bracket test: capture everything until closing ']]'
+        if is_double_bracket {
+            let expr = self.lexer.capture_double_bracket_expression()?;
+            return Ok(Command::TestExpression(TestExpression {
+                expression: expr,
+                modifiers: self.get_current_shopt_state(),
+            }));
+        }
+
+        // Special handling for Bash single-bracket test: capture everything until closing ']'
+        if let Word::Literal(name_str) = &name {
+            if name_str == "[" {
+                let expr = self.lexer.capture_single_bracket_expression()?;
+                args.push(Word::Literal(expr));
+            }
+        }
+
+        // Parse arguments and redirects
+        while let Some(token) = self.lexer.peek() {
+            match token {
+                Token::Space | Token::Tab | Token::Comment => {
+                    // Skip whitespace and comments between arguments
+                    self.lexer.next();
+                    continue;
+                }
+                Token::Newline | Token::Semicolon | Token::CarriageReturn => {
+                    // End of this simple command; do not consume here so outer loop can handle separators
+                    break;
+                }
+                Token::Identifier | Token::Number | Token::OctalNumber | Token::DoubleQuotedString | Token::SingleQuotedString | Token::Source | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString | Token::Star | Token::Dot | Token::CasePattern | Token::Range | Token::Slash | Token::Tilde | Token::LongOption | Token::RegexPattern | Token::RegexMatch | Token::NameFlag | Token::MaxDepthFlag | Token::TypeFlag => {
+                    args.push(parse_word(&mut self.lexer)?);
+                }
+                Token::RedirectAppend | Token::RedirectInOut | Token::Heredoc | Token::HeredocTabs | Token::HereString => {
+                    redirects.push(parse_redirect(&mut self.lexer)?);
+                }
+                Token::And | Token::Or => {
+                    // Stop parsing arguments when we hit a command separator
+                    break;
+                }
+                _ => break,
+            }
+        }
+        
+        Ok(Command::Simple(SimpleCommand {
+            name,
+            args,
+            redirects,
+            env_vars,
+        }))
+    }
+
+    fn parse_standalone_assignment(&mut self) -> Result<Command, ParserError> {
+        // Get the variable name
+        let var_name = self.lexer.get_identifier_text()?;
+        
+        // Consume the assignment token (=, +=, -=, etc.)
+        let assignment_op = self.lexer.peek().cloned().unwrap();
+        match assignment_op {
+            Token::Assign | Token::PlusAssign | Token::MinusAssign | Token::StarAssign | Token::SlashAssign | Token::PercentAssign => {
+                self.lexer.next();
+            }
+            _ => return Err(ParserError::InvalidSyntax("Expected assignment operator".to_string())),
+        }
+        
+        // Parse the value
+        let value_word = parse_environment_variable_value(&mut self.lexer)?;
+        
+        // Check if there's a command following this assignment
+        self.lexer.skip_whitespace_and_comments();
+        if let Some(Token::Identifier) = self.lexer.peek() {
+            // There's a command following, parse it as a command with environment variables
+            let mut env_vars = HashMap::new();
+            env_vars.insert(var_name, value_word);
+            
+            let command = self.parse_command()?;
+            
+            // Merge the environment variables with the command's environment variables
+            match command {
+                Command::Simple(mut simple_cmd) => {
+                    // Merge environment variables
+                    for (key, value) in env_vars {
+                        simple_cmd.env_vars.insert(key, value);
+                    }
+                    Ok(Command::Simple(simple_cmd))
+                }
+                _ => {
+                    // For non-simple commands, wrap in a block with environment variables
+                    let mut env_vars_cmd = HashMap::new();
+                    for (key, value) in env_vars {
+                        env_vars_cmd.insert(key, value);
+                    }
+                    
+                    let env_cmd = Command::Simple(SimpleCommand {
+                        name: Word::Literal("true".to_string()),
+                        args: Vec::new(),
+                        redirects: Vec::new(),
+                        env_vars: env_vars_cmd,
+                    });
+                    
+                    Ok(Command::Block(Block {
+                        commands: vec![env_cmd, command],
+                    }))
+                }
+            }
+        } else {
+            // No command following, this is a standalone assignment
+            let mut env_vars = HashMap::new();
+            env_vars.insert(var_name, value_word);
+            
+            Ok(Command::Simple(SimpleCommand {
+                name: Word::Literal("true".to_string()), // Use 'true' as a dummy command
+                args: Vec::new(),
+                redirects: Vec::new(),
+                env_vars,
+            }))
+        }
+    }
+
+    fn parse_subshell(&mut self) -> Result<Command, ParserError> {
+        self.lexer.consume(Token::ParenOpen)?;
+        
+        // Parse one or more commands until ')'
+        let mut commands = Vec::new();
+        loop {
+            // Skip separators within subshell body
+            while matches!(
+                self.lexer.peek(),
+                Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon | Token::CarriageReturn)
+            ) {
+                self.lexer.next();
+            }
+            match self.lexer.peek() {
+                Some(Token::ParenClose) | None => break,
+                _ => {
+                    let mut cmd = self.parse_command()?;
+                    // Background marker inside subshell
+                    if let Some(Token::Background) = self.lexer.peek() {
+                        self.lexer.next();
+                        cmd = Command::Background(Box::new(cmd));
+                    }
+                    commands.push(cmd);
+                }
+            }
+        }
+
+        self.lexer.consume(Token::ParenClose)?;
+        
+        if commands.len() == 1 {
+            Ok(Command::Subshell(Box::new(commands.remove(0))))
+        } else {
+            Ok(Command::Subshell(Box::new(Command::Block(Block { commands }))))
+        }
+    }
+
+    fn parse_double_paren_command(&mut self) -> Result<Command, ParserError> {
+        // TODO: Implement double paren command parsing
+        Err(ParserError::InvalidSyntax("Double paren commands not yet implemented".to_string()))
+    }
+
+    fn parse_variable_expansion(&mut self) -> Result<Word, ParserError> {
+        // TODO: Implement variable expansion parsing
+        Err(ParserError::InvalidSyntax("Variable expansion not yet implemented".to_string()))
+    }
+
+    fn update_shopt_state(&mut self, option: &str, enable: bool) {
+        match option {
+            "extglob" => self.shopt_state.extglob = enable,
+            "nocasematch" => self.shopt_state.nocasematch = enable,
+            "globstar" => self.shopt_state.globstar = enable,
+            "nullglob" => self.shopt_state.nullglob = enable,
+            "failglob" => self.shopt_state.failglob = enable,
+            "dotglob" => self.shopt_state.dotglob = enable,
+            _ => {} // Ignore unknown options
+        }
+    }
+
+    fn get_current_shopt_state(&self) -> TestModifiers {
+        self.shopt_state.to_owned()
+    }
+}
+
+// Re-export the main parsing function
+pub fn parse(input: &str) -> Result<Vec<Command>, ParserError> {
+    let mut parser = Parser::new(input);
+    parser.parse()
+}
+
