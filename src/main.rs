@@ -24,6 +24,7 @@ use sha2::{Sha256, Digest};
 
 // Use the debug module for controlling DEBUG output
 use debashl::debug::set_debug_enabled;
+use debashl::{Lexer, Parser, Generator};
 
 /// Cross-platform helper to create ExitStatus from exit code
 /// This is a workaround since ExitStatus::from_raw is platform-specific
@@ -325,7 +326,7 @@ impl Default for AstFormatOptions {
 }
 
 impl AstFormatOptions {
-    fn format_ast_with_options(&self, commands: &[crate::ast::Command]) -> String {
+    fn format_ast_with_options(&self, commands: &[debashl::Command]) -> String {
         if self.compact {
             // Use compact format without pretty printing
             format!("{:?}", commands)
@@ -375,7 +376,7 @@ fn find_uses_of_system() {
                         let mut parser = Parser::new(&content);
                         match parser.parse() {
                             Ok(commands) => {
-                                let mut generator = PerlGenerator::new();
+                                let mut generator = Generator::new();
                                 let perl_code = generator.generate(&commands);
                                 
                                 // Find lines containing "system"
@@ -526,7 +527,7 @@ fn main() {
                     };
                     
                     // Generate Perl code
-                    let mut gen = PerlGenerator::new();
+                    let mut gen = Generator::new();
                     let code = gen.generate(&commands);
                     
                     // Handle output file option
@@ -826,7 +827,7 @@ fn main() {
                         };
                         
                         // Generate Perl code
-                        let mut gen = PerlGenerator::new();
+                        let mut gen = Generator::new();
                         let code = gen.generate(&commands);
                         
                         // Handle output file option
@@ -867,7 +868,7 @@ fn main() {
                         };
                         
                         // Generate Perl code
-                        let mut gen = PerlGenerator::new();
+                        let mut gen = Generator::new();
                         let code = gen.generate(&commands);
                         
                         // Handle output file option
@@ -902,7 +903,7 @@ fn main() {
                 match Parser::new(command).parse() {
                     Ok(commands) => {
                         // Generate Perl code
-                        let mut generator = PerlGenerator::new();
+                        let mut generator = Generator::new();
                         let perl_code = generator.generate(&commands);
                         
                         // Write to temporary file and execute
@@ -954,7 +955,7 @@ fn run_generated(lang: &str, input: &str) {
     };
     match lang {
         "perl" => {
-            let mut gen = PerlGenerator::new();
+            let mut gen = Generator::new();
             let code = gen.generate(&commands);
             let tmp = "__tmp_run.pl";
             if fs::write(tmp, &code).is_ok() {
@@ -981,7 +982,7 @@ fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
 
     let (tmp_file, run_cmd) = match lang {
         "perl" => {
-            let mut gen = PerlGenerator::new();
+            let mut gen = Generator::new();
             let code = gen.generate(&commands);
             let tmp = "__tmp_test_output.pl";
             if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Perl temp file: {}", e)); }
@@ -1172,7 +1173,7 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
                 while !lexer.is_eof() && token_count < 1000 { // Limit to prevent infinite loops
                     if let Some(token) = lexer.peek() {
                         // Skip Newline tokens in debug output
-                        if let Token::Newline = token {
+                        if let debashl::Token::Newline = token {
                             lexer.next(); // Advance to next token
                             continue;
                         }
@@ -1198,11 +1199,11 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
 
         // Capture AST for output using the provided formatting options
         let ast_options = ast_options.unwrap_or_default();
-        ast = ast_options.format_ast_with_options(&commands);
+        ast = ast_options.format_ast_with_options(commands.as_slice());
 
         let (tmp, run_cmd_vec, code) = match lang {
             "perl" => {
-                let mut gen = PerlGenerator::new();
+                let mut gen = Generator::new();
                 let code = gen.generate(&commands);
                 let tmp = "__tmp_test_output.pl";
                 if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Perl temp file: {}", e)); }
@@ -1412,7 +1413,7 @@ fn parse_to_perl(input: &str) {
     
     match Parser::new(&content).parse() {
         Ok(commands) => {
-            let mut generator = PerlGenerator::new();
+            let mut generator = Generator::new();
             let perl_code = generator.generate(&commands);
             println!("{}", perl_code);
         }
@@ -1435,7 +1436,7 @@ fn parse_file_to_perl(filename: &str) {
             
             match Parser::new(&content).parse() {
                 Ok(commands) => {
-                    let mut generator = PerlGenerator::new();
+                    let mut generator = Generator::new();
                     let perl_code = generator.generate(&commands);
                     println!("{}", perl_code);
                 }

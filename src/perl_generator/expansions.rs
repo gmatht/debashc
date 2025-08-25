@@ -1,150 +1,103 @@
 use crate::ast::*;
-use super::PerlGenerator;
+use super::Generator;
 
-impl PerlGenerator {
-    pub fn generate_parameter_expansion(&self, pe: &ParameterExpansion) -> String {
-        // Basic parameter expansion - just return the variable name
-        format!("${{{}}}", pe.variable)
-    }
-
-    pub fn extract_parameter_expansion(&self, var: &str) -> Option<ParameterExpansion> {
-        // Basic parameter expansion extraction
-        if var.starts_with('$') && var.contains('{') && var.contains('}') {
-            let var_name = var.trim_start_matches('$').trim_matches('{').trim_matches('}');
-            Some(ParameterExpansion {
-                variable: var_name.to_string(),
-                operator: ParameterExpansionOperator::None,
-            })
-        } else {
-            None
+pub fn generate_parameter_expansion_impl(_generator: &mut Generator, pe: &ParameterExpansion) -> String {
+    match &pe.operator {
+        ParameterExpansionOperator::None => {
+            // ${var} - just the variable
+            format!("${{{}}}", pe.variable)
         }
-    }
-
-    pub fn generate_glob_handler(&mut self, pattern: &str, action: &str) -> String {
-        // Convert glob pattern to Perl glob
-        let mut perl_pattern = pattern.to_string();
-        
-        // Escape regex special characters
-        perl_pattern = perl_pattern.replace(".", "\\.");
-        perl_pattern = perl_pattern.replace("+", "\\+");
-        perl_pattern = perl_pattern.replace("(", "\\(");
-        perl_pattern = perl_pattern.replace(")", "\\)");
-        perl_pattern = perl_pattern.replace("[", "\\[");
-        perl_pattern = perl_pattern.replace("]", "\\]");
-        perl_pattern = perl_pattern.replace("^", "\\^");
-        perl_pattern = perl_pattern.replace("$", "\\$");
-        perl_pattern = perl_pattern.replace("|", "\\|");
-        
-        // Convert glob patterns to regex
-        perl_pattern = perl_pattern.replace("*", ".*");
-        perl_pattern = perl_pattern.replace("?", ".");
-        
-        match action {
-            "match" => format!("qr/^{}$/", perl_pattern),
-            "find" => format!("grep {{ /^{}$/ }} glob('*')", perl_pattern),
-            _ => format!("qr/^{}$/", perl_pattern)
+        ParameterExpansionOperator::DefaultValue(default) => {
+            // ${var:-default} - use default if var is empty
+            format!("defined(${{{}}}) && ${{{}}} ne '' ? ${{{}}} : {}", 
+                   pe.variable, pe.variable, pe.variable, default)
         }
-    }
-
-    pub fn generate_cartesian_product(&self, expansion_values: &[Vec<String>], result: &mut Vec<Vec<String>>, depth: usize, current: &mut Vec<String>) {
-        if depth == expansion_values.len() {
-            result.push(current.clone());
-            return;
+        ParameterExpansionOperator::AssignDefault(default) => {
+            // ${var:=default} - assign default if var is empty
+            format!("defined(${{{}}}) && ${{{}}} ne '' ? ${{{}}} : do {{ ${{{}}} = {}; ${{{}}} }}", 
+                   pe.variable, pe.variable, pe.variable, pe.variable, default, pe.variable)
         }
-        
-        for value in &expansion_values[depth] {
-            current.push(value.clone());
-            self.generate_cartesian_product(expansion_values, result, depth + 1, current);
-            current.pop();
+        ParameterExpansionOperator::ErrorIfUnset(error) => {
+            // ${var:?error} - error if var is empty
+            format!("defined(${{{}}}) && ${{{}}} ne '' ? ${{{}}} : die({})", 
+                   pe.variable, pe.variable, pe.variable, error)
         }
-    }
-
-    pub fn expand_numeric_range_helper(&self, start_str: &str, end_str: &str, step_str: &str) -> Option<String> {
-        let (start, end, step) = (
-            start_str.parse::<i64>().ok()?,
-            end_str.parse::<i64>().ok()?,
-            step_str.parse::<i64>().ok()?
-        );
-        
-        if start > end {
-            return None;
+        ParameterExpansionOperator::RemoveShortestSuffix(pattern) => {
+            // ${var%suffix} - remove shortest suffix
+            format!("${{{}}} =~ s/{}$//r", pe.variable, escape_regex_pattern(pattern))
         }
-        
-        let values: Vec<String> = (start..=end)
-            .step_by(step as usize)
-            .map(|i| {
-                // Preserve leading zeros by formatting with the same width as the original
-                if start_str.starts_with('0') && start_str.len() > 1 {
-                    format!("{:0width$}", i, width = start_str.len())
-                } else {
-                    i.to_string()
-                }
-            })
-            .collect();
-        
-        Some(values.join(" "))
-    }
-
-    pub fn expand_brace_literal(&self, s: &str) -> String {
-        if s.contains("..") {
-            let parts: Vec<&str> = s.split("..").collect();
-            match parts.len() {
-                2 => {
-                    // Simple range like "a..c"
-                    if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), parts[1].chars().next()) {
-                        if let Some(expanded) = self.expand_char_range(start_char, end_char, None) {
-                            return expanded;
-                        }
-                    }
-                }
-                3 => {
-                    if parts[1].contains("..") {
-                        // Character range with step like "a..z..3"
-                        let sub_parts: Vec<&str> = parts[1].split("..").collect();
-                        if sub_parts.len() == 2 {
-                            if let (Some(start_char), Some(end_char)) = (parts[0].chars().next(), sub_parts[1].chars().next()) {
-                                if let Ok(step) = parts[2].parse::<usize>() {
-                                    if let Some(expanded) = self.expand_char_range(start_char, end_char, Some(step)) {
-                                        return expanded;
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        // Range with step like "00..04..2"
-                        if let Some(expanded) = self.expand_numeric_range_helper(parts[0], parts[1], parts[2]) {
-                            return expanded;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        } else if s.contains(',') {
-            // Handle comma-separated sequences like "a,b,c"
-            let parts: Vec<&str> = s.split(',').collect();
-            if parts.len() > 1 {
-                return parts.join(" ");
+        ParameterExpansionOperator::RemoveLongestSuffix(pattern) => {
+            // ${var%%suffix} - remove longest suffix
+            format!("${{{}}} =~ s/{}$//gr", pe.variable, escape_regex_pattern(pattern))
+        }
+        ParameterExpansionOperator::RemoveShortestPrefix(pattern) => {
+            // ${var#prefix} - remove shortest prefix
+            format!("${{{}}} =~ s/^{}//r", pe.variable, escape_regex_pattern(pattern))
+        }
+        ParameterExpansionOperator::RemoveLongestPrefix(pattern) => {
+            // ${var##prefix} - remove longest prefix
+            format!("${{{}}} =~ s/^{}//gr", pe.variable, escape_regex_pattern(pattern))
+        }
+        ParameterExpansionOperator::SubstituteAll(pattern, replacement) => {
+            // ${var//pattern/replacement} - substitute all occurrences
+            format!("${{{}}} =~ s/{}/{}/gr", 
+                   pe.variable, 
+                   escape_regex_pattern(pattern),
+                   escape_regex_replacement(replacement))
+        }
+        ParameterExpansionOperator::UppercaseAll => {
+            // ${var^^} - uppercase all characters
+            format!("uc(${{{}}})", pe.variable)
+        }
+        ParameterExpansionOperator::LowercaseAll => {
+            // ${var,,} - lowercase all characters
+            format!("lc(${{{}}})", pe.variable)
+        }
+        ParameterExpansionOperator::UppercaseFirst => {
+            // ${var^} - uppercase first character
+            format!("ucfirst(${{{}}})", pe.variable)
+        }
+        ParameterExpansionOperator::Basename => {
+            // ${var##*/} - get basename
+            format!("basename(${{{}}})", pe.variable)
+        }
+        ParameterExpansionOperator::Dirname => {
+            // ${var%/*} - get dirname
+            format!("dirname(${{{}}})", pe.variable)
+        }
+        ParameterExpansionOperator::ArraySlice(offset, length) => {
+            // ${var:offset:length} - array slice
+            if let Some(length_str) = length {
+                format!("@${{{}}}[{}..{}]", pe.variable, offset, length_str)
+            } else {
+                format!("@${{{}}}[{}..]", pe.variable, offset)
             }
         }
-        
-        // Return reference instead of cloning
-        s.to_string()
     }
+}
 
-    pub fn expand_char_range(&self, start: char, end: char, step: Option<usize>) -> Option<String> {
-        let step = step.unwrap_or(1);
-        let start_byte = start as u8;
-        let end_byte = end as u8;
-        
-        if start_byte > end_byte {
-            return None;
-        }
-        
-        let values: Vec<String> = (start_byte..=end_byte)
-            .step_by(step)
-            .map(|b| char::from(b).to_string())
-            .collect();
-        
-        Some(values.join(" "))
-    }
+// Helper methods for regex escaping
+fn escape_regex_pattern(pattern: &str) -> String {
+    // Escape special regex characters in the pattern
+    pattern.replace("\\", "\\\\")
+           .replace(".", "\\.")
+           .replace("+", "\\+")
+           .replace("*", "\\*")
+           .replace("?", "\\?")
+           .replace("^", "\\^")
+           .replace("$", "\\$")
+           .replace("[", "\\[")
+           .replace("]", "\\]")
+           .replace("(", "\\(")
+           .replace(")", "\\)")
+           .replace("|", "\\|")
+}
+
+fn escape_regex_replacement(replacement: &str) -> String {
+    // Escape special regex characters in the replacement string
+    replacement.replace("\\", "\\\\")
+               .replace("$", "\\$")
+               .replace("&", "\\&")
+               .replace("`", "\\`")
+               .replace("'", "\\'")
 }

@@ -1,11 +1,11 @@
 use crate::ast::*;
-use super::PerlGenerator;
+use super::Generator;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Static counter for generating unique temp file names
 static TEMP_FILE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-pub fn generate_command_impl(generator: &mut PerlGenerator, command: &Command) -> String {
+pub fn generate_command_impl(generator: &mut Generator, command: &Command) -> String {
     match command {
         Command::Simple(cmd) => generator.generate_simple_command(cmd),
         Command::ShoptCommand(cmd) => generator.generate_shopt_command(cmd),
@@ -36,285 +36,281 @@ pub fn generate_command_impl(generator: &mut PerlGenerator, command: &Command) -
     }
 }
 
-impl PerlGenerator {
-    pub fn generate_simple_command(&mut self, cmd: &SimpleCommand) -> String {
-        let mut output = String::new();
-        let has_env = !cmd.env_vars.is_empty() && cmd.name != "true";
-        if has_env {
-            output.push_str("{\n");
-            for (var, value) in &cmd.env_vars {
-                // Check if this is an associative array assignment like map[foo]=bar
-                if let Some((array_name, key)) = self.extract_array_key(var) {
-                    let val = self.perl_string_literal(value);
-                    // For associative array assignments, generate $array{key} = value instead of $ENV{var}
-                    // Quote the key to avoid bareword errors in strict mode
-                    let quoted_key = format!("\"{}\"", self.escape_perl_string(key));
-                    output.push_str(&format!("${}{{{}}} = {};\n", array_name, quoted_key, val));
-                } else if let Some(elements) = self.extract_array_elements(value) {
-                    // Check if this is an indexed array assignment like arr=(one two three)
-                    let elements_perl: Vec<String> = elements.iter()
-                        .map(|s| format!("\"{}\"", self.escape_perl_string(s)))
-                        .collect();
-                    output.push_str(&format!("@{} = ({});\n", var, elements_perl.join(", ")));
+pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleCommand) -> String {
+    let mut output = String::new();
+    let has_env = !cmd.env_vars.is_empty() && cmd.name != "true";
+    if has_env {
+        output.push_str("{\n");
+        for (var, value) in &cmd.env_vars {
+            // Check if this is an associative array assignment like map[foo]=bar
+            if let Some((array_name, key)) = generator.extract_array_key(var) {
+                let val = generator.perl_string_literal(value);
+                // For associative array assignments, generate $array{key} = value instead of $ENV{var}
+                // Quote the key to avoid bareword errors in strict mode
+                let quoted_key = format!("\"{}\"", generator.escape_perl_string(&key));
+                output.push_str(&format!("${}{{{}}} = {};\n", array_name, quoted_key, val));
+            } else if let Some(elements) = generator.extract_array_elements(value) {
+                // Check if this is an indexed array assignment like arr=(one two three)
+                let elements_perl: Vec<String> = elements.iter()
+                    .map(|s| format!("\"{}\"", generator.escape_perl_string(s)))
+                    .collect();
+                output.push_str(&format!("@{} = ({});\n", var, elements_perl.join(", ")));
+            } else {
+                let val = generator.perl_string_literal(value);
+                // Always assign the value, but only declare if not already declared
+                if !generator.declared_locals.contains(var) {
+                    output.push_str(&format!("my ${} = {};\n", var, val));
+                    generator.declared_locals.insert(var.clone());
                 } else {
-                    let val = self.perl_string_literal(value);
-                    // Always assign the value, but only declare if not already declared
-                    if !self.declared_locals.contains(var) {
-                        output.push_str(&format!("my ${} = {};\n", var, val));
-                        self.declared_locals.insert(var.clone());
-                    } else {
-                        // Variable already declared, just assign the value
-                        output.push_str(&format!("${} = {};\n", var, val));
-                    }
-                    output.push_str(&format!("local $ENV{{{}}} = {};;\n", var, val));
+                    // Variable already declared, just assign the value
+                    output.push_str(&format!("${} = {};\n", var, val));
                 }
+                output.push_str(&format!("local $ENV{{{}}} = {};;\n", var, val));
             }
         }
+    }
 
-        // Pre-process process substitution and here-string redirects to create temporary files
-        let mut process_sub_files = Vec::new();
-        let mut has_here_string = false;
-        let mut temp_file_counter = 0;
-        for redir in &cmd.redirects {
-            match &redir.operator {
-                RedirectOperator::ProcessSubstitutionInput(cmd) => {
-                    // Process substitution input: <(command)
-                    temp_file_counter += 1;
-                    let global_counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
-                    let temp_file = format!("/tmp/process_sub_{}_{}.tmp", global_counter, temp_file_counter);
-                    let temp_var = format!("temp_file_ps_{}_{}", global_counter, temp_file_counter);
-                    output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
-                    
-                    // Generate the command for system call
-                    let cmd_str = self.generate_command_string_for_system(&**cmd);
-                    
-                    // Clean up the command string for system call and properly escape it
-                    let _clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
-                    // Use proper Perl system call syntax with list form to avoid shell interpretation
-                    let fh_var = format!("fh_ps_{}_{}", global_counter, temp_file_counter);
+    // Pre-process process substitution and here-string redirects to create temporary files
+    let mut process_sub_files = Vec::new();
+    let mut has_here_string = false;
+    let mut temp_file_counter = 0;
+    for redir in &cmd.redirects {
+        match &redir.operator {
+            RedirectOperator::ProcessSubstitutionInput(cmd) => {
+                // Process substitution input: <(command)
+                temp_file_counter += 1;
+                let global_counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+                let temp_file = format!("/tmp/process_sub_{}_{}.tmp", global_counter, temp_file_counter);
+                let temp_var = format!("temp_file_ps_{}_{}", global_counter, temp_file_counter);
+                output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
+                
+                // Generate the command for system call
+                let cmd_str = generator.generate_command_string_for_system(&**cmd);
+                
+                // Clean up the command string for system call and properly escape it
+                let _clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
+                // Use proper Perl system call syntax with list form to avoid shell interpretation
+                let fh_var = format!("fh_ps_{}_{}", global_counter, temp_file_counter);
+                output.push_str(&format!("open(my ${}, '>', ${}) or die \"Cannot create temp file: $!\\n\";\n", fh_var, temp_var));
+                output.push_str(&format!("close(${});\n", fh_var));
+                // For now, just create the file - the actual command execution would need more complex handling
+                process_sub_files.push((temp_var, temp_file));
+            }
+            RedirectOperator::ProcessSubstitutionOutput(_cmd) => {
+                // Process substitution output: >(command)
+                temp_file_counter += 1;
+                let global_counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+                let temp_file = format!("/tmp/process_sub_out_{}_{}.tmp", global_counter, temp_file_counter);
+                let temp_var = format!("temp_file_out_{}_{}", global_counter, temp_file_counter);
+                output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
+                process_sub_files.push((temp_var, temp_file));
+            }
+            RedirectOperator::HereString => {
+                // Here-string: <<< content
+                has_here_string = true;
+                temp_file_counter += 1;
+                let global_counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+                let temp_file = format!("/tmp/here_string_{}_{}.tmp", global_counter, temp_file_counter);
+                let temp_var = format!("temp_file_hs_{}_{}", global_counter, temp_file_counter);
+                output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
+                
+                // Create the temporary file with the here-string content
+                if let Some(content) = &redir.heredoc_body {
+                    let fh_var = format!("fh_hs_{}_{}", global_counter, temp_file_counter);
                     output.push_str(&format!("open(my ${}, '>', ${}) or die \"Cannot create temp file: $!\\n\";\n", fh_var, temp_var));
+                    output.push_str(&format!("print ${} {};\n", fh_var, generator.perl_string_literal(&Word::Literal(content.clone()))));
                     output.push_str(&format!("close(${});\n", fh_var));
-                    // For now, just create the file - the actual command execution would need more complex handling
-                    process_sub_files.push((temp_var, temp_file));
                 }
-                RedirectOperator::ProcessSubstitutionOutput(_cmd) => {
-                    // Process substitution output: >(command)
-                    temp_file_counter += 1;
-                    let global_counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
-                    let temp_file = format!("/tmp/process_sub_out_{}_{}.tmp", global_counter, temp_file_counter);
-                    let temp_var = format!("temp_file_out_{}_{}", global_counter, temp_file_counter);
-                    output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
-                    process_sub_files.push((temp_var, temp_file));
-                }
-                RedirectOperator::HereString => {
-                    // Here-string: <<< content
-                    has_here_string = true;
-                    temp_file_counter += 1;
-                    let global_counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
-                    let temp_file = format!("/tmp/here_string_{}_{}.tmp", global_counter, temp_file_counter);
-                    let temp_var = format!("temp_file_hs_{}_{}", global_counter, temp_file_counter);
-                    output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
-                    
-                    // Create the temporary file with the here-string content
-                    if let Some(content) = &redir.heredoc_body {
-                        let fh_var = format!("fh_hs_{}_{}", global_counter, temp_file_counter);
-                        output.push_str(&format!("open(my ${}, '>', ${}) or die \"Cannot create temp file: $!\\n\";\n", fh_var, temp_var));
-                        output.push_str(&format!("print ${} {};\n", fh_var, self.perl_string_literal(&Word::Literal(content.clone()))));
-                        output.push_str(&format!("close(${});\n", fh_var));
-                    }
-                    
-                    process_sub_files.push((temp_var, temp_file));
-                }
-                _ => {}
+                
+                process_sub_files.push((temp_var, temp_file));
             }
+            _ => {}
         }
+    }
 
-        // Generate the actual command
-        if cmd.name == "echo" {
-            // Special handling for echo command
-            if cmd.args.is_empty() {
-                output.push_str("print \"\\n\";\n");
-            } else {
-                let args: Vec<String> = cmd.args.iter()
-                    .map(|arg| self.word_to_perl(arg))
-                    .collect();
-                output.push_str(&format!("print {} \"\\n\";\n", args.join(", ")));
-            }
-        } else if cmd.name == "printf" {
-            // Handle printf command
-            if !cmd.args.is_empty() {
-                let format_str = &cmd.args[0];
-                let format_perl = self.word_to_perl(format_str);
-                let args: Vec<String> = cmd.args[1..].iter()
-                    .map(|arg| self.word_to_perl(arg))
-                    .collect();
-                if args.is_empty() {
-                    output.push_str(&format!("printf {};\n", format_perl));
-                } else {
-                    output.push_str(&format!("printf {}, {};\n", format_perl, args.join(", ")));
-                }
-            }
-        } else if cmd.name == "cd" {
-            // Handle cd command
-            if cmd.args.is_empty() {
-                output.push_str("chdir $ENV{'HOME'} or die \"Cannot change to home directory: $!\\n\";\n");
-            } else {
-                let dir = self.word_to_perl(&cmd.args[0]);
-                output.push_str(&format!("chdir {} or die \"Cannot change directory: $!\\n\";\n", dir));
-            }
-        } else if cmd.name == "pwd" {
-            // Handle pwd command
-            output.push_str("print getcwd(), \"\\n\";\n");
-        } else if cmd.name == "true" {
-            // Handle true command
-            output.push_str("1;\n");
-        } else if cmd.name == "false" {
-            // Handle false command
-            output.push_str("0;\n");
-        } else if cmd.name == "exit" {
-            // Handle exit command
-            if cmd.args.is_empty() {
-                output.push_str("exit 0;\n");
-            } else {
-                let code = self.word_to_perl(&cmd.args[0]);
-                output.push_str(&format!("exit {};\n", code));
-            }
-        } else if cmd.name == "return" {
-            // Handle return command
-            if cmd.args.is_empty() {
-                output.push_str("return;\n");
-            } else {
-                let value = self.word_to_perl(&cmd.args[0]);
-                output.push_str(&format!("return {};\n", value));
-            }
-        } else if cmd.name == "shift" {
-            // Handle shift command
-            if cmd.args.is_empty() {
-                output.push_str("shift;\n");
-            } else {
-                let array = self.word_to_perl(&cmd.args[0]);
-                output.push_str(&format!("shift {};\n", array));
-            }
-        } else if cmd.name == "set" {
-            // Handle set command (already handled in builtin_command)
-            output.push_str("# set command handled in builtin_command\n");
-        } else if cmd.name == "unset" {
-            // Handle unset command (already handled in builtin_command)
-            output.push_str("# unset command handled in builtin_command\n");
-        } else if cmd.name == "export" {
-            // Handle export command (already handled in builtin_command)
-            output.push_str("# export command handled in builtin_command\n");
-        } else if cmd.name == "readonly" {
-            // Handle readonly command (already handled in builtin_command)
-            output.push_str("# readonly command handled in builtin_command\n");
-        } else if cmd.name == "declare" {
-            // Handle declare command (already handled in builtin_command)
-            output.push_str("# declare command handled in builtin_command\n");
+    // Generate the actual command
+    if cmd.name == "echo" {
+        // Special handling for echo command
+        if cmd.args.is_empty() {
+            output.push_str("print \"\\n\";\n");
         } else {
-            // Handle other commands
-            if cmd.args.is_empty() {
-                output.push_str(&format!("system('{}');\n", cmd.name));
+            let args: Vec<String> = cmd.args.iter()
+                .map(|arg| generator.word_to_perl(arg))
+                .collect();
+            output.push_str(&format!("print {} \"\\n\";\n", args.join(", ")));
+        }
+    } else if cmd.name == "printf" {
+        // Handle printf command
+        if !cmd.args.is_empty() {
+            let format_str = &cmd.args[0];
+            let format_perl = generator.word_to_perl(format_str);
+            let args: Vec<String> = cmd.args[1..].iter()
+                .map(|arg| generator.word_to_perl(arg))
+                .collect();
+            if args.is_empty() {
+                output.push_str(&format!("printf {};\n", format_perl));
             } else {
-                let args: Vec<String> = cmd.args.iter()
-                    .map(|arg| self.word_to_perl(arg))
-                    .collect();
-                output.push_str(&format!("system('{}', {});\n", cmd.name, args.join(", ")));
+                output.push_str(&format!("printf {}, {};\n", format_perl, args.join(", ")));
             }
         }
-
-        if has_env {
-            output.push_str("}\n");
+    } else if cmd.name == "cd" {
+        // Handle cd command
+        if cmd.args.is_empty() {
+            output.push_str("chdir $ENV{'HOME'} or die \"Cannot change to home directory: $!\\n\";\n");
+        } else {
+            let dir = generator.word_to_perl(&cmd.args[0]);
+            output.push_str(&format!("chdir {} or die \"Cannot change directory: $!\\n\";\n", dir));
         }
-
-        output
+    } else if cmd.name == "pwd" {
+        // Handle pwd command
+        output.push_str("print getcwd(), \"\\n\";\n");
+    } else if cmd.name == "true" {
+        // Handle true command
+        output.push_str("1;\n");
+    } else if cmd.name == "false" {
+        // Handle false command
+        output.push_str("0;\n");
+    } else if cmd.name == "exit" {
+        // Handle exit command
+        if cmd.args.is_empty() {
+            output.push_str("exit 0;\n");
+        } else {
+            let code = generator.word_to_perl(&cmd.args[0]);
+            output.push_str(&format!("exit {};\n", code));
+        }
+    } else if cmd.name == "return" {
+        // Handle return command
+        if cmd.args.is_empty() {
+            output.push_str("return;\n");
+        } else {
+            let value = generator.word_to_perl(&cmd.args[0]);
+            output.push_str(&format!("return {};\n", value));
+        }
+    } else if cmd.name == "shift" {
+        // Handle shift command
+        if cmd.args.is_empty() {
+            output.push_str("shift;\n");
+        } else {
+            let array = generator.word_to_perl(&cmd.args[0]);
+            output.push_str(&format!("shift {};\n", array));
+        }
+    } else if cmd.name == "set" {
+        // Handle set command (already handled in builtin_command)
+        output.push_str("# set command handled in builtin_command\n");
+    } else if cmd.name == "unset" {
+        // Handle unset command (already handled in builtin_command)
+        output.push_str("# unset command handled in builtin_command\n");
+    } else if cmd.name == "export" {
+        // Handle export command (already handled in builtin_command)
+        output.push_str("# export command handled in builtin_command\n");
+    } else if cmd.name == "readonly" {
+        // Handle readonly command (already handled in builtin_command)
+        output.push_str("# readonly command handled in builtin_command\n");
+    } else if cmd.name == "declare" {
+        // Handle declare command (already handled in builtin_command)
+        output.push_str("# declare command handled in builtin_command\n");
+    } else {
+        // Handle other commands
+        if cmd.args.is_empty() {
+            output.push_str(&format!("system('{}');\n", cmd.name));
+        } else {
+            let args: Vec<String> = cmd.args.iter()
+                .map(|arg| generator.word_to_perl(arg))
+                .collect();
+            output.push_str(&format!("system('{}', {});\n", cmd.name, args.join(", ")));
+        }
     }
 
-    pub fn generate_pipeline(&mut self, pipeline: &Pipeline) -> String {
-        let mut output = String::new();
-        
-        // Handle pipeline commands
-        for (i, command) in pipeline.commands.iter().enumerate() {
-            if i > 0 {
-                // Add pipe separator
-                output.push_str(" | ");
-            }
-            
-            // Generate the command
-            let cmd_output = self.generate_command(command);
-            output.push_str(&cmd_output);
+    if has_env {
+        output.push_str("}\n");
+    }
+
+    output
+}
+
+pub fn generate_pipeline_impl(generator: &mut Generator, pipeline: &Pipeline) -> String {
+    let mut output = String::new();
+    
+    // Handle pipeline commands
+    for (i, command) in pipeline.commands.iter().enumerate() {
+        if i > 0 {
+            // Add pipe separator
+            output.push_str(" | ");
         }
         
-        output
+        // Generate the command
+        let cmd_output = generator.generate_command(command);
+        output.push_str(&cmd_output);
     }
+    
+    output
+}
 
-    pub fn generate_subshell(&mut self, command: &Command) -> String {
-        let mut output = String::new();
-        
-        // Generate subshell command
-        output.push_str("(");
-        output.push_str(&self.generate_command(command));
-        output.push_str(")");
-        
-        output
-    }
+pub fn generate_subshell_impl(generator: &mut Generator, command: &Command) -> String {
+    let mut output = String::new();
+    
+    // Generate subshell command
+    output.push_str("(");
+    output.push_str(&generator.generate_command(command));
+    output.push_str(")");
+    
+    output
+}
 
-    pub fn generate_background(&mut self, command: &Command) -> String {
-        let mut output = String::new();
-        
-        // Generate background command
-        output.push_str("(");
-        output.push_str(&self.generate_command(command));
-        output.push_str(") &");
-        
-        output
-    }
+pub fn generate_background_impl(generator: &mut Generator, command: &Command) -> String {
+    let mut output = String::new();
+    
+    // Generate background command
+    output.push_str("(");
+    output.push_str(&generator.generate_command(command));
+    output.push_str(") &");
+    
+    output
+}
 
-    pub fn generate_command_string_for_system(&mut self, cmd: &Command) -> String {
-        match cmd {
-            Command::Simple(simple_cmd) => {
-                let args: Vec<String> = simple_cmd.args.iter()
-                    .map(|arg| self.word_to_perl(arg))
-                    .collect();
-                format!("{} {}", simple_cmd.name, args.join(" "))
-            }
-            Command::Subshell(subshell_cmd) => {
-                match &**subshell_cmd {
-                    Command::Simple(simple_cmd) => {
-                        let args: Vec<String> = simple_cmd.args.iter()
-                            .map(|arg| self.word_to_perl(arg))
-                            .collect();
-                        format!("{} {}", simple_cmd.name, args.join(" "))
-                    }
-                    Command::Pipeline(pipeline) => {
-                        let commands: Vec<String> = pipeline.commands.iter()
-                            .filter_map(|cmd| {
-                                if let Command::Simple(simple_cmd) = cmd {
-                                    let args: Vec<String> = simple_cmd.args.iter()
-                                        .map(|arg| self.word_to_perl(arg))
-                                        .collect();
-                                    Some(format!("{} {}", simple_cmd.name, args.join(" ")))
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                        commands.join(" | ")
-                    }
-                    _ => format!("{:?}", cmd)
+pub fn generate_command_string_for_system_impl(generator: &mut Generator, cmd: &Command) -> String {
+    match cmd {
+        Command::Simple(simple_cmd) => {
+            let args: Vec<String> = simple_cmd.args.iter()
+                .map(|arg| generator.word_to_perl(arg))
+                .collect();
+            format!("{} {}", simple_cmd.name, args.join(" "))
+        }
+        Command::Subshell(subshell_cmd) => {
+            match &**subshell_cmd {
+                Command::Simple(simple_cmd) => {
+                    let args: Vec<String> = simple_cmd.args.iter()
+                        .map(|arg| generator.word_to_perl(arg))
+                        .collect();
+                    format!("{} {}", simple_cmd.name, args.join(" "))
                 }
+                Command::Pipeline(pipeline) => {
+                    let commands: Vec<String> = pipeline.commands.iter()
+                        .filter_map(|cmd| {
+                            if let Command::Simple(simple_cmd) = cmd {
+                                let args: Vec<String> = simple_cmd.args.iter()
+                                    .map(|arg| generator.word_to_perl(arg))
+                                    .collect();
+                                Some(format!("{} {}", simple_cmd.name, args.join(" ")))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    commands.join(" | ")
+                }
+                _ => format!("{:?}", cmd)
             }
-            _ => format!("{:?}", cmd)
         }
+        _ => format!("{:?}", cmd)
     }
+}
 
-    // Helper method for escaping Perl strings
-    pub fn escape_perl_string(&self, s: &str) -> String {
-        s.replace("\\", "\\\\")
-         .replace("\"", "\\\"")
-         .replace("\n", "\\n")
-         .replace("\t", "\\t")
-         .replace("\r", "\\r")
-    }
-
-
+// Helper method for escaping Perl strings
+pub fn escape_perl_string(s: &str) -> String {
+    s.replace("\\", "\\\\")
+     .replace("\"", "\\\"")
+     .replace("\n", "\\n")
+     .replace("\t", "\\t")
+     .replace("\r", "\\r")
 }

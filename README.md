@@ -94,7 +94,7 @@ debashc interactive
 ### Library Usage
 
 ```rust
-use debashc::{Lexer, Parser, PerlGenerator, RustGenerator, PythonGenerator};
+use debashc::{Lexer, Parser, Generator, RustGenerator, PythonGenerator};
 
 // Tokenize a shell script
 let input = "echo hello world";
@@ -115,7 +115,7 @@ match parser.parse() {
 }
 
 // Convert to Perl
-let mut generator = PerlGenerator::new();
+let mut generator = Generator::new();
 let perl_code = generator.generate(&commands);
 println!("Perl code: {}", perl_code);
 ```

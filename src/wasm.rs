@@ -1,5 +1,5 @@
 use wasm_bindgen::prelude::*;
-use crate::{Lexer, Parser, PerlGenerator};
+use crate::{Lexer, Parser, Generator};
 
 #[wasm_bindgen]
 pub struct Debashc;
@@ -65,7 +65,7 @@ impl Debashc {
         let mut parser = Parser::new(input);
         match parser.parse() {
             Ok(commands) => {
-                let mut generator = PerlGenerator::new();
+                let mut generator = Generator::new();
                 Ok(generator.generate(&commands))
             }
             Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
