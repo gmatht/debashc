@@ -2,13 +2,13 @@ mod lexer;
 mod parser;
 mod ast;
 mod shared_utils;
-mod perl_generator;
+mod generator;
 mod cmd;
 
 use lexer::*;
 use parser::*;
 // use ast::*; // not needed at top-level
-use perl_generator::*;
+use generator::*;
 
 use std::env;
 use std::fs;
@@ -2070,7 +2070,7 @@ fn show_help(program_name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lexer::Token;
+    use crate::lexer::{Lexer, Token};
 
     #[test]
     fn test_lexer_basic() {

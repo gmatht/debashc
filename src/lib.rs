@@ -3,7 +3,7 @@ pub mod parser;
 pub mod ast;
 pub mod debug;
 pub mod shared_utils;
-pub mod perl_generator;
+pub mod generator;
 pub mod wasm;
 pub mod cmd;
 
@@ -12,5 +12,5 @@ pub use parser::*;
 pub use ast::*;
 pub use debug::*;
 pub use shared_utils::*;
-pub use perl_generator::*;
+pub use generator::*;
 pub use wasm::*;
