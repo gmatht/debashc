@@ -6,7 +6,11 @@ use crate::parser::words::parse_word;
 use crate::parser::redirects::parse_redirect;
 use crate::parser::assignments::parse_environment_variable_value;
 use crate::parser::assignments::parse_array_elements;
-use crate::parser::control_flow::*;
+use crate::parser::control_flow::{
+    parse_if_statement, parse_case_statement, parse_while_loop, parse_for_loop,
+    parse_function, parse_posix_function, parse_break_statement, parse_continue_statement,
+    parse_return_statement, parse_block
+};
 use std::collections::HashMap;
 
 pub struct Parser {
@@ -34,6 +38,11 @@ impl Parser {
         
         // Skip initial whitespace and comments
         self.lexer.skip_whitespace_and_comments();
+        
+        // If the file contains only comments and whitespace, return empty commands
+        if self.lexer.is_eof() {
+            return Ok(commands);
+        }
         
         while !self.lexer.is_eof() {
             // Progress guard to prevent hangs: ensure each loop consumes or advances tokens
@@ -68,6 +77,19 @@ impl Parser {
                     }
                     _ => {}
                 }
+            }
+            
+            // Handle comments at the top level
+            while let Some(Token::Comment) = self.lexer.peek() {
+                self.lexer.next();
+                self.lexer.skip_whitespace_and_comments();
+                if self.lexer.is_eof() {
+                    break;
+                }
+            }
+            
+            if self.lexer.is_eof() {
+                break;
             }
             
             let mut command = self.parse_command()?;
@@ -136,6 +158,10 @@ impl Parser {
         }
 
         let command = match self.lexer.peek() {
+            Some(Token::Comment) => {
+                // Comments should be handled at the top level
+                return Err(ParserError::InvalidSyntax("Unexpected comment in command parsing".to_string()));
+            }
             Some(Token::If) => parse_if_statement(&mut self.lexer),
             Some(Token::Case) => parse_case_statement(&mut self.lexer),
             Some(Token::While) => parse_while_loop(&mut self.lexer),
@@ -181,6 +207,7 @@ impl Parser {
             }
             Some(Token::ParenOpen) => self.parse_subshell(),
             Some(Token::BraceOpen) => parse_block(&mut self.lexer),
+            Some(Token::TestBracket) => self.parse_test_expression(),
             Some(Token::Semicolon) | Some(Token::Newline) | Some(Token::CarriageReturn) => {
                 // Skip semicolon and continue parsing
                 self.lexer.next();
@@ -276,6 +303,9 @@ impl Parser {
     }
 
     fn parse_simple_command(&mut self) -> Result<Command, ParserError> {
+        // Skip whitespace and comments at the beginning
+        self.lexer.skip_whitespace_and_comments();
+        
         let mut args = Vec::new();
         let mut redirects = Vec::new();
         let mut env_vars = HashMap::new();
@@ -551,6 +581,89 @@ impl Parser {
     fn parse_double_paren_command(&mut self) -> Result<Command, ParserError> {
         // TODO: Implement double paren command parsing
         Err(ParserError::InvalidSyntax("Double paren commands not yet implemented".to_string()))
+    }
+
+    fn parse_test_expression(&mut self) -> Result<Command, ParserError> {
+        use crate::ast::{TestExpression, TestModifiers};
+        
+        // Consume the opening [
+        if !matches!(self.lexer.peek(), Some(Token::TestBracket)) {
+            return Err(ParserError::InvalidSyntax("Expected '[' for test expression".to_string()));
+        }
+        self.lexer.next(); // consume '['
+        
+        // Capture the content between [ and ]
+        let mut expression_parts = Vec::new();
+        
+        loop {
+            match self.lexer.peek() {
+                Some(Token::TestBracketClose) => {
+                    self.lexer.next(); // consume ']'
+                    break;
+                }
+                Some(Token::File) => {
+                    expression_parts.push("-f".to_string());
+                    self.lexer.next();
+                }
+                Some(Token::Directory) => {
+                    expression_parts.push("-d".to_string());
+                    self.lexer.next();
+                }
+                Some(Token::Exists) => {
+                    expression_parts.push("-e".to_string());
+                    self.lexer.next();
+                }
+                Some(Token::Readable) => {
+                    expression_parts.push("-r".to_string());
+                    self.lexer.next();
+                }
+                Some(Token::Writable) => {
+                    expression_parts.push("-w".to_string());
+                    self.lexer.next();
+                }
+                Some(Token::Executable) => {
+                    expression_parts.push("-x".to_string());
+                    self.lexer.next();
+                }
+                Some(Token::Size) => {
+                    expression_parts.push("-s".to_string());
+                    self.lexer.next();
+                }
+                Some(Token::Symlink) => {
+                    expression_parts.push("-L".to_string());
+                    self.lexer.next();
+                }
+                Some(Token::Identifier) => {
+                    expression_parts.push(self.lexer.get_identifier_text()?);
+                }
+                Some(Token::DoubleQuotedString) | Some(Token::SingleQuotedString) => {
+                    expression_parts.push(self.lexer.get_string_text()?);
+                }
+                Some(Token::Space) | Some(Token::Tab) => {
+                    self.lexer.next(); // skip whitespace
+                }
+                None => {
+                    return Err(ParserError::InvalidSyntax("Unexpected end of input in test expression".to_string()));
+                }
+                _ => {
+                    return Err(ParserError::InvalidSyntax("Unexpected token in test expression".to_string()));
+                }
+            }
+        }
+        
+        let expression = expression_parts.join(" ");
+        
+        Ok(Command::TestExpression(TestExpression {
+            expression,
+            modifiers: TestModifiers {
+                extglob: false,
+                nocasematch: false,
+                globstar: false,
+                nullglob: false,
+                failglob: false,
+                dotglob: false,
+            },
+        }))
     }
 
     fn parse_variable_expansion(&mut self) -> Result<Word, ParserError> {

@@ -351,10 +351,7 @@ pub fn parse_while_loop(lexer: &mut Lexer) -> Result<Command, ParserError> {
     // Parse body commands into a Block
     let mut body_commands = Vec::new();
     
-    // Parse first command
-    body_commands.push(parse_command(lexer)?);
-
-    // Parse additional commands in body until 'done'
+    // Parse commands in body until 'done'
     loop {
         // Skip separators
         while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn | Token::Semicolon)) {
@@ -452,10 +449,7 @@ pub fn parse_for_loop(lexer: &mut Lexer) -> Result<Command, ParserError> {
     // Parse body commands into a Block
     let mut body_commands = Vec::new();
     
-    // Parse first command
-    body_commands.push(parse_command(lexer)?);
-
-    // Parse additional commands in body until 'done'
+    // Parse commands in body until 'done'
     loop {
         // Skip separators
         while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn)) {
@@ -482,7 +476,7 @@ pub fn parse_for_loop(lexer: &mut Lexer) -> Result<Command, ParserError> {
             continue;
         }
         
-        // Parse additional command in body
+        // Parse command in body
         let pre_pos = lexer.current_position();
         let command = parse_command(lexer)?;
         body_commands.push(command);
@@ -836,14 +830,198 @@ fn parse_arithmetic_expression(_lexer: &mut Lexer) -> Result<Word, ParserError> 
     Err(ParserError::InvalidSyntax("Arithmetic expressions not yet implemented".to_string()))
 }
 
-fn parse_pipeline(_lexer: &mut Lexer) -> Result<Command, ParserError> {
-    // TODO: Implement pipeline parsing
-    Err(ParserError::InvalidSyntax("Pipeline parsing not yet implemented".to_string()))
+fn parse_pipeline(lexer: &mut Lexer) -> Result<Command, ParserError> {
+    // For control flow constructs, we only need to parse a single command
+    // This is used for test conditions in if statements, not for general pipelines
+    parse_simple_command(lexer)
 }
 
-fn parse_command(_lexer: &mut Lexer) -> Result<Command, ParserError> {
-    // TODO: Implement command parsing
-    Err(ParserError::InvalidSyntax("Command parsing not yet implemented".to_string()))
+pub fn parse_simple_command(lexer: &mut Lexer) -> Result<Command, ParserError> {
+    // Skip whitespace and comments at the beginning
+    lexer.skip_whitespace_and_comments();
+    
+    // Check if this is a test expression first
+    if matches!(lexer.peek(), Some(Token::TestBracket)) {
+        return parse_test_expression(lexer);
+    }
+    
+    let mut args = Vec::new();
+    let mut redirects = Vec::new();
+    let mut env_vars = HashMap::new();
+    
+    // Parse the command name
+    let name = match lexer.peek() {
+        Some(Token::Identifier) => {
+            let name_text = lexer.get_identifier_text()?;
+            Word::Literal(name_text)
+        }
+        _ => {
+            return Err(ParserError::InvalidSyntax("Expected command name".to_string()));
+        }
+    };
+    
+    // Parse arguments
+    lexer.skip_whitespace_and_comments();
+    while let Some(token) = lexer.peek() {
+        match token {
+            Token::Identifier | Token::DoubleQuotedString | Token::SingleQuotedString | 
+            Token::Dollar | Token::DollarParen | Token::BacktickString |
+            Token::File | Token::Directory | Token::Exists | Token::Readable | Token::Writable | 
+            Token::Executable | Token::Size | Token::Symlink => {
+                let word = parse_word(lexer)?;
+                args.push(word);
+                // Skip whitespace after the word
+                lexer.skip_whitespace_and_comments();
+            }
+            _ => break,
+        }
+    }
+    
+    // For now, skip redirects as they're not needed for basic control flow parsing
+    // TODO: Implement redirect parsing if needed
+    
+    Ok(Command::Simple(SimpleCommand {
+        name,
+        args,
+        redirects,
+        env_vars,
+    }))
+}
+
+fn parse_command(lexer: &mut Lexer) -> Result<Command, ParserError> {
+    // Skip whitespace and comments
+    lexer.skip_whitespace_and_comments();
+    
+    if lexer.is_eof() {
+        return Err(ParserError::UnexpectedEOF);
+    }
+    
+    // Check if this is a test expression
+    if matches!(lexer.peek(), Some(Token::TestBracket)) {
+        parse_test_expression(lexer)
+    } else {
+        parse_simple_command(lexer)
+    }
+}
+
+fn parse_test_expression(lexer: &mut Lexer) -> Result<Command, ParserError> {
+    use crate::ast::{TestExpression, TestModifiers};
+    
+    // Consume the opening [
+    if !matches!(lexer.peek(), Some(Token::TestBracket)) {
+        return Err(ParserError::InvalidSyntax("Expected '[' for test expression".to_string()));
+    }
+    lexer.next(); // consume '['
+    
+    // Capture the content between [ and ]
+    let mut expression_parts = Vec::new();
+    
+    loop {
+        match lexer.peek() {
+            Some(Token::TestBracketClose) => {
+                lexer.next(); // consume ']'
+                break;
+            }
+            Some(Token::File) => {
+                expression_parts.push("-f".to_string());
+                lexer.next();
+            }
+            Some(Token::Directory) => {
+                expression_parts.push("-d".to_string());
+                lexer.next();
+            }
+            Some(Token::Exists) => {
+                expression_parts.push("-e".to_string());
+                lexer.next();
+            }
+            Some(Token::Readable) => {
+                expression_parts.push("-r".to_string());
+                lexer.next();
+            }
+            Some(Token::Writable) => {
+                expression_parts.push("-w".to_string());
+                lexer.next();
+            }
+            Some(Token::Executable) => {
+                expression_parts.push("-x".to_string());
+                lexer.next();
+            }
+            Some(Token::Size) => {
+                expression_parts.push("-s".to_string());
+                lexer.next();
+            }
+            Some(Token::Symlink) => {
+                expression_parts.push("-L".to_string());
+                lexer.next();
+            }
+            Some(Token::Identifier) => {
+                expression_parts.push(lexer.get_identifier_text()?);
+            }
+            Some(Token::DoubleQuotedString) | Some(Token::SingleQuotedString) => {
+                expression_parts.push(lexer.get_string_text()?);
+            }
+            Some(Token::Dollar) => {
+                // Handle variable references like $i
+                lexer.next(); // consume $
+                if let Some(Token::Identifier) = lexer.peek() {
+                    let var_name = lexer.get_identifier_text()?;
+                    expression_parts.push(format!("${}", var_name));
+                } else {
+                    return Err(ParserError::InvalidSyntax("Expected identifier after $ in test expression".to_string()));
+                }
+            }
+            Some(Token::Number) => {
+                expression_parts.push(lexer.get_number_text()?);
+            }
+            Some(Token::Lt) => {
+                expression_parts.push("-lt".to_string());
+                lexer.next();
+            }
+            Some(Token::Le) => {
+                expression_parts.push("-le".to_string());
+                lexer.next();
+            }
+            Some(Token::Gt) => {
+                expression_parts.push("-gt".to_string());
+                lexer.next();
+            }
+            Some(Token::Ge) => {
+                expression_parts.push("-ge".to_string());
+                lexer.next();
+            }
+            Some(Token::Eq) => {
+                expression_parts.push("-eq".to_string());
+                lexer.next();
+            }
+            Some(Token::Ne) => {
+                expression_parts.push("-ne".to_string());
+                lexer.next();
+            }
+            Some(Token::Space) | Some(Token::Tab) => {
+                lexer.next(); // skip whitespace
+            }
+            None => {
+                return Err(ParserError::InvalidSyntax("Unexpected end of input in test expression".to_string()));
+            }
+            _ => {
+                return Err(ParserError::InvalidSyntax("Unexpected token in test expression".to_string()));
+            }
+        }
+    }
+    
+    let expression = expression_parts.join(" ");
+    
+    Ok(Command::TestExpression(TestExpression {
+        expression,
+        modifiers: TestModifiers {
+            extglob: false,
+            nocasematch: false,
+            globstar: false,
+            nullglob: false,
+            failglob: false,
+            dotglob: false,
+        },
+    }))
 }
 
 fn parse_pipeline_from_command(_lexer: &mut Lexer, _command: Command) -> Result<Command, ParserError> {

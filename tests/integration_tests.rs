@@ -338,8 +338,6 @@ fn test_ast_variables_no_special_characters() {
     // Test that the parser correctly parses parameter expansions with special characters
     // instead of treating them as invalid variable names
     
-
-    
     let test_cases = vec![
         ("name^^", "Uppercase all"),
         ("name,,", "Lowercase all"), 
@@ -455,12 +453,8 @@ fn test_parameter_expansion_example_parses_correctly() {
     //
     // for pattern in invalid_variable_patterns {
     //     // The pattern should not appear as a simple variable name
-    //     // It should be part of a parameter expansion structure
-    //     assert!(
-    //         !commands_str.contains(&format!("Variable(\"{}\")", pattern)),
-    //         "Pattern '{}' should not be parsed as a simple Variable, it should be part of ParameterExpansion",
-    //         pattern
-    //     );
+    //     // It should be parsed as part of ParameterExpansion
+    //     // assert!(commands_str.contains(pattern));
     // }
 }
 
@@ -2705,5 +2699,18 @@ fn test_no_std_process_id_usage() {
     
     // Log success message
     println!("✓ No std::process::id usage found in the codebase");
+}
+
+#[test]
+fn test_simple_command_lexing() {
+    let input = "echo hello world";
+    let mut lexer = Lexer::new(input);
+    
+    assert_eq!(lexer.next(), Some(&Token::Identifier));
+    assert_eq!(lexer.next(), Some(&Token::Space));
+    assert_eq!(lexer.next(), Some(&Token::Identifier));
+    assert_eq!(lexer.next(), Some(&Token::Space));
+    assert_eq!(lexer.next(), Some(&Token::Identifier));
+    assert_eq!(lexer.next(), None);
 }
 */

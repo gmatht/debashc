@@ -32,18 +32,9 @@ pub fn parse_word(lexer: &mut Lexer) -> Result<Word, ParserError> {
         Some(Token::Number) => Ok(Word::Literal(lexer.get_number_text()?)),
         Some(Token::OctalNumber) => Ok(Word::Literal(lexer.get_raw_token_text()?)),
         Some(Token::DoubleQuotedString) => {
-            // Check if the string contains any $ characters for interpolation
-            if let Some((start, end)) = lexer.get_span() {
-                let text = lexer.get_text(start, end);
-                if text.contains('$') {
-                    Ok(parse_string_interpolation(lexer)?)
-                } else {
-                    // Simple quoted string with no interpolation
-                    Ok(Word::Literal(lexer.get_string_text()?))
-                }
-            } else {
-                Ok(parse_string_interpolation(lexer)?)
-            }
+            // Always parse as string interpolation for double-quoted strings
+            // This handles both simple strings and strings with variables
+            Ok(parse_string_interpolation(lexer)?)
         },
         Some(Token::SingleQuotedString) => Ok(Word::Literal(lexer.get_string_text()?)),
         Some(Token::BacktickString) => Ok(Word::Literal(lexer.get_raw_token_text()?)),
@@ -80,6 +71,43 @@ pub fn parse_word(lexer: &mut Lexer) -> Result<Word, ParserError> {
             lexer.next();
             Ok(Word::Literal("/".to_string()))
         }
+        // Test operators
+        Some(Token::File) => {
+            lexer.next();
+            Ok(Word::Literal("-f".to_string()))
+        }
+        Some(Token::Directory) => {
+            lexer.next();
+            Ok(Word::Literal("-d".to_string()))
+        }
+        Some(Token::Exists) => {
+            lexer.next();
+            Ok(Word::Literal("-e".to_string()))
+        }
+        Some(Token::Readable) => {
+            lexer.next();
+            Ok(Word::Literal("-r".to_string()))
+        }
+        Some(Token::Writable) => {
+            lexer.next();
+            Ok(Word::Literal("-w".to_string()))
+        }
+        Some(Token::Executable) => {
+            lexer.next();
+            Ok(Word::Literal("-x".to_string()))
+        }
+        Some(Token::Size) => {
+            lexer.next();
+            Ok(Word::Literal("-s".to_string()))
+        }
+        Some(Token::Symlink) => {
+            lexer.next();
+            Ok(Word::Literal("-L".to_string()))
+        }
+        Some(Token::TestBracketClose) => {
+            lexer.next();
+            Ok(Word::Literal("]".to_string()))
+        }
         Some(Token::Tilde) => {
             // Treat standalone '~' as a literal (e.g., `cd ~`)
             lexer.next();
@@ -109,7 +137,8 @@ pub fn parse_word(lexer: &mut Lexer) -> Result<Word, ParserError> {
         Some(Token::Arithmetic) | Some(Token::ArithmeticEval) => Ok(parse_arithmetic_expression(lexer)?),
         _ => {
             let (line, col) = lexer.offset_to_line_col(0);
-            Err(ParserError::UnexpectedToken { token: Token::Identifier, line, col })
+            let token = lexer.peek().unwrap_or(Token::Identifier).to_owned();
+            Err(ParserError::UnexpectedToken { token, line, col })
         }
     };
     
@@ -444,9 +473,63 @@ pub fn parse_variable_expansion(lexer: &mut Lexer) -> Result<Word, ParserError> 
 }
 
 // Placeholder functions - these would need to be implemented based on the actual AST structures
-fn parse_string_interpolation(_lexer: &mut Lexer) -> Result<Word, ParserError> {
-    // TODO: Implement string interpolation parsing
-    Err(ParserError::InvalidSyntax("String interpolation not yet implemented".to_string()))
+fn parse_string_interpolation(lexer: &mut Lexer) -> Result<Word, ParserError> {
+    use crate::ast::{StringInterpolation, StringPart};
+    
+    // Get the double-quoted string content (this includes the quotes)
+    let string_content = lexer.get_string_text()?;
+    
+    // Remove the outer quotes
+    let content = if string_content.starts_with('"') && string_content.ends_with('"') {
+        &string_content[1..string_content.len()-1]
+    } else {
+        &string_content
+    };
+    
+    // Parse the string content to extract literal parts and variable references
+    let mut parts = Vec::new();
+    let mut current_literal = String::new();
+    let mut i = 0;
+    
+    while i < content.len() {
+        if content[i..].starts_with("$") && i + 1 < content.len() {
+            // We found a variable reference
+            // First, add any accumulated literal text
+            if !current_literal.is_empty() {
+                parts.push(StringPart::Literal(current_literal.clone()));
+                current_literal.clear();
+            }
+            
+            // Parse the variable name
+            i += 1; // skip the $
+            if i < content.len() {
+                let var_start = i;
+                while i < content.len() && content[i..].chars().next().unwrap().is_alphanumeric() {
+                    i += 1;
+                }
+                let var_name = &content[var_start..i];
+                if !var_name.is_empty() {
+                    parts.push(StringPart::Variable(var_name.to_string()));
+                }
+            }
+        } else {
+            // Add to current literal
+            current_literal.push(content[i..].chars().next().unwrap());
+            i += 1;
+        }
+    }
+    
+    // Add any remaining literal text
+    if !current_literal.is_empty() {
+        parts.push(StringPart::Literal(current_literal));
+    }
+    
+    // If we have no parts, this shouldn't happen, but handle it gracefully
+    if parts.is_empty() {
+        parts.push(StringPart::Literal(content.to_string()));
+    }
+    
+    Ok(Word::StringInterpolation(StringInterpolation { parts }))
 }
 
 fn parse_ansic_quoted_string(_lexer: &mut Lexer) -> Result<Word, ParserError> {
@@ -454,9 +537,66 @@ fn parse_ansic_quoted_string(_lexer: &mut Lexer) -> Result<Word, ParserError> {
     Err(ParserError::InvalidSyntax("ANSI C quoted strings not yet implemented".to_string()))
 }
 
-fn parse_brace_expansion(_lexer: &mut Lexer) -> Result<Word, ParserError> {
-    // TODO: Implement brace expansion parsing
-    Err(ParserError::InvalidSyntax("Brace expansion not yet implemented".to_string()))
+fn parse_brace_expansion(lexer: &mut Lexer) -> Result<Word, ParserError> {
+    use crate::ast::{BraceExpansion, BraceItem, BraceRange};
+    
+    // Consume the opening brace
+    if !matches!(lexer.peek(), Some(Token::BraceOpen)) {
+        return Err(ParserError::InvalidSyntax("Expected '{' for brace expansion".to_string()));
+    }
+    lexer.next(); // consume '{'
+    
+    let mut items = Vec::new();
+    
+    // Parse the content inside braces
+    loop {
+        match lexer.peek() {
+            Some(Token::BraceClose) => {
+                lexer.next(); // consume '}'
+                break;
+            }
+            Some(Token::Number) => {
+                let start = lexer.get_number_text()?;
+                
+                // Check if this is a range (look for ..)
+                if matches!(lexer.peek(), Some(Token::Range)) {
+                    lexer.next(); // consume '..'
+                    
+                    if let Some(Token::Number) = lexer.peek() {
+                        let end = lexer.get_number_text()?;
+                        items.push(BraceItem::Range(BraceRange {
+                            start,
+                            end,
+                            step: None,
+                            format: None,
+                        }));
+                    } else {
+                        return Err(ParserError::InvalidSyntax("Expected number after '..' in brace range".to_string()));
+                    }
+                } else {
+                    // Just a literal number
+                    items.push(BraceItem::Literal(start));
+                }
+            }
+            Some(Token::Identifier) => {
+                let text = lexer.get_identifier_text()?;
+                items.push(BraceItem::Literal(text));
+            }
+            Some(Token::Comma) => {
+                lexer.next(); // consume ','
+                // Continue to next item
+            }
+            _ => {
+                return Err(ParserError::InvalidSyntax("Unexpected token in brace expansion".to_string()));
+            }
+        }
+    }
+    
+    Ok(Word::BraceExpansion(BraceExpansion {
+        prefix: None,
+        items,
+        suffix: None,
+    }))
 }
 
 fn parse_arithmetic_expression(_lexer: &mut Lexer) -> Result<Word, ParserError> {

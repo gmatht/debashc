@@ -24,6 +24,14 @@ pub trait ParserUtilities {
 }
 
 impl ParserUtilities for Lexer {
+    fn get_text(&mut self, start: usize, end: usize) -> String {
+        self.input[start..end].to_string()
+    }
+
+    fn get_span(&mut self) -> Option<(usize, usize)> {
+        self.tokens.get(self.current).map(|(_, start, end)| (*start, *end))
+    }
+
     fn skip_whitespace_and_comments(&mut self) {
         while let Some(token) = self.peek() {
             match token {
@@ -202,44 +210,36 @@ impl ParserUtilities for Lexer {
         }
     }
 
-    fn get_text(&mut self, start: usize, end: usize) -> String {
-        // This is a placeholder - the actual implementation would depend on the lexer's text storage
-        String::new()
-    }
 
-    fn get_span(&mut self) -> Option<(usize, usize)> {
-        // This is a placeholder - the actual implementation would depend on the lexer's span tracking
-        None
-    }
 
     fn current_position(&mut self) -> usize {
-        // This is a placeholder - the actual implementation would depend on the lexer's position tracking
-        0
+        self.current
     }
 
-    fn offset_to_line_col(&mut self, _offset: usize) -> (usize, usize) {
-        // This is a placeholder - the actual implementation would depend on the lexer's line/column tracking
-        (1, 1)
+    fn offset_to_line_col(&mut self, offset: usize) -> (usize, usize) {
+        self.offset_to_line_col(offset)
     }
 
     fn peek(&mut self) -> Option<Token> {
-        // This is a placeholder - the actual implementation would depend on the lexer's peek functionality
-        None
+        self.tokens.get(self.current).map(|(token, _, _)| token.clone())
     }
 
-    fn peek_n(&mut self, _n: usize) -> Option<Token> {
-        // This is a placeholder - the actual implementation would depend on the lexer's peek_n functionality
-        None
+    fn peek_n(&mut self, n: usize) -> Option<Token> {
+        self.tokens.get(self.current + n).map(|(token, _, _)| token.clone())
     }
 
     fn next(&mut self) -> Option<Token> {
-        // This is a placeholder - the actual implementation would depend on the lexer's next functionality
-        None
+        if self.current < self.tokens.len() {
+            let token = self.tokens[self.current].0.clone();
+            self.current += 1;
+            Some(token)
+        } else {
+            None
+        }
     }
 
     fn is_eof(&mut self) -> bool {
-        // This is a placeholder - the actual implementation would depend on the lexer's EOF checking
-        true
+        self.current >= self.tokens.len()
     }
 
     fn consume(&mut self, expected: Token) -> Result<(), ParserError> {
