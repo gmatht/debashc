@@ -19,12 +19,38 @@ use std::thread;
 use std::collections::HashMap;
 
 use std::time::SystemTime;
-use std::os::windows::process::ExitStatusExt;
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
 
 // Use the debug module for controlling DEBUG output
 use debashl::debug::set_debug_enabled;
+
+/// Cross-platform helper to create ExitStatus from exit code
+/// This is a workaround since ExitStatus::from_raw is platform-specific
+fn create_exit_status(exit_code: i32) -> std::process::ExitStatus {
+    // On Unix systems, we can use the exit code directly
+    // On Windows, we'll need to handle this differently
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(exit_code)
+    }
+    
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(exit_code.try_into().unwrap_or(0))
+    }
+    
+    #[cfg(not(any(unix, windows)))]
+    {
+        // Fallback for other platforms - create a mock exit status
+        // This is not ideal but allows compilation on other platforms
+        let mut status = std::process::ExitStatus::default();
+        // Note: This won't have the correct exit code, but it allows compilation
+        status
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CommandCache {
@@ -176,97 +202,72 @@ impl CommandCache {
 
 }
 
-/*
-fn cached_run_command(filename: &str, run_bash: bool, run_perl: bool) -> Result<(Option<std::process::Output>, Option<String>), String> {
-    let mut cache = CommandCache::load();
-    let mut bash_output = None;
-    let mut perl_code = None;
-    
-    // Check bash cache if needed
-    if run_bash {
-        if cache.is_bash_cache_valid(filename) {
-            if let Some(cached) = cache.get_cached_bash_output(filename) {
-                bash_output = Some(std::process::Output {
-                    stdout: cached.stdout.as_bytes().to_vec(),
-                    stderr: cached.stderr.as_bytes().to_vec(),
-                    status: std::process::ExitStatus::from_raw(cached.exit_code.try_into().unwrap_or(0)),
-                });
-            }
-        }
-    }
-    
-    // Check perl cache if needed
-    if run_perl {
-        // We'll check the cache after generating the Perl code to see if we can reuse the output
-    }
-    
-    // If we need to run bash and don't have cached output
-    if run_bash && bash_output.is_none() {
-        let output = run_bash_script(filename)?;
-        
-        // Cache the bash output
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let exit_code = output.status.code().unwrap_or(-1);
-        cache.update_bash_cache(filename, stdout, stderr, exit_code);
-        
-        bash_output = Some(output);
-    }
-    
-    // If we need to generate perl and don't have cached output
-    if run_perl && perl_code.is_none() {
-        let shell_content = fs::read_to_string(filename)
-            .map_err(|e| format!("Failed to read {}: {}", filename, e))?;
-        
-        let commands = Parser::new(&shell_content).parse()
-            .map_err(|e| format!("Failed to parse {}: {:?}", filename, e))?;
-        
-        let mut generator = PerlGenerator::new();
-        let code = generator.generate(&commands);
-        
-        // Check if we can use cached output
-        if cache.is_perl_cache_valid(filename, &code) {
-            if let Some(cached) = cache.get_cached_perl_output(filename) {
-                // We have valid cached output, so we don't need to run the Perl code again
-                // Just store the generated code for display purposes
-                perl_code = Some(code);
-                // Note: We don't update the cache here since we're reusing existing output
-            }
-        } else {
-            // Cache is invalid or doesn't exist, we'll need to run the Perl code
-            perl_code = Some(code);
-            // Note: We'll update the cache after running the Perl code
-        }
-    }
-    
-    // Save cache if we made any updates
-    if bash_output.is_some() || perl_code.is_none() {
-        cache.save();
-    }
-    
-    Ok((bash_output, perl_code))
-}
-*/
-
-/*
-fn run_bash_script(filename: &str) -> Result<std::process::Output, String> {
-    // Create a temporary file with Unix line endings for WSL
+/// Cross-platform function to run shell scripts
+/// Uses bash on Unix systems and tries to find an appropriate shell on Windows
+fn run_shell_script(filename: &str) -> Result<std::process::Output, String> {
     let shell_content = match fs::read_to_string(filename) {
         Ok(c) => c,
         Err(e) => return Err(format!("Failed to read {}: {}", filename, e)),
     };
-    let unix_content = shell_content.replace("\r\n", "\n");
-    let wsl_script_path = "__wsl_script.sh";
     
-    if let Err(e) = fs::write(wsl_script_path, unix_content) {
-        return Err(format!("Failed to write WSL script: {}", e));
+    // Normalize line endings
+    let unix_content = shell_content.replace("\r\n", "\n");
+    let script_path = "__temp_script.sh";
+    
+    if let Err(e) = fs::write(script_path, unix_content) {
+        return Err(format!("Failed to write temp script: {}", e));
     }
     
-    let mut child = match Command::new("wsl").args(&["bash", wsl_script_path]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+    // Make script executable on Unix systems
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = fs::metadata(script_path) {
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o755);
+            let _ = fs::set_permissions(script_path, perms);
+        }
+    }
+    
+    // Try to find an appropriate shell
+    let shell_cmd = if cfg!(unix) {
+        "bash"
+    } else if cfg!(windows) {
+        // On Windows, try to find bash in common locations
+        if Command::new("bash").arg("--version").output().is_ok() {
+            "bash"
+        } else if Command::new("wsl").arg("bash").arg("--version").output().is_ok() {
+            "wsl"
+        } else if Command::new("git").arg("--version").output().is_ok() {
+            // Git Bash is commonly available on Windows
+            "git"
+        } else {
+            return Err("No suitable shell found on Windows. Please install Git Bash, WSL, or another Unix-like shell.".to_string());
+        }
+    } else {
+        "bash" // Default fallback
+    };
+    
+    // Create the command based on the shell type
+    let mut child_cmd = if shell_cmd == "wsl" {
+        let mut cmd = Command::new("wsl");
+        cmd.args(&["bash", script_path]);
+        cmd
+    } else if shell_cmd == "git" {
+        let mut cmd = Command::new("git");
+        cmd.args(&["bash", script_path]);
+        cmd
+    } else {
+        let mut cmd = Command::new(shell_cmd);
+        cmd.arg(script_path);
+        cmd
+    };
+    
+    let mut child = match child_cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
         Ok(c) => c,
         Err(e) => { 
-            let _ = fs::remove_file(wsl_script_path);
-            return Err(format!("Failed to spawn wsl bash: {}", e)); 
+            let _ = fs::remove_file(script_path);
+            return Err(format!("Failed to spawn shell: {}", e)); 
         }
     };
     
@@ -285,12 +286,11 @@ fn run_bash_script(filename: &str) -> Result<std::process::Output, String> {
         }
     };
     
-    // Cleanup WSL script file
-    let _ = fs::remove_file(wsl_script_path);
+    // Cleanup temp script file
+    let _ = fs::remove_file(script_path);
     
     Ok(output)
 }
-*/
 
 #[derive(Debug)]
 struct TestResult {
@@ -985,53 +985,19 @@ fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
             let code = gen.generate(&commands);
             let tmp = "__tmp_test_output.pl";
             if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Perl temp file: {}", e)); }
-            (tmp.to_string(), vec![if cfg!(windows) { "perl" } else { "perl" }, tmp])
+            (tmp.to_string(), vec!["perl", tmp])
         }
         _ => { return Err(format!("Unsupported language for --test-file: {}", lang)); }
     };
 
-    // Run shell script using WSL bash for proper Unix command compatibility
-    let shell_output = {
-        // Create a temporary file with Unix line endings for WSL
-        let shell_content = fs::read_to_string(filename).unwrap_or_default();
-        let unix_content = shell_content.replace("\r\n", "\n");
-        let wsl_script_path = "__wsl_script.sh";
-        fs::write(wsl_script_path, unix_content).unwrap();
-        
-        let mut child = match Command::new("wsl").args(&["bash", wsl_script_path]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
-            Ok(c) => c,
-            Err(e) => { 
-                let _ = fs::remove_file(wsl_script_path);
-                return Err(format!("Failed to spawn wsl bash: {}", e)); 
-            }
-        };
-        
-        let start = std::time::Instant::now();
-        let output = loop {
-            match child.try_wait() {
-                Ok(Some(_)) => break child.wait_with_output().unwrap(),
-                Ok(None) => {
-                    if start.elapsed() > Duration::from_millis(1000) { 
-                        let _ = child.kill(); 
-                        break child.wait_with_output().unwrap(); 
-                    }
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(_) => break child.wait_with_output().unwrap(),
-            }
-        };
-        
-        // Cleanup WSL script file
-        let _ = fs::remove_file(wsl_script_path);
-        
-        output
-    };
+    // Run shell script using cross-platform shell execution
+    let shell_output = run_shell_script(filename)?;
 
     // Run translated program
     let translated_output = {
         if lang == "rust" {
             // Run compiled binary directly (first arg of run_cmd)
-            let bin = if cfg!(windows) { "__tmp_test_bin.exe" } else { "__tmp_test_bin" };
+            let bin = "__tmp_test_bin";
             let abs_bin = std::env::current_dir().unwrap_or_default().join(bin);
             let mut child = match Command::new(&abs_bin).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
                 Ok(c) => c,
@@ -1129,8 +1095,7 @@ fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
         }
     }
     
-    // Cleanup WSL script file
-    let _ = fs::remove_file("__wsl_script.sh");
+    // Cleanup temp files
     
     Ok(())
 }
@@ -1146,7 +1111,7 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
     let mut run_cmd = Vec::new();
     let mut translated_code = String::new();
     let mut ast = String::new();
-    let mut cached_perl_code: Option<String> = None;
+    let cached_perl_code: Option<String> = None;
     
     // Check if bash output cache is valid for this file
     if cache.is_bash_cache_valid(filename) {
@@ -1155,7 +1120,7 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
             shell_output = Some(std::process::Output {
                 stdout: cached.stdout.as_bytes().to_vec(),
                 stderr: cached.stderr.as_bytes().to_vec(),
-                status: std::process::ExitStatus::from_raw(cached.exit_code.try_into().unwrap_or(0)),
+                status: create_exit_status(cached.exit_code.try_into().unwrap_or(0)),
             });
         }
     }
@@ -1170,47 +1135,13 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
             return Err(format!("Failed to write Perl temp file: {}", e)); 
         }
         tmp_file = tmp.to_string();
-        run_cmd = vec![if cfg!(windows) { "perl" } else { "perl" }, tmp];
+        run_cmd = vec!["perl", tmp];
     }
     
     // If no cached output, we need to run the shell script
     if shell_output.is_none() {
         // Run the shell script and cache the output
-        let output = {
-            // Create a temporary file with Unix line endings for WSL
-            let shell_content = fs::read_to_string(filename).unwrap_or_default();
-            let unix_content = shell_content.replace("\r\n", "\n");
-            let wsl_script_path = "__wsl_script.sh";
-            fs::write(wsl_script_path, unix_content).unwrap();
-            
-            let mut child = match Command::new("wsl").args(&["bash", wsl_script_path]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
-                Ok(c) => c,
-                Err(e) => { 
-                    let _ = fs::remove_file(wsl_script_path);
-                    return Err(format!("Failed to spawn wsl bash: {}", e)); 
-                }
-            };
-            
-            let start = std::time::Instant::now();
-            let output = loop {
-                match child.try_wait() {
-                    Ok(Some(_)) => break child.wait_with_output().unwrap(),
-                    Ok(None) => {
-                        if start.elapsed() > Duration::from_millis(1000) { 
-                            let _ = child.kill(); 
-                            break child.wait_with_output().unwrap(); 
-                        }
-                        thread::sleep(Duration::from_millis(10));
-                    }
-                    Err(_) => break child.wait_with_output().unwrap(),
-                }
-            };
-            
-            // Cleanup WSL script file
-            let _ = fs::remove_file(wsl_script_path);
-            
-            output
-        };
+        let output = run_shell_script(filename)?;
         
         // Cache the output
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -1275,7 +1206,7 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
                 let code = gen.generate(&commands);
                 let tmp = "__tmp_test_output.pl";
                 if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Perl temp file: {}", e)); }
-                (tmp.to_string(), vec![if cfg!(windows) { "perl" } else { "perl" }, tmp], code)
+                (tmp.to_string(), vec!["perl", tmp], code)
             }
             _ => { return Err(format!("Unsupported language for --test-file: {}", lang)); }
         };
@@ -1301,7 +1232,7 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
     let translated_output = {
         if lang == "rust" {
             // Run compiled binary directly (first arg of run_cmd)
-            let bin = if cfg!(windows) { "__tmp_test_bin.exe" } else { "__tmp_test_bin" };
+            let bin = "__tmp_test_bin";
             let abs_bin = std::env::current_dir().unwrap_or_default().join(bin);
             let mut child = match Command::new(&abs_bin).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
                 Ok(c) => c,
@@ -1374,8 +1305,7 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
     // If both failed (exit status != 0), that's also success since behavior matches
     let success = shell_success == _trans_success;
 
-    // Cleanup WSL script file
-    let _ = fs::remove_file("__wsl_script.sh");
+    // Cleanup temp files
     
     // Save cache if we made any updates
     cache.save();
@@ -1399,7 +1329,7 @@ fn cleanup_tmp(lang: &str, tmp_file: &str) {
     let _ = fs::remove_file(tmp_file);
     if lang == "rust" {
         let _ = fs::remove_file("__tmp_test_bin");
-        if cfg!(windows) {
+        if cfg!(target_os = "windows") {
             let _ = fs::remove_file(format!("{}.exe", "__tmp_test_bin"));
             let _ = fs::remove_file(format!("{}.pdb", "__tmp_test_bin"));
         }
