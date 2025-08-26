@@ -156,37 +156,45 @@ impl Parser {
             return Err(ParserError::UnexpectedEOF);
         }
 
-        let command = match self.lexer.peek() {
-            Some(Token::Comment) => {
-                // Comments should be handled at the top level
-                return Err(ParserError::InvalidSyntax("Unexpected comment in command parsing".to_string()));
-            }
-            Some(Token::If) => parse_if_statement(self),
-            Some(Token::Case) => parse_case_statement(self),
-            Some(Token::While) => parse_while_loop(self),
-            Some(Token::For) => parse_for_loop(self),
-            Some(Token::Function) => parse_function(self),
-            Some(Token::Break) => parse_break_statement(self),
-            Some(Token::Continue) => parse_continue_statement(self),
-            Some(Token::Return) => parse_return_statement(self),
-            // POSIX-style function definition: name() { ... }
-            Some(Token::Identifier) => {
-                // Check if this is a function definition: identifier() { ... }
-                let paren1 = self.lexer.peek_n(1);
-                let paren2 = self.lexer.peek_n(2);
-                if matches!(paren1, Some(Token::ParenOpen)) 
-                    && matches!(paren2, Some(Token::ParenClose)) {
-                    // Check if the next non-whitespace token is a brace
-                    let mut pos = 3;
-                    while pos < 10 && matches!(self.lexer.peek_n(pos), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
-                        pos += 1;
-                    }
-                    let brace_token = self.lexer.peek_n(pos);
-                    if matches!(brace_token, Some(Token::BraceOpen)) {
-                        parse_posix_function(self)
-                    } else {
-                        self.parse_pipeline()
-                    }
+        let command = if let Some(Token::Identifier) = self.lexer.peek() {
+            // Check if this is a function definition: identifier() { ... }
+            let paren1 = self.lexer.peek_n(1);
+            let paren2 = self.lexer.peek_n(2);
+            if matches!(paren1, Some(Token::ParenOpen)) 
+                && matches!(paren2, Some(Token::ParenClose)) {
+                // Check if the next non-whitespace token is a brace
+                let mut pos = 3;
+                while pos < 10 && matches!(self.lexer.peek_n(pos), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+                    pos += 1;
+                }
+                let brace_token = self.lexer.peek_n(pos);
+                if matches!(brace_token, Some(Token::BraceOpen)) {
+                    parse_posix_function(self)?
+                } else {
+                    self.parse_pipeline()?
+                }
+            } else {
+                // Check if this is an array assignment: identifier=(...)
+                if matches!(paren1, Some(Token::Assign)) && matches!(self.lexer.peek_n(2), Some(Token::ParenOpen)) {
+                                    // This is an array assignment, parse it directly
+                let var_name = self.lexer.get_identifier_text()?;
+                // get_identifier_text() already advanced past the identifier
+                self.lexer.next(); // consume the =
+                self.lexer.next(); // consume the (
+                // Now parse the array elements (the lexer should be at the first element)
+                let elements = parse_array_elements(&mut self.lexer)?;
+                // The closing ) should already be consumed by parse_array_elements
+                    
+                    // Create a simple command with environment variables
+                    let mut env_vars = HashMap::new();
+                    env_vars.insert(var_name.clone(), Word::Array(var_name, elements));
+                    
+                    Command::Simple(SimpleCommand {
+                        name: Word::Literal("true".to_string()),
+                        args: Vec::new(),
+                        redirects: Vec::new(),
+                        env_vars,
+                    })
                 } else {
                     // Check if this is a standalone variable assignment: identifier=value
                     let mut pos = 1;
@@ -194,26 +202,41 @@ impl Parser {
                         pos += 1;
                     }
                     if matches!(self.lexer.peek_n(pos), Some(Token::Assign | Token::PlusAssign | Token::MinusAssign | Token::StarAssign | Token::SlashAssign | Token::PercentAssign)) {
-                        self.parse_standalone_assignment()
+                        self.parse_standalone_assignment()?
                     } else {
-                        self.parse_pipeline()
+                        self.parse_pipeline()?
                     }
                 }
             }
-            // Bash arithmetic evaluation: (( ... ))
-            Some(Token::ParenOpen) if matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) => {
-                self.parse_double_paren_command()
+        } else {
+            match self.lexer.peek() {
+                Some(Token::Comment) => {
+                    // Comments should be handled at the top level
+                    return Err(ParserError::InvalidSyntax("Unexpected comment in command parsing".to_string()));
+                }
+                Some(Token::If) => parse_if_statement(self)?,
+                Some(Token::Case) => parse_case_statement(self)?,
+                Some(Token::While) => parse_while_loop(self)?,
+                Some(Token::For) => parse_for_loop(self)?,
+                Some(Token::Function) => parse_function(self)?,
+                Some(Token::Break) => parse_break_statement(self)?,
+                Some(Token::Continue) => parse_continue_statement(self)?,
+                Some(Token::Return) => parse_return_statement(self)?,
+                // Bash arithmetic evaluation: (( ... ))
+                Some(Token::ParenOpen) if matches!(self.lexer.peek_n(1), Some(Token::ParenOpen)) => {
+                    self.parse_double_paren_command()?
+                }
+                Some(Token::ParenOpen) => self.parse_subshell()?,
+                Some(Token::BraceOpen) => parse_block(self)?,
+                Some(Token::TestBracket) => self.parse_test_expression()?,
+                Some(Token::Semicolon) | Some(Token::Newline) | Some(Token::CarriageReturn) => {
+                    // Skip semicolon and continue parsing
+                    self.lexer.next();
+                    self.parse_command()?
+                }
+                _ => self.parse_pipeline()?,
             }
-            Some(Token::ParenOpen) => self.parse_subshell(),
-            Some(Token::BraceOpen) => parse_block(self),
-            Some(Token::TestBracket) => self.parse_test_expression(),
-            Some(Token::Semicolon) | Some(Token::Newline) | Some(Token::CarriageReturn) => {
-                // Skip semicolon and continue parsing
-                self.lexer.next();
-                self.parse_command()
-            }
-            _ => self.parse_pipeline(),
-        }?;
+        };
 
         // Check for redirects that follow the command
         self.parse_command_redirects(command)
@@ -382,9 +405,9 @@ impl Parser {
         let name = if let Some(token) = self.lexer.peek() {
             match token {
                 Token::Identifier => {
-                    let identifier = self.lexer.get_identifier_text()?;
-                    self.lexer.next(); // consume the identifier token
-                    Word::Literal(identifier)
+                    let name = self.lexer.get_identifier_text()?;
+                    self.lexer.next(); // consume the identifier
+                    Word::Literal(name)
                 }
                 Token::Set | Token::Export | Token::Readonly | Token::Local | Token::Declare | Token::Typeset |
                 Token::Unset | Token::Shift | Token::Eval | Token::Exec | Token::Source | Token::Trap | Token::Wait | Token::Shopt | Token::Exit => {
@@ -446,29 +469,25 @@ impl Parser {
             }
         }
 
-        // Parse arguments and redirects
+        // Parse arguments
         while let Some(token) = self.lexer.peek() {
             match token {
-                Token::Space | Token::Tab | Token::Comment => {
-                    // Skip whitespace and comments between arguments
-                    self.lexer.next();
-                    continue;
-                }
-                Token::Newline | Token::Semicolon | Token::CarriageReturn => {
-                    // End of this simple command; do not consume here so outer loop can handle separators
+                Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn => {
                     break;
                 }
-                Token::Identifier | Token::Number | Token::OctalNumber | Token::DoubleQuotedString | Token::SingleQuotedString | Token::Source | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString | Token::Star | Token::Dot | Token::CasePattern | Token::Range | Token::Slash | Token::Tilde | Token::LongOption | Token::RegexPattern | Token::RegexMatch | Token::NameFlag | Token::MaxDepthFlag | Token::TypeFlag | Token::Minus | Token::Character | Token::NonZero | Token::Exists | Token::File | Token::Directory | Token::Readable | Token::Writable | Token::Executable | Token::Symlink | Token::SymlinkH | Token::PipeFile | Token::Socket | Token::Block | Token::SetGid | Token::Sticky | Token::SetUid | Token::Owned | Token::GroupOwned | Token::Modified | Token::Eq | Token::Ne | Token::Lt | Token::Le | Token::Gt | Token::Ge | Token::Zero => {
+                Token::RedirectIn | Token::RedirectOut | Token::RedirectAppend | Token::RedirectInErr | Token::RedirectOutErr | Token::RedirectInOut | Token::Heredoc | Token::HeredocTabs | Token::HereString => {
+                    break;
+                }
+                Token::Pipe | Token::And | Token::Or | Token::Semicolon | Token::Background => {
+                    break;
+                }
+                Token::Character | Token::NonZero | Token::Exists | Token::File | Token::Size | Token::Readable | Token::Writable | Token::Executable | Token::NewerThan | Token::OlderThan => {
+                    // These are valid argument tokens
                     args.push(parse_word(&mut self.lexer)?);
                 }
-                Token::RedirectAppend | Token::RedirectInOut | Token::Heredoc | Token::HeredocTabs | Token::HereString => {
-                    redirects.push(parse_redirect(&mut self.lexer)?);
+                _ => {
+                    args.push(parse_word(&mut self.lexer)?);
                 }
-                Token::And | Token::Or => {
-                    // Stop parsing arguments when we hit a command separator
-                    break;
-                }
-                _ => break,
             }
         }
         

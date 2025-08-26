@@ -70,17 +70,30 @@ pub fn parse_environment_variable_value(lexer: &mut Lexer) -> Result<Word, Parse
 pub fn parse_array_elements(lexer: &mut Lexer) -> Result<Vec<String>, ParserError> {
     let mut elements = Vec::new();
     let mut current_element = String::new();
+    let mut loop_count = 0;
+    
+    println!("DEBUG: Starting parse_array_elements");
     
     loop {
-        match lexer.peek() {
+        loop_count += 1;
+        if loop_count > 100 {
+            return Err(ParserError::InvalidSyntax("Array parsing loop limit exceeded".to_string()));
+        }
+        
+        let token = lexer.peek();
+        println!("DEBUG: Loop {}: token = {:?}, current_element = '{}'", loop_count, token, current_element);
+        
+        match token {
             Some(Token::ParenClose) => {
+                println!("DEBUG: Found closing parenthesis, adding current_element: '{}'", current_element);
                 if !current_element.is_empty() {
                     elements.push(current_element.trim().to_string());
                 }
                 lexer.next(); // consume )
                 break;
             }
-            Some(Token::Space) | Some(Token::Tab) | Some(Token::Newline) => {
+            Some(Token::Space) | Some(Token::ParenClose) | Some(Token::Tab) | Some(Token::Newline) => {
+                println!("DEBUG: Found whitespace/newline, adding current_element: '{}'", current_element);
                 if !current_element.is_empty() {
                     elements.push(current_element.trim().to_string());
                     current_element.clear();
@@ -89,25 +102,39 @@ pub fn parse_array_elements(lexer: &mut Lexer) -> Result<Vec<String>, ParserErro
             }
             Some(Token::Identifier) | Some(Token::Number) => {
                 let text = lexer.get_current_text().unwrap_or_default();
+                println!("DEBUG: Found identifier/number: '{}'", text);
                 current_element.push_str(&text);
-                lexer.next();
+                lexer.next(); // consume the token
             }
             Some(Token::DoubleQuotedString) | Some(Token::SingleQuotedString) => {
                 let text = lexer.get_string_text()?;
+                println!("DEBUG: Found string: '{}'", text);
                 current_element.push_str(&text);
+                lexer.next(); // consume the string token
             }
             Some(Token::Dollar) => {
-                let var_expansion = parse_variable_expansion(lexer)?;
-                current_element.push_str(&var_expansion.to_string());
+                // For now, just consume the $ and treat it as part of the element
+                current_element.push('$');
+                lexer.next(); // consume the $ token
+                // If there's an identifier after $, include it
+                if let Some(Token::Identifier) = lexer.peek() {
+                    let text = lexer.get_current_text().unwrap_or_default();
+                    current_element.push_str(&text);
+                    lexer.next(); // consume the identifier
+                }
             }
             _ => {
-                let text = lexer.get_current_text().unwrap_or_default();
-                current_element.push_str(&text);
-                lexer.next();
+                // For any other token, get its text and advance
+                if let Some(text) = lexer.get_current_text() {
+                    println!("DEBUG: Found other token: '{}'", text);
+                    current_element.push_str(&text);
+                }
+                lexer.next(); // consume the token
             }
         }
     }
     
+    println!("DEBUG: Final elements: {:?}", elements);
     Ok(elements)
 }
 

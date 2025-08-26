@@ -139,7 +139,7 @@ pub fn generate_for_loop_impl(generator: &mut Generator, for_loop: &ForLoop) -> 
     let mut output = String::new();
     
     // Generate for loop using the actual variable name from the AST
-    output.push_str(&format!("for my ${} (", for_loop.variable));
+    output.push_str(&format!("for ${} (", for_loop.variable));
     
     // Handle different types of for loop items
     let items: Vec<String> = for_loop.items.iter()
@@ -157,6 +157,23 @@ pub fn generate_for_loop_impl(generator: &mut Generator, for_loop: &ForLoop) -> 
     
     output.push_str(&generator.indent());
     output.push_str("}\n");
+    
+    // Ensure the variable retains its last value after the loop
+    // This is needed for shell compatibility where loop variables persist
+    if let Some(first_item) = for_loop.items.first() {
+        if let Word::BraceExpansion(expansion) = first_item {
+            if expansion.items.len() == 1 {
+                if let BraceItem::Range(range) = &expansion.items[0] {
+                    // For range expressions like {1..5}, set the variable to the last value
+                    // This mimics shell behavior where the loop variable retains its last value
+                    if let Ok(end_num) = range.end.parse::<i32>() {
+                        output.push_str(&generator.indent());
+                        output.push_str(&format!("${} = {};\n", for_loop.variable, end_num));
+                    }
+                }
+            }
+        }
+    }
     
     output
 }
