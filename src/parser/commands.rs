@@ -382,7 +382,9 @@ impl Parser {
         let name = if let Some(token) = self.lexer.peek() {
             match token {
                 Token::Identifier => {
-                    Word::Literal(self.lexer.get_identifier_text()?)
+                    let identifier = self.lexer.get_identifier_text()?;
+                    self.lexer.next(); // consume the identifier token
+                    Word::Literal(identifier)
                 }
                 Token::Set | Token::Export | Token::Readonly | Token::Local | Token::Declare | Token::Typeset |
                 Token::Unset | Token::Shift | Token::Eval | Token::Exec | Token::Source | Token::Trap | Token::Wait | Token::Shopt | Token::Exit => {
@@ -456,7 +458,7 @@ impl Parser {
                     // End of this simple command; do not consume here so outer loop can handle separators
                     break;
                 }
-                Token::Identifier | Token::Number | Token::OctalNumber | Token::DoubleQuotedString | Token::SingleQuotedString | Token::Source | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString | Token::Star | Token::Dot | Token::CasePattern | Token::Range | Token::Slash | Token::Tilde | Token::LongOption | Token::RegexPattern | Token::RegexMatch | Token::NameFlag | Token::MaxDepthFlag | Token::TypeFlag => {
+                Token::Identifier | Token::Number | Token::OctalNumber | Token::DoubleQuotedString | Token::SingleQuotedString | Token::Source | Token::BraceOpen | Token::BacktickString | Token::DollarSingleQuotedString | Token::DollarDoubleQuotedString | Token::Star | Token::Dot | Token::CasePattern | Token::Range | Token::Slash | Token::Tilde | Token::LongOption | Token::RegexPattern | Token::RegexMatch | Token::NameFlag | Token::MaxDepthFlag | Token::TypeFlag | Token::Minus | Token::Character | Token::NonZero | Token::Exists | Token::File | Token::Directory | Token::Readable | Token::Writable | Token::Executable | Token::Symlink | Token::SymlinkH | Token::PipeFile | Token::Socket | Token::Block | Token::SetGid | Token::Sticky | Token::SetUid | Token::Owned | Token::GroupOwned | Token::Modified | Token::Eq | Token::Ne | Token::Lt | Token::Le | Token::Gt | Token::Ge | Token::Zero => {
                     args.push(parse_word(&mut self.lexer)?);
                 }
                 Token::RedirectAppend | Token::RedirectInOut | Token::Heredoc | Token::HeredocTabs | Token::HereString => {

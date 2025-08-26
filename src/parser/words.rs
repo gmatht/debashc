@@ -129,6 +129,25 @@ pub fn parse_word(lexer: &mut Lexer) -> Result<Word, ParserError> {
             // Treat command-line flags as literals
             Ok(Word::Literal(lexer.get_raw_token_text()?))
         }
+        Some(Token::Minus) => {
+            // Handle minus tokens like -l, -c, etc.
+            // Consume the minus and combine with following identifier if present
+            lexer.next(); // consume the minus
+            let mut combined = "-".to_string();
+            
+            // Look ahead to see if there's an identifier following
+            if let Some(Token::Identifier) = lexer.peek() {
+                let identifier = lexer.get_identifier_text()?;
+                combined.push_str(&identifier);
+            }
+            
+            Ok(Word::Literal(combined))
+        }
+        Some(Token::Character) | Some(Token::NonZero) | Some(Token::Exists) | Some(Token::File) | Some(Token::Directory) | Some(Token::Readable) | Some(Token::Writable) | Some(Token::Executable) | Some(Token::Symlink) | Some(Token::SymlinkH) | Some(Token::PipeFile) | Some(Token::Socket) | Some(Token::Block) | Some(Token::SetGid) | Some(Token::Sticky) | Some(Token::SetUid) | Some(Token::Owned) | Some(Token::GroupOwned) | Some(Token::Modified) | Some(Token::Eq) | Some(Token::Ne) | Some(Token::Lt) | Some(Token::Le) | Some(Token::Gt) | Some(Token::Ge) | Some(Token::Zero) => {
+            // Handle test operator tokens like -e, -f, -d, etc.
+            // These are already complete flags, just get their text
+            Ok(Word::Literal(lexer.get_raw_token_text()?))
+        }
         Some(Token::Dollar) => Ok(parse_variable_expansion(lexer)?),
         Some(Token::DollarBrace) | Some(Token::DollarParen) | Some(Token::DollarHashSimple) | Some(Token::DollarAtSimple) | Some(Token::DollarStarSimple)
         | Some(Token::DollarBraceHash) | Some(Token::DollarBraceBang) | Some(Token::DollarBraceStar) | Some(Token::DollarBraceAt)

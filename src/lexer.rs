@@ -195,59 +195,59 @@ pub enum Token {
     Let,
 
     // Conditionals
-    #[token("-eq")]
+    #[token("-eq", priority = 1)]
     Eq,
-    #[token("-ne")]
+    #[token("-ne", priority = 1)]
     Ne,
-    #[token("-lt")]
+    #[token("-lt", priority = 1)]
     Lt,
-    #[token("-le")]
+    #[token("-le", priority = 1)]
     Le,
-    #[token("-gt")]
+    #[token("-gt", priority = 1)]
     Gt,
-    #[token("-ge")]
+    #[token("-ge", priority = 1)]
     Ge,
-    #[token("-z")]
+    #[token("-z", priority = 1)]
     Zero,
-    #[token("-n")]
+    #[token("-n", priority = 1)]
     NonZero,
-    #[token("-f")]
+    #[token("-f", priority = 1)]
     File,
-    #[token("-d")]
+    #[token("-d", priority = 1)]
     Directory,
-    #[token("-e")]
+    #[token("-e", priority = 1)]
     Exists,
     #[token("-r", priority = 10)]
     Readable,
-    #[token("-w")]
+    #[token("-w", priority = 1)]
     Writable,
-    #[token("-x")]
+    #[token("-x", priority = 1)]
     Executable,
-    #[token("-s")]
+    #[token("-s", priority = 1)]
     Size,
-    #[token("-L")]
+    #[token("-L", priority = 1)]
     Symlink,
-    #[token("-h")]
+    #[token("-h", priority = 1)]
     SymlinkH,
-    #[token("-p")]
+    #[token("-p", priority = 1)]
     PipeFile,
-    #[token("-S")]
+    #[token("-S", priority = 1)]
     Socket,
-    #[token("-b")]
+    #[token("-b", priority = 1)]
     Block,
     #[token("-c", priority = 1)]
     Character,
-    #[token("-g")]
+    #[token("-g", priority = 1)]
     SetGid,
-    #[token("-k")]
+    #[token("-k", priority = 1)]
     Sticky,
-    #[token("-u")]
+    #[token("-u", priority = 1)]
     SetUid,
-    #[token("-O")]
+    #[token("-O", priority = 1)]
     Owned,
-    #[token("-G")]
+    #[token("-G", priority = 1)]
     GroupOwned,
-    #[token("-N")]
+    #[token("-N", priority = 1)]
     Modified,
     #[token("-nt", priority = 1)]
     NewerThan,
@@ -287,7 +287,7 @@ pub enum Token {
 
     
     // Identifiers and words
-    #[regex(r"[a-zA-Z_][a-zA-Z0-9_*?]*", priority = 2)]
+    #[regex(r"[a-zA-Z_][a-zA-Z0-9_*?\-]*", priority = 2)]
     Identifier,
 
     #[regex(r"[0-9]+")]

@@ -239,16 +239,37 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
 pub fn generate_pipeline_impl(generator: &mut Generator, pipeline: &Pipeline) -> String {
     let mut output = String::new();
     
-    // Handle pipeline commands
-    for (i, command) in pipeline.commands.iter().enumerate() {
-        if i > 0 {
-            // Add pipe separator
-            output.push_str(" | ");
+    if pipeline.commands.len() == 1 {
+        // Single command, no pipeline needed
+        output.push_str(&generator.generate_command(&pipeline.commands[0]));
+    } else {
+        // Multiple commands, implement proper Perl pipeline
+        output.push_str("do {\n");
+        generator.indent_level += 1;
+        
+        // Generate each command in the pipeline
+        for (i, command) in pipeline.commands.iter().enumerate() {
+            if i == 0 {
+                // First command - capture its output
+                output.push_str(&generator.indent());
+                output.push_str("my $output = `");
+                output.push_str(&generator.generate_command_string_for_system(command));
+                output.push_str("`;\n");
+            } else {
+                // Subsequent commands - pipe previous output to them
+                output.push_str(&generator.indent());
+                output.push_str("$output = `echo \"$output\" | ");
+                output.push_str(&generator.generate_command_string_for_system(command));
+                output.push_str("`;\n");
+            }
         }
         
-        // Generate the command
-        let cmd_output = generator.generate_command(command);
-        output.push_str(&cmd_output);
+        // Output the final result
+        output.push_str(&generator.indent());
+        output.push_str("print $output;\n");
+        
+        generator.indent_level -= 1;
+        output.push_str("};\n");
     }
     
     output
@@ -257,10 +278,8 @@ pub fn generate_pipeline_impl(generator: &mut Generator, pipeline: &Pipeline) ->
 pub fn generate_subshell_impl(generator: &mut Generator, command: &Command) -> String {
     let mut output = String::new();
     
-    // Generate subshell command
-    output.push_str("(");
+    // Generate subshell command - just execute the command directly
     output.push_str(&generator.generate_command(command));
-    output.push_str(")");
     
     output
 }
