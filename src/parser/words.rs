@@ -5,12 +5,13 @@ use crate::parser::utilities::ParserUtilities;
 use std::collections::HashMap;
 
 pub fn parse_word(lexer: &mut Lexer) -> Result<Word, ParserError> {
-    // Combine contiguous bare-word tokens (identifiers, numbers, slashes) into a single literal
-    if matches!(lexer.peek(), Some(Token::Identifier) | Some(Token::Number) | Some(Token::OctalNumber) | Some(Token::Slash)) {
+    // Combine contiguous bare-word tokens (identifiers, numbers, slashes, dots) into a single literal
+    // This handles filenames like "file.txt" by combining Identifier + Dot + Identifier
+    if matches!(lexer.peek(), Some(Token::Identifier) | Some(Token::Number) | Some(Token::OctalNumber) | Some(Token::Slash) | Some(Token::Dot)) {
         let mut combined = String::new();
         loop {
             match lexer.peek() {
-                Some(Token::Identifier) | Some(Token::Number) | Some(Token::OctalNumber) | Some(Token::Slash) => {
+                Some(Token::Identifier) | Some(Token::Number) | Some(Token::OctalNumber) | Some(Token::Slash) | Some(Token::Dot) => {
                     // Append raw token text and consume
                     if let Some(text) = lexer.get_current_text() {
                         combined.push_str(&text);

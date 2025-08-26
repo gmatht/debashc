@@ -215,7 +215,7 @@ fn run_shell_script(filename: &str) -> Result<std::process::Output, String> {
     let unix_content = shell_content.replace("\r\n", "\n");
     let script_path = "__temp_script.sh";
     
-    if let Err(e) = fs::write(script_path, unix_content) {
+    if let Err(e) = fs::write(script_path, &unix_content) {
         return Err(format!("Failed to write temp script: {}", e));
     }
     
@@ -252,7 +252,12 @@ fn run_shell_script(filename: &str) -> Result<std::process::Output, String> {
     // Create the command based on the shell type
     let mut child_cmd = if shell_cmd == "wsl" {
         let mut cmd = Command::new("wsl");
-        cmd.args(&["bash", script_path]);
+        // For WSL, use the same approach as integration tests - convert Windows path to WSL path
+        let current_dir = std::env::current_dir().unwrap().to_string_lossy().to_string();
+        let wsl_script_path = format!("/mnt/{}/{}", 
+            current_dir.replace(":", "").replace("\\", "/"),
+            script_path);
+        cmd.args(&["bash", &wsl_script_path]);
         cmd
     } else if shell_cmd == "git" {
         let mut cmd = Command::new("git");
