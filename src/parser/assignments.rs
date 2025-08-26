@@ -135,9 +135,94 @@ pub fn parse_word_list(lexer: &mut Lexer) -> Result<Vec<Word>, ParserError> {
 }
 
 // Placeholder functions - these would need to be implemented based on the actual AST structures
-fn parse_arithmetic_expression(_lexer: &mut Lexer) -> Result<Word, ParserError> {
-    // TODO: Implement arithmetic expression parsing
-    Err(ParserError::InvalidSyntax("Arithmetic expressions not yet implemented".to_string()))
+fn parse_arithmetic_expression(lexer: &mut Lexer) -> Result<Word, ParserError> {
+    // Handle arithmetic expressions like $((i + 1))
+    // First, consume the opening $(( or $( token
+    match lexer.peek() {
+        Some(Token::Arithmetic) | Some(Token::ArithmeticEval) => {
+            lexer.next(); // consume $(( or $(
+        }
+        _ => {
+            return Err(ParserError::InvalidSyntax("Expected arithmetic expression start".to_string()));
+        }
+    }
+    
+    let mut expression_parts = Vec::new();
+    
+    // Simple case: just parse until we find the closing ))
+    loop {
+        match lexer.peek() {
+            Some(Token::ArithmeticEvalClose) => {
+                // Found the closing )), consume it and break
+                lexer.next();
+                break;
+            }
+            Some(Token::Identifier) => {
+                let var_name = lexer.get_identifier_text()?;
+                expression_parts.push(var_name);
+                lexer.next(); // consume the identifier token
+            }
+            Some(Token::Number) => {
+                let num_text = lexer.get_number_text()?;
+                expression_parts.push(num_text);
+                lexer.next(); // consume the number token
+            }
+            Some(Token::Plus) => {
+                // Plus operator
+                lexer.next();
+                expression_parts.push("+".to_string());
+            }
+            Some(Token::Minus) => {
+                // Minus operator
+                lexer.next();
+                expression_parts.push("-".to_string());
+            }
+            Some(Token::Star) => {
+                // Multiplication operator
+                lexer.next();
+                expression_parts.push("*".to_string());
+            }
+            Some(Token::Slash) => {
+                // Division operator
+                lexer.next();
+                expression_parts.push("/".to_string());
+            }
+            Some(Token::Space) | Some(Token::Tab) => {
+                // Skip whitespace
+                lexer.next();
+            }
+            Some(Token::Dollar) => {
+                // Handle variable references like $i
+                lexer.next();
+                if let Some(Token::Identifier) = lexer.peek() {
+                    let var_name = lexer.get_identifier_text()?;
+                    expression_parts.push(format!("${}", var_name));
+                } else {
+                    return Err(ParserError::InvalidSyntax("Expected identifier after $ in arithmetic expression".to_string()));
+                }
+            }
+            None => {
+                return Err(ParserError::InvalidSyntax("Unexpected end of input in arithmetic expression".to_string()));
+            }
+            _ => {
+                // For any other token, just consume it and add its text
+                if let Some(text) = lexer.get_current_text() {
+                    expression_parts.push(text);
+                    lexer.next();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    
+    let expression = expression_parts.join("");
+    
+    // Return as an Arithmetic Word variant
+    Ok(Word::Arithmetic(ArithmeticExpression {
+        expression,
+        tokens: vec![], // We don't need to store individual tokens for now
+    }))
 }
 
 fn parse_variable_expansion(_lexer: &mut Lexer) -> Result<Word, ParserError> {

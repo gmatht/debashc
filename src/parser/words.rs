@@ -599,9 +599,95 @@ fn parse_brace_expansion(lexer: &mut Lexer) -> Result<Word, ParserError> {
     }))
 }
 
-fn parse_arithmetic_expression(_lexer: &mut Lexer) -> Result<Word, ParserError> {
-    // TODO: Implement arithmetic expression parsing
-    Err(ParserError::InvalidSyntax("Arithmetic expressions not yet implemented".to_string()))
+fn parse_arithmetic_expression(lexer: &mut Lexer) -> Result<Word, ParserError> {
+    // Parse arithmetic expressions like $((i + 1))
+    // First, consume the opening $(( or $(
+    match lexer.peek() {
+        Some(Token::Arithmetic) | Some(Token::ArithmeticEval) => {
+            lexer.next(); // consume $(( or $(
+        }
+        _ => {
+            return Err(ParserError::InvalidSyntax("Expected arithmetic expression start".to_string()));
+        }
+    }
+    
+    // Capture the content until we find the closing ))
+    let mut expression_parts = Vec::new();
+    let mut paren_depth = 1; // We're already inside one level of parentheses
+    
+    loop {
+        match lexer.peek() {
+            Some(Token::ArithmeticEvalClose) => {
+                // This is the closing )) for $((...))
+                lexer.next();
+                paren_depth -= 1;
+                if paren_depth == 0 {
+                    break;
+                }
+            }
+            Some(Token::Arithmetic) => {
+                // This is another opening $((...))
+                lexer.next();
+                paren_depth += 1;
+            }
+            Some(Token::Identifier) => {
+                expression_parts.push(lexer.get_identifier_text()?);
+            }
+            Some(Token::Number) => {
+                expression_parts.push(lexer.get_number_text()?);
+            }
+            Some(Token::Plus) => {
+                expression_parts.push("+".to_string());
+                lexer.next();
+            }
+            Some(Token::Minus) => {
+                expression_parts.push("-".to_string());
+                lexer.next();
+            }
+            Some(Token::Star) => {
+                expression_parts.push("*".to_string());
+                lexer.next();
+            }
+            Some(Token::Slash) => {
+                expression_parts.push("/".to_string());
+                lexer.next();
+            }
+            Some(Token::Space) | Some(Token::Tab) => {
+                expression_parts.push(" ".to_string());
+                lexer.next();
+            }
+            Some(Token::Dollar) => {
+                // Handle variable references like $i
+                lexer.next();
+                if let Some(Token::Identifier) = lexer.peek() {
+                    let var_name = lexer.get_identifier_text()?;
+                    expression_parts.push(format!("${}", var_name));
+                } else {
+                    return Err(ParserError::InvalidSyntax("Expected identifier after $ in arithmetic expression".to_string()));
+                }
+            }
+            None => {
+                return Err(ParserError::InvalidSyntax("Unexpected end of input in arithmetic expression".to_string()));
+            }
+            _ => {
+                // For any other token, just consume it and add its text
+                if let Some(text) = lexer.get_current_text() {
+                    expression_parts.push(text);
+                    lexer.next();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    
+    let expression = expression_parts.join("");
+    
+    // Return as an Arithmetic Word variant
+    Ok(Word::Arithmetic(ArithmeticExpression {
+        expression,
+        tokens: Vec::new(), // We don't need to store individual tokens for now
+    }))
 }
 
 fn parse_braced_variable_name(_lexer: &mut Lexer) -> Result<String, ParserError> {

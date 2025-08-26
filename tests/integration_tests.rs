@@ -1,6 +1,5 @@
 // Temporarily commented out due to missing generators
 /*
-
 fn list_sh_examples() -> Vec<PathBuf> {
     let mut examples: Vec<PathBuf> = Vec::new();
     if let Ok(entries) = fs::read_dir("examples") {
@@ -14,8 +13,8 @@ fn list_sh_examples() -> Vec<PathBuf> {
     examples
 }
 
-// #[test]
-// fn test_simple_command_lexing() {
+#[test]
+fn test_simple_command_lexing() {
     let input = "echo hello world";
     let mut lexer = Lexer::new(input);
     
@@ -118,6 +117,21 @@ fn test_control_flow_keywords_lexing() {
     assert_eq!(lexer.next(), Some(&Token::Function));
     assert_eq!(lexer.next(), None);
 }
+*/
+
+use std::fs;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+use std::thread;
+use std::sync::mpsc;
+use debashl::{
+    Lexer, 
+    Token, 
+    Parser, 
+    Generator,
+    ast::{Command, Word, ParameterExpansion}
+};
 
 #[test]
 fn test_operators_lexing() {
@@ -342,21 +356,6 @@ fn test_ast_variables_no_special_characters() {
         ("name^^", "Uppercase all"),
         ("name,,", "Lowercase all"), 
         ("name^", "Uppercase first"),
-        
-        // TODO: Add more complex parameter expansion patterns once the parser supports them
-        // Test substring removal operators
-        // ("path## */", "Remove longest prefix "),
-        // ("path# hello ", "Remove shortest prefix "),
-        // ("path%% world ", "Remove longest suffix "),
-        // ("path%/*", "Remove shortest suffix"),
-        
-        // Test pattern substitution
-        // ("s2//b/X", "Pattern substitution"),
-        
-        // Test default values
-        // ("maybe:-default", "Default value"),
-        // ("maybe:=default", "Assign default"),
-        // ("maybe:?error", "Error if unset"),
     ];
     
     for (input, description) in test_cases {
@@ -443,19 +442,6 @@ fn test_parameter_expansion_example_parses_correctly() {
     // These patterns should NOT appear as simple Variables in the AST
     // They should be handled by ParameterExpansion nodes instead
     // TODO: Fix reserved prefix syntax errors and re-enable these tests
-    // let invalid_variable_patterns = vec![
-    //     "name^^", "name,,", "name^",           // Case modification
-    //     "path## */", "path# hello ",              // Substring removal
-    //     "path%% world ", "path%/ *",              // More substring removal
-    //     "s2//b/X",                             // Pattern substitution
-    //     "maybe:-default", "maybe:=default", "maybe:?error"  // Default values
-    // ];
-    //
-    // for pattern in invalid_variable_patterns {
-    //     // The pattern should not appear as a simple variable name
-    //     // It should be parsed as part of ParameterExpansion
-    //     // assert!(commands_str.contains(pattern));
-    // }
 }
 
 #[test]
@@ -2713,4 +2699,3 @@ fn test_simple_command_lexing() {
     assert_eq!(lexer.next(), Some(&Token::Identifier));
     assert_eq!(lexer.next(), None);
 }
-*/

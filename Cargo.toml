@@ -9,6 +9,14 @@ name = "debashc"
 path = "src/main.rs"
 
 [[bin]]
+name = "test_arithmetic"
+path = "test_arithmetic.rs"
+
+
+
+
+
+[[bin]]
 name = "convert_examples"
 path = "src/bin/convert_examples.rs"
 

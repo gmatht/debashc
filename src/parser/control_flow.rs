@@ -2,43 +2,47 @@ use crate::ast::*;
 use crate::lexer::{Lexer, Token};
 use crate::parser::errors::ParserError;
 use crate::parser::utilities::ParserUtilities;
+use crate::parser::commands::Parser;
 use crate::parser::words::parse_word;
 use std::collections::HashMap;
 
 // Add the missing parse_word_list function
-fn parse_word_list(lexer: &mut Lexer) -> Result<Vec<Word>, ParserError> {
+fn parse_word_list(parser: &mut Parser) -> Result<Vec<Word>, ParserError> {
     let mut words = Vec::new();
     
     loop {
         // Skip whitespace and comments
-        lexer.skip_whitespace_and_comments();
+        parser.lexer.skip_whitespace_and_comments();
         
         // Check for end of list
-        if lexer.is_eof() || matches!(lexer.peek(), Some(Token::Semicolon | Token::Newline | Token::CarriageReturn | Token::Done | Token::Fi | Token::Then | Token::Else | Token::ParenClose | Token::BraceClose)) {
+        if parser.lexer.is_eof() || matches!(parser.lexer.peek(), Some(Token::Semicolon | Token::Newline | Token::CarriageReturn | Token::Done | Token::Fi | Token::Then | Token::Else | Token::ParenClose | Token::BraceClose)) {
             break;
         }
         
         // Parse the next word
-        let word = parse_word(lexer)?;
+        let word = parse_word(&mut parser.lexer)?;
         words.push(word);
         
         // Skip whitespace after the word
-        lexer.skip_whitespace_and_comments();
+        parser.lexer.skip_whitespace_and_comments();
     }
     
     Ok(words)
 }
 
-pub fn parse_if_statement(lexer: &mut Lexer) -> Result<Command, ParserError> {
-    lexer.consume(Token::If)?;
+pub fn parse_if_statement(parser: &mut Parser) -> Result<Command, ParserError> {
+    parser.lexer.consume(Token::If)?;
     
     // Skip whitespace
-    lexer.skip_whitespace_and_comments();
+    parser.lexer.skip_whitespace_and_comments();
     
-    // Parse condition - check for arithmetic evaluation first
-    let condition = if let Some(Token::ArithmeticEval) = lexer.peek() {
+    // Parse condition - check for test expression first, then arithmetic evaluation
+    let condition = if let Some(Token::TestBracket) = parser.lexer.peek() {
+        // Handle test expression like: if [ -f "file.txt" ]; then
+        Box::new(parse_test_expression(&mut parser.lexer)?)
+    } else if let Some(Token::ArithmeticEval) = parser.lexer.peek() {
         // Handle arithmetic evaluation like: if (( a > b )); then
-        let arithmetic_word = parse_arithmetic_expression(lexer)?;
+        let arithmetic_word = parse_arithmetic_expression(parser)?;
         Box::new(Command::Simple(SimpleCommand {
             name: Word::Literal("test".to_string()),
             args: vec![arithmetic_word],
@@ -47,37 +51,37 @@ pub fn parse_if_statement(lexer: &mut Lexer) -> Result<Command, ParserError> {
         }))
     } else {
         // Parse as a pipeline to handle && and || operators
-        Box::new(parse_pipeline(lexer)?)
+        Box::new(parse_pipeline(parser)?)
     };
     
     // Consume optional separator (semicolon or newline) after condition
-    match lexer.peek() {
-        Some(Token::Semicolon) | Some(Token::Newline) => { lexer.next(); },
+    match parser.lexer.peek() {
+        Some(Token::Semicolon) | Some(Token::Newline) => { parser.lexer.next(); },
         _ => {}
     }
     
     // Skip whitespace/newlines before then
-    while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
-        lexer.next();
+    while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+        parser.lexer.next();
     }
     
-    lexer.consume(Token::Then)?;
+    parser.lexer.consume(Token::Then)?;
     // Allow newline/whitespace after 'then'
-    while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
-        lexer.next();
+    while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+        parser.lexer.next();
     }
     
     // Parse one or more commands in the then-branch until Else, Elif, or Fi
     let mut then_cmds = Vec::new();
     loop {
-        match lexer.peek() {
+        match parser.lexer.peek() {
             Some(Token::Else) | Some(Token::Elif) | Some(Token::Fi) | None => break,
             _ => {
-                let cmd = parse_command(lexer)?;
+                let cmd = parser.parse_command()?;
                 then_cmds.push(cmd);
                 // Skip separators between commands
-                while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon | Token::CarriageReturn)) {
-                    lexer.next();
+                while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon | Token::CarriageReturn)) {
+                    parser.lexer.next();
                 }
             }
         }
@@ -85,96 +89,99 @@ pub fn parse_if_statement(lexer: &mut Lexer) -> Result<Command, ParserError> {
     let then_branch = Box::new(Command::Block(Block { commands: then_cmds }));
     
     // Skip whitespace/newlines before checking for separator
-    while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
-        lexer.next();
+    while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+        parser.lexer.next();
     }
     
     // Consume optional separator (semicolon or newline) after then branch
-    match lexer.peek() {
+    match parser.lexer.peek() {
         Some(Token::Semicolon) | Some(Token::Newline) => {
-            lexer.next();
-            while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
-                lexer.next();
+            parser.lexer.next();
+            while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+                parser.lexer.next();
             }
         },
         _ => {}
     }
     
-    let else_branch = if let Some(Token::Else) = lexer.peek() {
-        lexer.next();
+    let else_branch = if let Some(Token::Else) = parser.lexer.peek() {
+        parser.lexer.next();
         // Allow newline/whitespace after 'else'
-        while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
-            lexer.next();
+        while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+            parser.lexer.next();
         }
         let mut else_cmds = Vec::new();
         loop {
-            match lexer.peek() {
+            match parser.lexer.peek() {
                 Some(Token::Fi) | None => break,
                 _ => {
-                    let cmd = parse_command(lexer)?;
+                    let cmd = parser.parse_command()?;
                     else_cmds.push(cmd);
-                    while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon | Token::CarriageReturn)) {
-                        lexer.next();
+                    while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon | Token::CarriageReturn)) {
+                        parser.lexer.next();
                     }
                 }
             }
         }
         Some(Box::new(Command::Block(Block { commands: else_cmds })))
-    } else if let Some(Token::Elif) = lexer.peek() {
+    } else if let Some(Token::Elif) = parser.lexer.peek() {
         // Handle multiple elif statements by building a nested if-else structure
         let mut elif_branches = Vec::new();
         
         // Parse all elif statements
-        while let Some(Token::Elif) = lexer.peek() {
-            lexer.next();
+        while let Some(Token::Elif) = parser.lexer.peek() {
+            parser.lexer.next();
             // Allow newline/whitespace after 'elif'
-            while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
-                lexer.next();
+            while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+                parser.lexer.next();
             }
             
             // Parse the elif condition
-            let elif_condition = if let Some(Token::ArithmeticEval) = lexer.peek() {
+            let elif_condition = if let Some(Token::TestBracket) = parser.lexer.peek() {
+                // Handle test expression like: elif [ -f "file.txt" ]; then
+                Box::new(parse_test_expression(&mut parser.lexer)?)
+            } else if let Some(Token::ArithmeticEval) = parser.lexer.peek() {
                 // Handle arithmetic evaluation like: elif (( a == b )); then
-                let arithmetic_word = parse_arithmetic_expression(lexer)?;
-                Box::new(Command::Simple(SimpleCommand {
-                    name: Word::Literal("test".to_string()),
-                    args: vec![arithmetic_word],
-                    redirects: Vec::new(),
-                    env_vars: HashMap::new(),
-                }))
-            } else {
-                // Parse as a pipeline to handle && and || operators
-                Box::new(parse_pipeline(lexer)?)
+                            let arithmetic_word = parse_arithmetic_expression(parser)?;
+            Box::new(Command::Simple(SimpleCommand {
+                name: Word::Literal("test".to_string()),
+                args: vec![arithmetic_word],
+                redirects: Vec::new(),
+                env_vars: HashMap::new(),
+            }))
+        } else {
+            // Parse as a pipeline to handle && and || operators
+            Box::new(parse_pipeline(parser)?)
             };
             
             // Consume optional separator (semicolon or newline) after condition
-            match lexer.peek() {
-                Some(Token::Semicolon) | Some(Token::Newline) => { lexer.next(); },
+            match parser.lexer.peek() {
+                Some(Token::Semicolon) | Some(Token::Newline) => { parser.lexer.next(); },
                 _ => {}
             }
             
             // Skip whitespace/newlines before then
-            while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
-                lexer.next();
+            while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+                parser.lexer.next();
             }
             
-            lexer.consume(Token::Then)?;
+            parser.lexer.consume(Token::Then)?;
             // Allow newline/whitespace after 'then'
-            while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
-                lexer.next();
+            while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+                parser.lexer.next();
             }
             
             // Parse one or more commands in the elif then-branch until Else, Elif, or Fi
             let mut elif_then_cmds = Vec::new();
             loop {
-                match lexer.peek() {
+                match parser.lexer.peek() {
                     Some(Token::Else) | Some(Token::Elif) | Some(Token::Fi) | None => break,
                     _ => {
-                        let cmd = parse_command(lexer)?;
+                        let cmd = parser.parse_command()?;
                         elif_then_cmds.push(cmd);
                         // Skip separators between commands
-                        while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon | Token::CarriageReturn)) {
-                            lexer.next();
+                        while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon | Token::CarriageReturn)) {
+                            parser.lexer.next();
                         }
                     }
                 }
@@ -185,21 +192,21 @@ pub fn parse_if_statement(lexer: &mut Lexer) -> Result<Command, ParserError> {
         }
         
         // Now check for else statement
-        let final_else_branch = if let Some(Token::Else) = lexer.peek() {
-            lexer.next();
+        let final_else_branch = if let Some(Token::Else) = parser.lexer.peek() {
+            parser.lexer.next();
             // Allow newline/whitespace after 'else'
-            while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
-                lexer.next();
+            while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+                parser.lexer.next();
             }
             let mut else_cmds = Vec::new();
             loop {
-                match lexer.peek() {
+                match parser.lexer.peek() {
                     Some(Token::Fi) | None => break,
                     _ => {
-                        let cmd = parse_command(lexer)?;
+                        let cmd = parser.parse_command()?;
                         else_cmds.push(cmd);
-                        while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon | Token::CarriageReturn)) {
-                            lexer.next();
+                        while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon | Token::CarriageReturn)) {
+                            parser.lexer.next();
                         }
                     }
                 }
@@ -227,11 +234,11 @@ pub fn parse_if_statement(lexer: &mut Lexer) -> Result<Command, ParserError> {
     };
     
     // Skip whitespace/newlines before fi
-    while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
-        lexer.next();
+    while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+        parser.lexer.next();
     }
     
-    lexer.consume(Token::Fi)?;
+    parser.lexer.consume(Token::Fi)?;
     
     Ok(Command::If(IfStatement {
         condition,
@@ -240,32 +247,32 @@ pub fn parse_if_statement(lexer: &mut Lexer) -> Result<Command, ParserError> {
     }))
 }
 
-pub fn parse_case_statement(lexer: &mut Lexer) -> Result<Command, ParserError> {
-    lexer.consume(Token::Case)?;
+pub fn parse_case_statement(parser: &mut Parser) -> Result<Command, ParserError> {
+    parser.lexer.consume(Token::Case)?;
     
     // Skip whitespace after 'case'
-    lexer.skip_whitespace_and_comments();
+    parser.lexer.skip_whitespace_and_comments();
     
     // Parse the word to match against
-    let word = parse_word(lexer)?;
+    let word = parse_word(&mut parser.lexer)?;
     
     // Skip whitespace before 'in'
-    lexer.skip_whitespace_and_comments();
+    parser.lexer.skip_whitespace_and_comments();
     
     // Consume 'in'
-    lexer.consume(Token::In)?;
+    parser.lexer.consume(Token::In)?;
     
     // Skip whitespace after 'in'
-    lexer.skip_whitespace_and_comments();
+    parser.lexer.skip_whitespace_and_comments();
     
     let mut cases = Vec::new();
     
     // Parse case clauses until 'esac'
     loop {
         // Skip whitespace/newlines
-        lexer.skip_whitespace_and_comments();
+        parser.lexer.skip_whitespace_and_comments();
         
-        match lexer.peek() {
+        match parser.lexer.peek() {
             Some(Token::Esac) => break,
             None => return Err(ParserError::UnexpectedEOF),
             _ => {
@@ -273,46 +280,46 @@ pub fn parse_case_statement(lexer: &mut Lexer) -> Result<Command, ParserError> {
                 let mut patterns = Vec::new();
                 
                 // Parse first pattern
-                patterns.push(parse_word(lexer)?);
+                patterns.push(parse_word(&mut parser.lexer)?);
                 
                 // Parse additional patterns separated by '|'
-                while matches!(lexer.peek(), Some(Token::Pipe)) {
-                    lexer.next(); // consume '|'
-                    lexer.skip_whitespace_and_comments();
-                    patterns.push(parse_word(lexer)?);
+                while matches!(parser.lexer.peek(), Some(Token::Pipe)) {
+                    parser.lexer.next(); // consume '|'
+                    parser.lexer.skip_whitespace_and_comments();
+                    patterns.push(parse_word(&mut parser.lexer)?);
                 }
                 
                 // Expect closing parenthesis as part of the case pattern
-                if let Some(Token::ParenClose) = lexer.peek() {
-                    lexer.next(); // consume ')'
+                if let Some(Token::ParenClose) = parser.lexer.peek() {
+                    parser.lexer.next(); // consume ')'
                 } else {
                     return Err(ParserError::InvalidSyntax("Expected ')' after case pattern".to_string()));
                 }
                 
                 // Skip whitespace after pattern
-                lexer.skip_whitespace_and_comments();
+                parser.lexer.skip_whitespace_and_comments();
                 
                 // Parse body commands until ';;'
                 let mut body = Vec::new();
                 loop {
-                    match lexer.peek() {
+                    match parser.lexer.peek() {
                         Some(Token::DoubleSemicolon) => break,
                         Some(Token::Esac) => break,
                         None => return Err(ParserError::UnexpectedEOF),
                         _ => {
-                            let cmd = parse_command(lexer)?;
+                            let cmd = parser.parse_command()?;
                             body.push(cmd);
                             // Skip separators between commands
-                            while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon | Token::CarriageReturn)) {
-                                lexer.next();
+                            while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon | Token::CarriageReturn)) {
+                                parser.lexer.next();
                             }
                         }
                     }
                 }
                 
                 // Consume ';;' if present
-                if matches!(lexer.peek(), Some(Token::DoubleSemicolon)) {
-                    lexer.next();
+                if matches!(parser.lexer.peek(), Some(Token::DoubleSemicolon)) {
+                    parser.lexer.next();
                 }
                 
                 cases.push(CaseClause { patterns, body });
@@ -321,31 +328,39 @@ pub fn parse_case_statement(lexer: &mut Lexer) -> Result<Command, ParserError> {
     }
     
     // Consume 'esac'
-    lexer.consume(Token::Esac)?;
+    parser.lexer.consume(Token::Esac)?;
     
     Ok(Command::Case(CaseStatement { word, cases }))
 }
 
-pub fn parse_while_loop(lexer: &mut Lexer) -> Result<Command, ParserError> {
-    lexer.consume(Token::While)?;
-    // Parse condition
-    let condition = Box::new(parse_command(lexer)?);
+pub fn parse_while_loop(parser: &mut Parser) -> Result<Command, ParserError> {
+    parser.lexer.consume(Token::While)?;
+    // Skip whitespace after 'while'
+    parser.lexer.skip_whitespace_and_comments();
+    // Parse condition - check for test expression first
+    let condition = if let Some(Token::TestBracket) = parser.lexer.peek() {
+        // Handle test expression like: while [ $i -lt 10 ]; do
+        Box::new(parse_test_expression(&mut parser.lexer)?)
+    } else {
+        // Parse as a regular command
+        Box::new(parser.parse_command()?)
+    };
 
     // Optional separator after condition (semicolon or newline) and skip whitespace
-    match lexer.peek() {
-        Some(Token::Semicolon) | Some(Token::Newline) | Some(Token::CarriageReturn) => { lexer.next(); },
+    match parser.lexer.peek() {
+        Some(Token::Semicolon) | Some(Token::Newline) | Some(Token::CarriageReturn) => { parser.lexer.next(); },
         _ => {}
     }
-    while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn)) {
-        lexer.next();
+    while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn)) {
+        parser.lexer.next();
     }
 
     // Expect 'do'
-    lexer.consume(Token::Do)?;
+    parser.lexer.consume(Token::Do)?;
 
     // Allow newline/whitespace after 'do'
-    while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn)) {
-        lexer.next();
+    while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn)) {
+        parser.lexer.next();
     }
 
     // Parse body commands into a Block
@@ -354,18 +369,18 @@ pub fn parse_while_loop(lexer: &mut Lexer) -> Result<Command, ParserError> {
     // Parse commands in body until 'done'
     loop {
         // Skip separators
-        while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn | Token::Semicolon)) {
-            lexer.next();
+        while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn | Token::Semicolon)) {
+            parser.lexer.next();
         }
-        match lexer.peek() {
+        match parser.lexer.peek() {
             Some(Token::Done) | None => break,
             _ => {
                 // Parse and add command to body
-                let pre_pos = lexer.current_position();
-                let command = parse_command(lexer)?;
+                let pre_pos = parser.lexer.current_position();
+                let command = parser.parse_command()?;
                 body_commands.push(command);
-                if lexer.current_position() == pre_pos {
-                    if lexer.next().is_none() { break; }
+                if parser.lexer.current_position() == pre_pos {
+                    if parser.lexer.next().is_none() { break; }
                 }
             }
         }
@@ -373,13 +388,13 @@ pub fn parse_while_loop(lexer: &mut Lexer) -> Result<Command, ParserError> {
 
     // Allow optional separator after body before 'done'
     loop {
-        match lexer.peek() {
+        match parser.lexer.peek() {
             Some(Token::Space) | Some(Token::Tab) | Some(Token::Comment) | Some(Token::Newline | Token::CarriageReturn) => {
-                lexer.next();
+                parser.lexer.next();
                 continue;
             }
             Some(Token::Semicolon) => {
-                lexer.next();
+                parser.lexer.next();
                 // consume any following whitespace/newlines as well
                 continue;
             }
@@ -388,52 +403,52 @@ pub fn parse_while_loop(lexer: &mut Lexer) -> Result<Command, ParserError> {
         break;
     }
 
-    lexer.consume(Token::Done)?;
+    parser.lexer.consume(Token::Done)?;
     
     let body = Block { commands: body_commands };
     Ok(Command::While(WhileLoop { condition, body }))
 }
 
-pub fn parse_for_loop(lexer: &mut Lexer) -> Result<Command, ParserError> {
-    lexer.consume(Token::For)?;
+pub fn parse_for_loop(parser: &mut Parser) -> Result<Command, ParserError> {
+    parser.lexer.consume(Token::For)?;
     // Allow whitespace/comments after 'for'
-    lexer.skip_whitespace_and_comments();
+    parser.lexer.skip_whitespace_and_comments();
 
     // Variable name
-    let variable = match lexer.peek() {
-        Some(Token::Identifier) => lexer.get_identifier_text()?,
+    let variable = match parser.lexer.peek() {
+        Some(Token::Identifier) => parser.lexer.get_identifier_text()?,
         Some(t) => return Err(ParserError::UnexpectedToken { token: t.clone(), line: 1, col: 1 }),
         None => return Err(ParserError::UnexpectedEOF),
     };
 
     // Allow whitespace/comments after variable
-    lexer.skip_whitespace_and_comments();
+    parser.lexer.skip_whitespace_and_comments();
 
     // Optional 'in' list
-    let items = if let Some(Token::In) = lexer.peek() {
-        lexer.next();
+    let items = if let Some(Token::In) = parser.lexer.peek() {
+        parser.lexer.next();
         // Allow whitespace/comments after 'in'
-        lexer.skip_whitespace_and_comments();
-        let words = parse_word_list(lexer)?;
+        parser.lexer.skip_whitespace_and_comments();
+        let words = parse_word_list(parser)?;
         // Optional separator before 'do'
-        while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::CarriageReturn)) {
-            lexer.next();
+        while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::CarriageReturn)) {
+            parser.lexer.next();
         }
-        match lexer.peek() {
+        match parser.lexer.peek() {
             Some(Token::Semicolon) | Some(Token::Newline) | Some(Token::CarriageReturn) => {
-                lexer.next();
+                parser.lexer.next();
             }
             _ => {}
         }
         words
     } else {
         // No 'in' list; optional separator before 'do'
-        while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::CarriageReturn)) {
-            lexer.next();
+        while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::CarriageReturn)) {
+            parser.lexer.next();
         }
-        match lexer.peek() {
+        match parser.lexer.peek() {
             Some(Token::Semicolon) | Some(Token::Newline) | Some(Token::CarriageReturn) => {
-                lexer.next();
+                parser.lexer.next();
             }
             _ => {}
         }
@@ -441,10 +456,10 @@ pub fn parse_for_loop(lexer: &mut Lexer) -> Result<Command, ParserError> {
     };
 
     // Allow whitespace/newlines/comments before 'do'
-    while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn)) {
-        lexer.next();
+    while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn)) {
+        parser.lexer.next();
     }
-    lexer.consume(Token::Do)?;
+    parser.lexer.consume(Token::Do)?;
     
     // Parse body commands into a Block
     let mut body_commands = Vec::new();
@@ -452,23 +467,23 @@ pub fn parse_for_loop(lexer: &mut Lexer) -> Result<Command, ParserError> {
     // Parse commands in body until 'done'
     loop {
         // Skip separators
-        while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn)) {
-            lexer.next();
+        while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn)) {
+            parser.lexer.next();
         }
         
         // Check for 'done' first
-        if let Some(Token::Done) = lexer.peek() {
+        if let Some(Token::Done) = parser.lexer.peek() {
             break;
         }
         
         // Check for semicolon - this should separate commands in the loop body
-        if let Some(Token::Semicolon) = lexer.peek() {
-            lexer.next(); // consume semicolon
+        if let Some(Token::Semicolon) = parser.lexer.peek() {
+            parser.lexer.next(); // consume semicolon
             // Skip whitespace after semicolon
-            lexer.skip_whitespace_and_comments();
+            parser.lexer.skip_whitespace_and_comments();
             
             // Check if the next token is 'done'
-            if let Some(Token::Done) = lexer.peek() {
+            if let Some(Token::Done) = parser.lexer.peek() {
                 break;
             }
             
@@ -477,23 +492,23 @@ pub fn parse_for_loop(lexer: &mut Lexer) -> Result<Command, ParserError> {
         }
         
         // Parse command in body
-        let pre_pos = lexer.current_position();
-        let command = parse_command(lexer)?;
+        let pre_pos = parser.lexer.current_position();
+        let command = parser.parse_command()?;
         body_commands.push(command);
-        if lexer.current_position() == pre_pos {
-            if lexer.next().is_none() { break; }
+        if parser.lexer.current_position() == pre_pos {
+            if parser.lexer.next().is_none() { break; }
         }
     }
 
     // Allow optional separator after body before 'done'
     loop {
-        match lexer.peek() {
+        match parser.lexer.peek() {
             Some(Token::Space) | Some(Token::Tab) | Some(Token::Comment) | Some(Token::Newline | Token::CarriageReturn) => {
-                lexer.next();
+                parser.lexer.next();
                 continue;
             }
             Some(Token::Semicolon) => {
-                lexer.next();
+                parser.lexer.next();
                 // consume any following whitespace/newlines as well
                 continue;
             }
@@ -502,10 +517,10 @@ pub fn parse_for_loop(lexer: &mut Lexer) -> Result<Command, ParserError> {
         break;
     }
 
-    lexer.consume(Token::Done)?;
+    parser.lexer.consume(Token::Done)?;
     
     // Skip whitespace after 'done' before checking for pipe
-    lexer.skip_whitespace_and_comments();
+    parser.lexer.skip_whitespace_and_comments();
     
     // Check if there's a pipeline after the for loop
     let mut final_command = Command::For(ForLoop {
@@ -515,70 +530,70 @@ pub fn parse_for_loop(lexer: &mut Lexer) -> Result<Command, ParserError> {
     });
     
     // If there's a pipe after 'done', parse the pipeline
-    if let Some(Token::Pipe) = lexer.peek() {
-        final_command = parse_pipeline_from_command(lexer, final_command)?;
+    if let Some(Token::Pipe) = parser.lexer.peek() {
+        final_command = parse_pipeline_from_command(&mut parser.lexer, final_command)?;
     }
     
     Ok(final_command)
 }
 
-pub fn parse_function(lexer: &mut Lexer) -> Result<Command, ParserError> {
-    lexer.consume(Token::Function)?;
+pub fn parse_function(parser: &mut Parser) -> Result<Command, ParserError> {
+    parser.lexer.consume(Token::Function)?;
     // Allow whitespace between 'function' and name
-    lexer.skip_whitespace_and_comments();
+    parser.lexer.skip_whitespace_and_comments();
 
-    let name = match lexer.peek() {
-        Some(Token::Identifier) => lexer.get_identifier_text()?,
+    let name = match parser.lexer.peek() {
+        Some(Token::Identifier) => parser.lexer.get_identifier_text()?,
         Some(t) => {
-            let (line, col) = lexer.offset_to_line_col(0);
+            let (line, col) = parser.lexer.offset_to_line_col(0);
             return Err(ParserError::UnexpectedToken { token: t.clone(), line, col });
         }
         None => return Err(ParserError::UnexpectedEOF),
     };
 
     // Skip whitespace after name
-    lexer.skip_whitespace_and_comments();
+    parser.lexer.skip_whitespace_and_comments();
 
     // Parse parameters if present: function name(param1, param2)
     let mut parameters = Vec::new();
-    if let Some(Token::ParenOpen) = lexer.peek() {
+    if let Some(Token::ParenOpen) = parser.lexer.peek() {
         // Consume opening parenthesis
-        lexer.next();
+        parser.lexer.next();
         
         // Parse parameters until closing parenthesis
         loop {
-            lexer.skip_whitespace_and_comments();
+            parser.lexer.skip_whitespace_and_comments();
             
-            match lexer.peek() {
+            match parser.lexer.peek() {
                 Some(Token::ParenClose) => {
-                    lexer.next(); // consume closing parenthesis
+                    parser.lexer.next(); // consume closing parenthesis
                     break;
                 }
                 Some(Token::Identifier) => {
-                    let param = lexer.get_identifier_text()?;
+                    let param = parser.lexer.get_identifier_text()?;
                     parameters.push(param);
                     
                     // Check for comma separator
-                    lexer.skip_whitespace_and_comments();
-                    if let Some(Token::Comma) = lexer.peek() {
-                        lexer.next(); // consume comma
-                    } else if let Some(Token::ParenClose) = lexer.peek() {
+                    parser.lexer.skip_whitespace_and_comments();
+                    if let Some(Token::Comma) = parser.lexer.peek() {
+                        parser.lexer.next(); // consume comma
+                    } else if let Some(Token::ParenClose) = parser.lexer.peek() {
                         // No comma, must be last parameter
                         continue;
                     } else {
                         // Expect comma or closing parenthesis
-                        let (line, col) = lexer.offset_to_line_col(0);
+                        let (line, col) = parser.lexer.offset_to_line_col(0);
                         return Err(ParserError::UnexpectedToken { 
-                            token: lexer.peek().unwrap().clone(), 
+                            token: parser.lexer.peek().unwrap().clone(), 
                             line, 
                             col 
                         });
                     }
                 }
                 _ => {
-                    let (line, col) = lexer.offset_to_line_col(0);
+                    let (line, col) = parser.lexer.offset_to_line_col(0);
                     return Err(ParserError::UnexpectedToken { 
-                        token: lexer.peek().unwrap().clone(), 
+                        token: parser.lexer.peek().unwrap().clone(), 
                         line, 
                         col 
                     });
@@ -587,104 +602,104 @@ pub fn parse_function(lexer: &mut Lexer) -> Result<Command, ParserError> {
         }
         
         // Skip whitespace/newlines after parentheses
-        while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
-            lexer.next();
+        while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+            parser.lexer.next();
         }
     }
 
     // Brace-wrapped function body: { ... }
-    let body = if let Some(Token::BraceOpen) = lexer.peek() {
+    let body = if let Some(Token::BraceOpen) = parser.lexer.peek() {
         // Consume '{'
-        lexer.next();
+        parser.lexer.next();
         // Allow whitespace/newlines
-        while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
-            lexer.next();
+        while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+            parser.lexer.next();
         }
         
         // Parse body commands into a Block
         let mut body_commands = Vec::new();
         
         // Parse first command
-        body_commands.push(parse_command(lexer)?);
+        body_commands.push(parser.parse_command()?);
 
         // Parse additional commands inside the block
         loop {
             // Skip separators
-            while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon)) {
-                lexer.next();
+            while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon)) {
+                parser.lexer.next();
             }
-            match lexer.peek() {
+            match parser.lexer.peek() {
                 Some(Token::BraceClose) | None => break,
                 _ => {
-                    let pre_pos = lexer.current_position();
-                    let command = parse_command(lexer)?;
+                    let pre_pos = parser.lexer.current_position();
+                    let command = parser.parse_command()?;
                     body_commands.push(command);
-                    if lexer.current_position() == pre_pos {
-                        if lexer.next().is_none() { break; }
+                    if parser.lexer.current_position() == pre_pos {
+                        if parser.lexer.next().is_none() { break; }
                     }
                 }
             }
         }
 
         // Expect closing '}'
-        lexer.consume(Token::BraceClose)?;
+        parser.lexer.consume(Token::BraceClose)?;
         Block { commands: body_commands }
     } else {
         // Fallback: parse next as a single command body
-        let command = parse_command(lexer)?;
+        let command = parser.parse_command()?;
         Block { commands: vec![command] }
     };
     
     Ok(Command::Function(Function { name, parameters, body }))
 }
 
-pub fn parse_posix_function(lexer: &mut Lexer) -> Result<Command, ParserError> {
+pub fn parse_posix_function(parser: &mut Parser) -> Result<Command, ParserError> {
     // Get the function name
-    let name = lexer.get_identifier_text()?;
+    let name = parser.lexer.get_identifier_text()?;
     
     // Consume the opening parenthesis
-    lexer.consume(Token::ParenOpen)?;
+    parser.lexer.consume(Token::ParenOpen)?;
     
     // Parse parameters if present: name(param1, param2)
     let mut parameters = Vec::new();
-    if let Some(Token::ParenClose) = lexer.peek() {
+    if let Some(Token::ParenClose) = parser.lexer.peek() {
         // No parameters, just consume closing parenthesis
-        lexer.next();
+        parser.lexer.next();
     } else {
         // Parse parameters until closing parenthesis
         loop {
-            lexer.skip_whitespace_and_comments();
+            parser.lexer.skip_whitespace_and_comments();
             
-            match lexer.peek() {
+            match parser.lexer.peek() {
                 Some(Token::ParenClose) => {
-                    lexer.next(); // consume closing parenthesis
+                    parser.lexer.next(); // consume closing parenthesis
                     break;
                 }
                 Some(Token::Identifier) => {
-                    let param = lexer.get_identifier_text()?;
+                    let param = parser.lexer.get_identifier_text()?;
                     parameters.push(param);
                     
                     // Check for comma separator
-                    lexer.skip_whitespace_and_comments();
-                    if let Some(Token::Comma) = lexer.peek() {
-                        lexer.next(); // consume comma
-                    } else if let Some(Token::ParenClose) = lexer.peek() {
+                    parser.lexer.skip_whitespace_and_comments();
+                    if let Some(Token::Comma) = parser.lexer.peek() {
+                        parser.lexer.next(); // consume comma
+                    } else if let Some(Token::ParenClose) = parser.lexer.peek() {
                         // No comma, must be last parameter
                         continue;
                     } else {
                         // Expect comma or closing parenthesis
-                        let (line, col) = lexer.offset_to_line_col(0);
+                        let (line, col) = parser.lexer.offset_to_line_col(0);
                         return Err(ParserError::UnexpectedToken { 
-                            token: lexer.peek().unwrap().clone(), 
+                            token: parser.lexer.peek().unwrap().clone(), 
                             line, 
                             col 
                         });
                     }
                 }
                 _ => {
-                    let (line, col) = lexer.offset_to_line_col(0);
+                    let (line, col) = parser.lexer.offset_to_line_col(0);
                     return Err(ParserError::UnexpectedToken { 
-                        token: lexer.peek().unwrap().clone(), 
+                        token: parser.lexer.peek().unwrap().clone(), 
                         line, 
                         col 
                     });
@@ -694,16 +709,16 @@ pub fn parse_posix_function(lexer: &mut Lexer) -> Result<Command, ParserError> {
     }
     
     // Skip whitespace/newlines after parentheses
-    while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
-        lexer.next();
+    while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+        parser.lexer.next();
     }
     
     // Consume the opening brace
-    lexer.consume(Token::BraceOpen)?;
+    parser.lexer.consume(Token::BraceOpen)?;
     
     // Allow whitespace/newlines after opening brace
-    while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
-        lexer.next();
+    while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+        parser.lexer.next();
     }
     
     // Parse the function body as a block of commands
@@ -712,13 +727,13 @@ pub fn parse_posix_function(lexer: &mut Lexer) -> Result<Command, ParserError> {
     // Parse commands until we find the closing brace
     loop {
         // Skip separators
-        while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon)) {
-            lexer.next();
+        while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon)) {
+            parser.lexer.next();
         }
         
-        match lexer.peek() {
+        match parser.lexer.peek() {
             Some(Token::BraceClose) => {
-                lexer.next(); // consume the closing brace
+                parser.lexer.next(); // consume the closing brace
                 break;
             }
             None => {
@@ -726,7 +741,7 @@ pub fn parse_posix_function(lexer: &mut Lexer) -> Result<Command, ParserError> {
             }
             _ => {
                 // Parse the next command
-                let command = parse_command(lexer)?;
+                let command = parser.parse_command()?;
                 body_commands.push(command);
             }
         }
@@ -739,15 +754,15 @@ pub fn parse_posix_function(lexer: &mut Lexer) -> Result<Command, ParserError> {
     }))
 }
 
-pub fn parse_block(lexer: &mut Lexer) -> Result<Command, ParserError> {
+pub fn parse_block(parser: &mut Parser) -> Result<Command, ParserError> {
     // Parse a standalone block: { ... }
     
     // Consume the opening brace
-    lexer.consume(Token::BraceOpen)?;
+    parser.lexer.consume(Token::BraceOpen)?;
     
     // Allow whitespace/newlines after opening brace
-    while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
-        lexer.next();
+    while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+        parser.lexer.next();
     }
     
     // Parse the block body as a list of commands
@@ -756,13 +771,13 @@ pub fn parse_block(lexer: &mut Lexer) -> Result<Command, ParserError> {
     // Parse commands until we find the closing brace
     loop {
         // Skip separators
-        while matches!(lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon)) {
-            lexer.next();
+        while matches!(parser.lexer.peek(), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::Semicolon)) {
+            parser.lexer.next();
         }
         
-        match lexer.peek() {
+        match parser.lexer.peek() {
             Some(Token::BraceClose) => {
-                lexer.next(); // consume the closing brace
+                parser.lexer.next(); // consume the closing brace
                 break;
             }
             None => {
@@ -770,7 +785,7 @@ pub fn parse_block(lexer: &mut Lexer) -> Result<Command, ParserError> {
             }
             _ => {
                 // Parse the next command
-                let command = parse_command(lexer)?;
+                let command = parser.parse_command()?;
                 body_commands.push(command);
             }
         }
@@ -779,70 +794,156 @@ pub fn parse_block(lexer: &mut Lexer) -> Result<Command, ParserError> {
     Ok(Command::Block(Block { commands: body_commands }))
 }
 
-pub fn parse_break_statement(lexer: &mut Lexer) -> Result<Command, ParserError> {
-    lexer.consume(Token::Break)?;
+pub fn parse_break_statement(parser: &mut Parser) -> Result<Command, ParserError> {
+    parser.lexer.consume(Token::Break)?;
     
     // Optional argument (loop level)
     let mut level = None;
-    lexer.skip_whitespace_and_comments();
+    parser.lexer.skip_whitespace_and_comments();
     
-    if let Some(Token::Number) = lexer.peek() {
-        let level_text = lexer.get_number_text()?;
+    if let Some(Token::Number) = parser.lexer.peek() {
+        let level_text = parser.lexer.get_number_text()?;
         level = Some(level_text);
     }
     
     Ok(Command::Break(level))
 }
 
-pub fn parse_continue_statement(lexer: &mut Lexer) -> Result<Command, ParserError> {
-    lexer.consume(Token::Continue)?;
+pub fn parse_continue_statement(parser: &mut Parser) -> Result<Command, ParserError> {
+    parser.lexer.consume(Token::Continue)?;
     
     // Optional argument (loop level)
     let mut level = None;
-    lexer.skip_whitespace_and_comments();
+    parser.lexer.skip_whitespace_and_comments();
     
-    if let Some(Token::Number) = lexer.peek() {
-        let level_text = lexer.get_number_text()?;
+    if let Some(Token::Number) = parser.lexer.peek() {
+        let level_text = parser.lexer.get_number_text()?;
         level = Some(level_text);
     }
     
     Ok(Command::Continue(level))
 }
 
-pub fn parse_return_statement(lexer: &mut Lexer) -> Result<Command, ParserError> {
-    lexer.consume(Token::Return)?;
+pub fn parse_return_statement(parser: &mut Parser) -> Result<Command, ParserError> {
+    parser.lexer.consume(Token::Return)?;
     
     // Optional return value
     let mut return_value = None;
-    lexer.skip_whitespace_and_comments();
+    parser.lexer.skip_whitespace_and_comments();
     
-    if !lexer.is_eof() && !matches!(lexer.peek(), Some(Token::Newline | Token::Semicolon | Token::CarriageReturn)) {
+    if !parser.lexer.is_eof() && !matches!(parser.lexer.peek(), Some(Token::Newline | Token::Semicolon | Token::CarriageReturn)) {
         // Parse the return value as a word
-        return_value = Some(parse_word(lexer)?);
+        return_value = Some(parse_word(&mut parser.lexer)?);
     }
     
     Ok(Command::Return(return_value))
 }
 
 // Placeholder functions - these would need to be implemented based on the actual AST structures
-fn parse_arithmetic_expression(_lexer: &mut Lexer) -> Result<Word, ParserError> {
-    // TODO: Implement arithmetic expression parsing
-    Err(ParserError::InvalidSyntax("Arithmetic expressions not yet implemented".to_string()))
+fn parse_arithmetic_expression(parser: &mut Parser) -> Result<Word, ParserError> {
+    // Handle arithmetic expressions like $((i + 1))
+    // First, consume the opening $(( or $( token
+    match parser.lexer.peek() {
+        Some(Token::Arithmetic) | Some(Token::ArithmeticEval) => {
+            parser.lexer.next(); // consume $(( or $(
+        }
+        _ => {
+            return Err(ParserError::InvalidSyntax("Expected arithmetic expression start".to_string()));
+        }
+    }
+    
+    let mut expression_parts = Vec::new();
+    
+    // Simple case: just parse until we find the closing ))
+    loop {
+        match parser.lexer.peek() {
+            Some(Token::ArithmeticEvalClose) => {
+                // Found the closing )), consume it and break
+                parser.lexer.next();
+                break;
+            }
+            Some(Token::Identifier) => {
+                // Variable reference like 'i'
+                let var_name = parser.lexer.get_identifier_text()?;
+                expression_parts.push(var_name);
+                parser.lexer.next(); // consume the identifier token
+            }
+            Some(Token::Number) => {
+                // Number like '1'
+                let num = parser.lexer.get_number_text()?;
+                expression_parts.push(num);
+                parser.lexer.next(); // consume the number token
+            }
+            Some(Token::Plus) => {
+                // Plus operator
+                parser.lexer.next();
+                expression_parts.push("+".to_string());
+            }
+            Some(Token::Minus) => {
+                // Minus operator
+                parser.lexer.next();
+                expression_parts.push("-".to_string());
+            }
+            Some(Token::Star) => {
+                // Multiplication operator
+                parser.lexer.next();
+                expression_parts.push("*".to_string());
+            }
+            Some(Token::Slash) => {
+                // Division operator
+                parser.lexer.next();
+                expression_parts.push("/".to_string());
+            }
+            Some(Token::Space) | Some(Token::Tab) => {
+                // Skip whitespace
+                parser.lexer.next();
+            }
+            Some(Token::Dollar) => {
+                // Handle variable references like $i
+                parser.lexer.next();
+                if let Some(Token::Identifier) = parser.lexer.peek() {
+                    let var_name = parser.lexer.get_identifier_text()?;
+                    expression_parts.push(format!("${}", var_name));
+                } else {
+                    return Err(ParserError::InvalidSyntax("Expected identifier after $ in arithmetic expression".to_string()));
+                }
+            }
+            None => {
+                return Err(ParserError::UnexpectedEOF);
+            }
+            _ => {
+                // For any other token, just consume it and add its text
+                if let Some(text) = parser.lexer.get_current_text() {
+                    expression_parts.push(text);
+                    parser.lexer.next();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    
+    let expression = expression_parts.join(" ");
+    
+    Ok(Word::Arithmetic(ArithmeticExpression {
+        expression,
+        tokens: vec![], // TODO: Store actual tokens if needed
+    }))
 }
 
-fn parse_pipeline(lexer: &mut Lexer) -> Result<Command, ParserError> {
+fn parse_pipeline(parser: &mut Parser) -> Result<Command, ParserError> {
     // For control flow constructs, we only need to parse a single command
     // This is used for test conditions in if statements, not for general pipelines
-    parse_simple_command(lexer)
+    parse_simple_command(parser)
 }
 
-pub fn parse_simple_command(lexer: &mut Lexer) -> Result<Command, ParserError> {
+pub fn parse_simple_command(parser: &mut Parser) -> Result<Command, ParserError> {
     // Skip whitespace and comments at the beginning
-    lexer.skip_whitespace_and_comments();
+    parser.lexer.skip_whitespace_and_comments();
     
     // Check if this is a test expression first
-    if matches!(lexer.peek(), Some(Token::TestBracket)) {
-        return parse_test_expression(lexer);
+    if matches!(parser.lexer.peek(), Some(Token::TestBracket)) {
+        return parse_test_expression(&mut parser.lexer);
     }
     
     let mut args = Vec::new();
@@ -850,9 +951,9 @@ pub fn parse_simple_command(lexer: &mut Lexer) -> Result<Command, ParserError> {
     let mut env_vars = HashMap::new();
     
     // Parse the command name
-    let name = match lexer.peek() {
+    let name = match parser.lexer.peek() {
         Some(Token::Identifier) => {
-            let name_text = lexer.get_identifier_text()?;
+            let name_text = parser.lexer.get_identifier_text()?;
             Word::Literal(name_text)
         }
         _ => {
@@ -861,17 +962,17 @@ pub fn parse_simple_command(lexer: &mut Lexer) -> Result<Command, ParserError> {
     };
     
     // Parse arguments
-    lexer.skip_whitespace_and_comments();
-    while let Some(token) = lexer.peek() {
+    parser.lexer.skip_whitespace_and_comments();
+    while let Some(token) = parser.lexer.peek() {
         match token {
             Token::Identifier | Token::DoubleQuotedString | Token::SingleQuotedString | 
             Token::Dollar | Token::DollarParen | Token::BacktickString |
             Token::File | Token::Directory | Token::Exists | Token::Readable | Token::Writable | 
             Token::Executable | Token::Size | Token::Symlink => {
-                let word = parse_word(lexer)?;
+                let word = parse_word(&mut parser.lexer)?;
                 args.push(word);
                 // Skip whitespace after the word
-                lexer.skip_whitespace_and_comments();
+                parser.lexer.skip_whitespace_and_comments();
             }
             _ => break,
         }
@@ -888,19 +989,30 @@ pub fn parse_simple_command(lexer: &mut Lexer) -> Result<Command, ParserError> {
     }))
 }
 
-fn parse_command(lexer: &mut Lexer) -> Result<Command, ParserError> {
+fn parse_command(parser: &mut Parser) -> Result<Command, ParserError> {
     // Skip whitespace and comments
-    lexer.skip_whitespace_and_comments();
+    parser.lexer.skip_whitespace_and_comments();
     
-    if lexer.is_eof() {
+    if parser.lexer.is_eof() {
         return Err(ParserError::UnexpectedEOF);
     }
     
     // Check if this is a test expression
-    if matches!(lexer.peek(), Some(Token::TestBracket)) {
-        parse_test_expression(lexer)
+    if matches!(parser.lexer.peek(), Some(Token::TestBracket)) {
+        parse_test_expression(&mut parser.lexer)
+    } else if matches!(parser.lexer.peek(), Some(Token::Identifier)) {
+        // Check if this is a standalone variable assignment: identifier=value
+        let mut pos = 1;
+        while pos < 10 && matches!(parser.lexer.peek_n(pos), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+            pos += 1;
+        }
+        if matches!(parser.lexer.peek_n(pos), Some(Token::Assign | Token::PlusAssign | Token::MinusAssign | Token::StarAssign | Token::SlashAssign | Token::PercentAssign)) {
+            parse_assignment(parser)
+        } else {
+            parse_simple_command(parser)
+        }
     } else {
-        parse_simple_command(lexer)
+        parse_simple_command(parser)
     }
 }
 
@@ -1021,6 +1133,34 @@ fn parse_test_expression(lexer: &mut Lexer) -> Result<Command, ParserError> {
             failglob: false,
             dotglob: false,
         },
+    }))
+}
+
+fn parse_assignment(parser: &mut Parser) -> Result<Command, ParserError> {
+    // Parse a standalone assignment like: var=value or var=$((expr))
+    let var_name = parser.lexer.get_identifier_text()?;
+    
+    // Skip whitespace before assignment operator
+    parser.lexer.skip_whitespace_and_comments();
+    
+    // Consume the assignment operator
+    let _operator = parser.lexer.next();
+    
+    // Skip whitespace after assignment operator
+    parser.lexer.skip_whitespace_and_comments();
+    
+    // Parse the value
+    let value = parse_word(&mut parser.lexer)?;
+    
+    // Create a simple command that represents the assignment
+    let mut env_vars = HashMap::new();
+    env_vars.insert(var_name.clone(), value);
+    
+    Ok(Command::Simple(SimpleCommand {
+        name: Word::Literal("assignment".to_string()), // Placeholder name
+        args: Vec::new(),
+        redirects: Vec::new(),
+        env_vars,
     }))
 }
 

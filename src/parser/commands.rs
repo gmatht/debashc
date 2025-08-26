@@ -4,7 +4,6 @@ use crate::parser::errors::ParserError;
 use crate::parser::utilities::ParserUtilities;
 use crate::parser::words::parse_word;
 use crate::parser::redirects::parse_redirect;
-use crate::parser::assignments::parse_environment_variable_value;
 use crate::parser::assignments::parse_array_elements;
 use crate::parser::control_flow::{
     parse_if_statement, parse_case_statement, parse_while_loop, parse_for_loop,
@@ -149,7 +148,7 @@ impl Parser {
         Ok(commands)
     }
 
-    fn parse_command(&mut self) -> Result<Command, ParserError> {
+    pub fn parse_command(&mut self) -> Result<Command, ParserError> {
         // Skip whitespace and comments
         self.lexer.skip_whitespace_and_comments();
         
@@ -162,14 +161,14 @@ impl Parser {
                 // Comments should be handled at the top level
                 return Err(ParserError::InvalidSyntax("Unexpected comment in command parsing".to_string()));
             }
-            Some(Token::If) => parse_if_statement(&mut self.lexer),
-            Some(Token::Case) => parse_case_statement(&mut self.lexer),
-            Some(Token::While) => parse_while_loop(&mut self.lexer),
-            Some(Token::For) => parse_for_loop(&mut self.lexer),
-            Some(Token::Function) => parse_function(&mut self.lexer),
-            Some(Token::Break) => parse_break_statement(&mut self.lexer),
-            Some(Token::Continue) => parse_continue_statement(&mut self.lexer),
-            Some(Token::Return) => parse_return_statement(&mut self.lexer),
+            Some(Token::If) => parse_if_statement(self),
+            Some(Token::Case) => parse_case_statement(self),
+            Some(Token::While) => parse_while_loop(self),
+            Some(Token::For) => parse_for_loop(self),
+            Some(Token::Function) => parse_function(self),
+            Some(Token::Break) => parse_break_statement(self),
+            Some(Token::Continue) => parse_continue_statement(self),
+            Some(Token::Return) => parse_return_statement(self),
             // POSIX-style function definition: name() { ... }
             Some(Token::Identifier) => {
                 // Check if this is a function definition: identifier() { ... }
@@ -184,7 +183,7 @@ impl Parser {
                     }
                     let brace_token = self.lexer.peek_n(pos);
                     if matches!(brace_token, Some(Token::BraceOpen)) {
-                        parse_posix_function(&mut self.lexer)
+                        parse_posix_function(self)
                     } else {
                         self.parse_pipeline()
                     }
@@ -206,7 +205,7 @@ impl Parser {
                 self.parse_double_paren_command()
             }
             Some(Token::ParenOpen) => self.parse_subshell(),
-            Some(Token::BraceOpen) => parse_block(&mut self.lexer),
+            Some(Token::BraceOpen) => parse_block(self),
             Some(Token::TestBracket) => self.parse_test_expression(),
             Some(Token::Semicolon) | Some(Token::Newline) | Some(Token::CarriageReturn) => {
                 // Skip semicolon and continue parsing
@@ -335,7 +334,7 @@ impl Parser {
                                     let var_name = self.lexer.get_identifier_text()?;
                                     self.lexer.next(); // consume +=
                                     
-                                    let value_word = parse_environment_variable_value(&mut self.lexer)?;
+                                    let value_word = parse_word(&mut self.lexer)?;
                                     
                                     let arithmetic_expr = format!("{}+{}", var_name, value_word.to_string());
                                     let compound_word = Word::Arithmetic(ArithmeticExpression {
@@ -361,7 +360,7 @@ impl Parser {
                                     // Handle regular assignment like: var=value
                                     let var_name = self.lexer.get_identifier_text()?;
                                     self.lexer.next(); // consume =
-                                    let value_word = parse_environment_variable_value(&mut self.lexer)?;
+                                    let value_word = parse_word(&mut self.lexer)?;
                                     env_vars.insert(var_name, value_word);
                                     self.lexer.skip_whitespace_and_comments();
                                 }
@@ -412,6 +411,10 @@ impl Parser {
                 | Token::DollarBraceHashStar | Token::DollarBraceHashAt | Token::DollarBraceBangStar | Token::DollarBraceBangAt => {
                     self.parse_variable_expansion()?
                 }
+                Token::Arithmetic => {
+                    self.parse_arithmetic_expression()?
+                }
+
                 _ => {
                     let (line, col) = self.lexer.offset_to_line_col(0);
                     return Err(ParserError::UnexpectedToken { token: token.to_owned(), line, col });
@@ -489,7 +492,7 @@ impl Parser {
         }
         
         // Parse the value
-        let value_word = parse_environment_variable_value(&mut self.lexer)?;
+        let value_word = parse_word(&mut self.lexer)?;
         
         // Check if there's a command following this assignment
         self.lexer.skip_whitespace_and_comments();
@@ -633,12 +636,16 @@ impl Parser {
                     expression_parts.push("-L".to_string());
                     self.lexer.next();
                 }
-                Some(Token::Identifier) => {
-                    expression_parts.push(self.lexer.get_identifier_text()?);
-                }
-                Some(Token::DoubleQuotedString) | Some(Token::SingleQuotedString) => {
-                    expression_parts.push(self.lexer.get_string_text()?);
-                }
+                                 Some(Token::Identifier) => {
+                     let identifier = self.lexer.get_identifier_text()?;
+                     expression_parts.push(identifier);
+                     self.lexer.next(); // consume the identifier token
+                 }
+                 Some(Token::DoubleQuotedString) | Some(Token::SingleQuotedString) => {
+                     let string_text = self.lexer.get_string_text()?;
+                     expression_parts.push(string_text);
+                     self.lexer.next(); // consume the string token
+                 }
                 Some(Token::Space) | Some(Token::Tab) => {
                     self.lexer.next(); // skip whitespace
                 }
@@ -667,9 +674,141 @@ impl Parser {
     }
 
     fn parse_variable_expansion(&mut self) -> Result<Word, ParserError> {
-        // TODO: Implement variable expansion parsing
-        Err(ParserError::InvalidSyntax("Variable expansion not yet implemented".to_string()))
+        // Check what type of variable expansion we have
+        match self.lexer.peek() {
+            Some(Token::Dollar) => {
+                // Simple variable reference like $i
+                self.lexer.next(); // consume the $ token
+                
+                // Expect an identifier after the $
+                if let Some(Token::Identifier) = self.lexer.peek() {
+                    let var_name = self.lexer.get_identifier_text()?;
+                    Ok(Word::Variable(var_name))
+                } else {
+                    Err(ParserError::InvalidSyntax("Expected identifier after $ in variable expansion".to_string()))
+                }
+            }
+            Some(Token::DollarBrace) => {
+                // Parameter expansion like ${i}
+                self.lexer.next(); // consume the ${ token
+                
+                // Parse the content until we find the closing }
+                let mut expression_parts = Vec::new();
+                
+                loop {
+                    match self.lexer.peek() {
+                        Some(Token::BraceClose) => {
+                            // Found the closing }, consume it and break
+                            self.lexer.next();
+                            break;
+                        }
+                                                 Some(Token::Identifier) => {
+                             // Variable name like 'i'
+                             let var_name = self.lexer.get_identifier_text()?;
+                             expression_parts.push(var_name);
+                             self.lexer.next(); // consume the identifier token
+                         }
+                         Some(Token::Number) => {
+                             // Number like '1'
+                             let num_text = self.lexer.get_number_text()?;
+                             expression_parts.push(num_text);
+                             self.lexer.next(); // consume the number token
+                         }
+                        Some(Token::Space) | Some(Token::Tab) => {
+                            // Skip whitespace
+                            self.lexer.next();
+                        }
+                        None => {
+                            return Err(ParserError::InvalidSyntax("Unexpected end of input in parameter expansion".to_string()));
+                        }
+                        _ => {
+                            return Err(ParserError::InvalidSyntax("Unexpected token in parameter expansion".to_string()));
+                        }
+                    }
+                }
+                
+                // For now, just create a simple parameter expansion
+                // In a full implementation, this would parse operators like :-, :+, :?, etc.
+                let var_name = expression_parts.join("");
+                Ok(Word::ParameterExpansion(ParameterExpansion {
+                    variable: var_name,
+                    operator: ParameterExpansionOperator::None,
+                }))
+            }
+            _ => {
+                Err(ParserError::InvalidSyntax("Expected $ or ${ in variable expansion".to_string()))
+            }
+        }
     }
+
+    fn parse_arithmetic_expression(&mut self) -> Result<Word, ParserError> {
+        // Handle arithmetic expressions like $((i + 1))
+        // The lexer should have already consumed the opening $( tokens
+        // We need to parse the content until we find the closing ))
+        
+        let mut expression_parts = Vec::new();
+        
+        loop {
+            match self.lexer.peek() {
+                Some(Token::ArithmeticEvalClose) => {
+                    // Found the closing )), consume it and break
+                    self.lexer.next();
+                    break;
+                }
+                Some(Token::Identifier) => {
+                    // Variable reference like 'i'
+                    let var_name = self.lexer.get_identifier_text()?;
+                    expression_parts.push(var_name);
+                    self.lexer.next(); // consume the identifier token
+                }
+                Some(Token::Number) => {
+                    // Number like '1'
+                    let num_text = self.lexer.get_number_text()?;
+                    expression_parts.push(num_text);
+                    self.lexer.next(); // consume the number token
+                }
+                Some(Token::Plus) => {
+                    // Plus operator
+                    self.lexer.next();
+                    expression_parts.push("+".to_string());
+                }
+                Some(Token::Minus) => {
+                    // Minus operator
+                    self.lexer.next();
+                    expression_parts.push("-".to_string());
+                }
+                Some(Token::Star) => {
+                    // Multiplication operator
+                    self.lexer.next();
+                    expression_parts.push("*".to_string());
+                }
+                Some(Token::Slash) => {
+                    // Division operator
+                    self.lexer.next();
+                    expression_parts.push("/".to_string());
+                }
+                Some(Token::Space) | Some(Token::Tab) => {
+                    // Skip whitespace
+                    self.lexer.next();
+                }
+                None => {
+                    return Err(ParserError::InvalidSyntax("Unexpected end of input in arithmetic expression".to_string()));
+                }
+                _ => {
+                    return Err(ParserError::InvalidSyntax("Unexpected token in arithmetic expression".to_string()));
+                }
+            }
+        }
+        
+        // Create an arithmetic expression word
+        let expression = expression_parts.join("");
+        Ok(Word::Arithmetic(ArithmeticExpression {
+            expression,
+            tokens: vec![], // For now, leave tokens empty
+        }))
+    }
+
+
 
     fn update_shopt_state(&mut self, option: &str, enable: bool) {
         match option {
