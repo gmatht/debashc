@@ -108,7 +108,28 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
                     match arg {
                         Word::Literal(s) => {
                             // Properly quote literal strings for Perl
-                            format!("\"{}\"", generator.escape_perl_string(s))
+                            // Check if the string is already quoted (starts and ends with same quote)
+                            let trimmed = s.trim();
+                            if (trimmed.starts_with("'") && trimmed.ends_with("'")) || 
+                               (trimmed.starts_with("\"") && trimmed.ends_with("\"")) {
+                                // Strip the surrounding quotes and escape for Perl
+                                let content = &trimmed[1..trimmed.len()-1];
+                                format!("\"{}\"", generator.escape_perl_string(content))
+                            } else {
+                                // Not quoted, but check if it contains already escaped quotes
+                                // If the string contains \" or \', we need to handle it specially
+                                if s.contains("\\\"") || s.contains("\\'") {
+                                    // The string already has escaped quotes, don't double-escape
+                                    // Just escape newlines and tabs, but preserve the existing quote escaping
+                                    let escaped = s.replace("\n", "\\n")
+                                                  .replace("\t", "\\t")
+                                                  .replace("\r", "\\r");
+                                    format!("\"{}\"", escaped)
+                                } else {
+                                    // Normal case, escape as-is
+                                    format!("\"{}\"", generator.escape_perl_string(s))
+                                }
+                            }
                         },
                         Word::Variable(var) => {
                             // Convert shell variables to Perl variables

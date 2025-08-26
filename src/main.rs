@@ -213,7 +213,7 @@ fn run_shell_script(filename: &str) -> Result<std::process::Output, String> {
     
     // Normalize line endings
     let unix_content = shell_content.replace("\r\n", "\n");
-    let script_path = "__temp_script.sh";
+    let script_path = "examples/__temp_script.sh";
     
     if let Err(e) = fs::write(script_path, &unix_content) {
         return Err(format!("Failed to write temp script: {}", e));
@@ -257,7 +257,10 @@ fn run_shell_script(filename: &str) -> Result<std::process::Output, String> {
         let wsl_script_path = format!("/mnt/{}/{}", 
             current_dir.replace(":", "").replace("\\", "/"),
             script_path);
-        cmd.args(&["bash", &wsl_script_path]);
+        let wsl_working_dir = format!("/mnt/{}/examples", 
+            current_dir.replace(":", "").replace("\\", "/"));
+        // Change to the examples directory first, then run the script with debug info
+        cmd.args(&["bash", "-c", &format!("cd {} && pwd && ls -la && bash {}", wsl_working_dir, wsl_script_path)]);
         cmd
     } else if shell_cmd == "git" {
         let mut cmd = Command::new("git");
@@ -1024,6 +1027,12 @@ fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
         } else {
             let mut cmd = Command::new(run_cmd[0]);
             for a in &run_cmd[1..] { cmd.arg(a); }
+            
+            // For Perl scripts, change to examples directory first to match shell script behavior
+            if lang == "perl" {
+                cmd.current_dir("examples");
+            }
+            
             let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
                 Ok(c) => c,
                 Err(e) => { cleanup_tmp(lang, &tmp_file); return Err(format!("Failed to run translated program: {}", e)); }

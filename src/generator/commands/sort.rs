@@ -23,7 +23,8 @@ pub fn generate_sort_command(generator: &mut Generator, cmd: &SimpleCommand, inp
     
     output.push_str(&format!("my @lines = split(/\\n/, {});\n", input_var));
     if numeric {
-        output.push_str("my @sorted = sort { $a <=> $b } @lines;\n");
+        // For numeric sort, extract the first field (number) and sort by that
+        output.push_str("my @sorted = sort { (split(/\\s+/, $a))[0] <=> (split(/\\s+/, $b))[0] } @lines;\n");
     } else {
         output.push_str("my @sorted = sort @lines;\n");
     }

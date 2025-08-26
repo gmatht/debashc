@@ -524,12 +524,33 @@ fn parse_string_interpolation(lexer: &mut Lexer) -> Result<Word, ParserError> {
             i += 1; // skip the $
             if i < content.len() {
                 let var_start = i;
-                while i < content.len() && content[i..].chars().next().unwrap().is_alphanumeric() {
-                    i += 1;
-                }
-                let var_name = &content[var_start..i];
-                if !var_name.is_empty() {
-                    parts.push(StringPart::Variable(var_name.to_string()));
+                
+                // Handle special shell variables like $#, $@, $*
+                if i < content.len() {
+                    let next_char = content[i..].chars().next().unwrap();
+                    if next_char == '#' || next_char == '@' || next_char == '*' {
+                        // Special shell variable
+                        parts.push(StringPart::Variable(next_char.to_string()));
+                        i += 1;
+                    } else if next_char.is_alphanumeric() || next_char == '_' {
+                        // Regular variable name
+                        while i < content.len() {
+                            let next_char = content[i..].chars().next();
+                            if let Some(c) = next_char {
+                                if c.is_alphanumeric() || c == '_' {
+                                    i += 1;
+                                } else {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                        let var_name = &content[var_start..i];
+                        if !var_name.is_empty() {
+                            parts.push(StringPart::Variable(var_name.to_string()));
+                        }
+                    }
                 }
             }
         } else {

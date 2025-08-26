@@ -24,6 +24,15 @@ pub fn word_to_perl_impl(generator: &mut Generator, word: &Word) -> String {
         Word::StringInterpolation(interp) => generator.convert_string_interpolation_to_perl(interp),
         Word::Arithmetic(expr) => generator.convert_arithmetic_to_perl(&expr.expression),
         Word::BraceExpansion(expansion) => generator.handle_brace_expansion(expansion),
+        Word::Variable(var) => {
+            // Handle special shell variables
+            match var.as_str() {
+                "#" => "scalar(@ARGV)".to_string(),  // $# -> scalar(@ARGV) for argument count
+                "@" => "@ARGV".to_string(),          // $@ -> @ARGV for arguments array
+                "*" => "@ARGV".to_string(),          // $* -> @ARGV for arguments array
+                _ => format!("${}", var)             // Regular variable
+            }
+        },
         _ => format!("{:?}", word)
     }
 }
@@ -86,16 +95,38 @@ pub fn convert_string_interpolation_to_perl_impl(generator: &Generator, interp: 
     // Convert string interpolation to proper Perl string concatenation
     let parts: Vec<String> = interp.parts.iter().map(|part| {
         match part {
-            StringPart::Literal(s) => format!("\"{}\"", generator.escape_perl_string(s)),
-            StringPart::Variable(var) => {
-                // Check if this is a shell positional parameter ($1, $2, etc.)
-                if var.chars().all(|c| c.is_digit(10)) {
-                    // Convert $1 to $_[0], $2 to $_[1], etc.
-                    let index = var.parse::<usize>().unwrap_or(0);
-                    format!("$_[{}]", index - 1) // Perl arrays are 0-indexed
+            StringPart::Literal(s) => {
+                // Check if the string contains already escaped quotes
+                // If the string contains \" or \', we need to handle it specially
+                if s.contains("\\\"") || s.contains("\\'") {
+                    // The string already has escaped quotes, don't double-escape
+                    // Just escape newlines and tabs, but preserve the existing quote escaping
+                    let escaped = s.replace("\n", "\\n")
+                                  .replace("\t", "\\t")
+                                  .replace("\r", "\\r");
+                    format!("\"{}\"", escaped)
                 } else {
-                    // Regular variable
-                    format!("${}", var)
+                    // Normal case, escape as-is
+                    format!("\"{}\"", generator.escape_perl_string(s))
+                }
+            },
+            StringPart::Variable(var) => {
+                // Handle special shell variables
+                match var.as_str() {
+                    "#" => "scalar(@ARGV)".to_string(),  // $# -> scalar(@ARGV) for argument count
+                    "@" => "@ARGV".to_string(),          // $@ -> @ARGV for arguments array
+                    "*" => "@ARGV".to_string(),          // $* -> @ARGV for arguments array
+                    _ => {
+                        // Check if this is a shell positional parameter ($1, $2, etc.)
+                        if var.chars().all(|c| c.is_digit(10)) {
+                            // Convert $1 to $_[0], $2 to $_[1], etc.
+                            let index = var.parse::<usize>().unwrap_or(0);
+                            format!("$_[{}]", index - 1) // Perl arrays are 0-indexed
+                        } else {
+                            // Regular variable
+                            format!("${}", var)
+                        }
+                    }
                 }
             },
             StringPart::MapAccess(map_name, key) => {

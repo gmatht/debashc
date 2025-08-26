@@ -31,10 +31,10 @@ pub fn generate_tr_command(generator: &mut Generator, cmd: &SimpleCommand, input
         
         if delete_mode {
             // Delete characters in set1
-            output.push_str(&format!("$line =~ tr/{}/d;\n", set1));
+            output.push_str(&format!("$line =~ tr/{}/d/;\n", set1));
         } else if squeeze_mode {
             // Squeeze repeated characters in set1
-            output.push_str(&format!("$line =~ tr/{}/s;\n", set1));
+            output.push_str(&format!("$line =~ tr/{}/s/;\n", set1));
         } else {
             // Translate characters from set1 to set2
             output.push_str(&format!("$line =~ tr/{}/{}/;\n", set1, set2));

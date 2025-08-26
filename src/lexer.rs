@@ -156,30 +156,30 @@ pub enum Token {
     DollarBrace,
     #[token("$(")]
     DollarParen,
-    #[token("$#")]
+    #[token("$#", priority = 3)]
     DollarHashSimple,
-    #[token("$@")]
+    #[token("$@", priority = 3)]
     DollarAtSimple,
-    #[token("$*")]
+    #[token("$*", priority = 3)]
     DollarStarSimple,
     // Backtick token not currently used
     #[token("`", priority = 1)]
     _Backtick, // Unused variant, prefixed with underscore
-    #[token("${#")]
+    #[token("${#", priority = 3)]
     DollarBraceHash,
-    #[token("${!")]
+    #[token("${!", priority = 3)]
     DollarBraceBang,
-    #[token("${*")]
+    #[token("${*", priority = 3)]
     DollarBraceStar,
-    #[token("${@")]
+    #[token("${@", priority = 3)]
     DollarBraceAt,
-    #[token("${#*")]
+    #[token("${#*", priority = 3)]
     DollarBraceHashStar,
-    #[token("${#@")]
+    #[token("${#@", priority = 3)]
     DollarBraceHashAt,
-    #[token("${!*")]
+    #[token("${!*", priority = 3)]
     DollarBraceBangStar,
-    #[token("${!@")]
+    #[token("${!@", priority = 3)]
     DollarBraceBangAt,
 
     // Arithmetic

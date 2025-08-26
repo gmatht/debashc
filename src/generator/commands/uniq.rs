@@ -23,7 +23,7 @@ pub fn generate_uniq_command(generator: &mut Generator, cmd: &SimpleCommand, inp
         output.push_str("}\n");
         output.push_str("my @result;\n");
         output.push_str("foreach my $line (keys %counts) {\n");
-        output.push_str("push @result, sprintf(\"%7d %s\", $counts{$line}, $line);\n");
+        output.push_str("push @result, sprintf(\"%d %s\", $counts{$line}, $line);\n");
         output.push_str("}\n");
         output.push_str(&format!("{} = join(\"\\n\", @result);\n", input_var));
     } else {
