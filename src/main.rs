@@ -1301,10 +1301,11 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
     let shell_success = shell_output.status.success();
     let _trans_success = translated_output.status.success();
 
-    // Determine success based on exit status matching
-    // If both programs have the same exit status, that's success
-    // If both failed (exit status != 0), that's also success since behavior matches
-    let success = shell_success == _trans_success;
+    // Determine success based on exit status AND output matching
+    // Both exit status and output must match for success
+    let success = shell_success == _trans_success && 
+                  shell_stdout == trans_stdout && 
+                  shell_stderr == trans_stderr;
 
     // Cleanup temp files
     
