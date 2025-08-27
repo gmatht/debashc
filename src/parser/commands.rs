@@ -174,8 +174,13 @@ impl Parser {
                     self.parse_pipeline()?
                 }
             } else {
-                // Check if this is an array assignment: identifier=(...)
-                if matches!(paren1, Some(Token::Assign)) && matches!(self.lexer.peek_n(2), Some(Token::ParenOpen)) {
+                // Check if this is an associative array assignment: identifier[key]=value
+                let mut pos = 1;
+                while pos < 10 && matches!(self.lexer.peek_n(pos), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
+                    pos += 1;
+                }
+                eprintln!("DEBUG: Checking for associative array assignment at pos {}: {:?} and {:?}", pos, self.lexer.peek_n(pos), self.lexer.peek_n(pos + 1));
+                if matches!(self.lexer.peek_n(pos), Some(Token::CasePattern)) && matches!(self.lexer.peek_n(pos + 1), Some(Token::Assign)) {
                                     // This is an array assignment, parse it directly
                 let var_name = self.lexer.get_identifier_text()?;
                 // get_identifier_text() already advanced past the identifier

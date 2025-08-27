@@ -68,12 +68,26 @@ pub fn generate_builtin_command_impl(generator: &mut Generator, cmd: &BuiltinCom
                 let val = generator.perl_string_literal(value);
                 // For associative array assignments, generate $array{key} = value instead of $ENV{var}
                 output.push_str(&format!("${}{{{}}} = {};\n", array_name, key, val));
-            } else if let Some(elements) = generator.extract_array_elements(value) {
-                // Check if this is an indexed array assignment like arr=(one two three)
-                let elements_perl: Vec<String> = elements.iter()
-                    .map(|s| format!("\"{}\"", generator.escape_perl_string(s)))
-                    .collect();
-                output.push_str(&format!("@{} = ({});\n", var, elements_perl.join(", ")));
+            } else if let Word::Literal(s) = value {
+                if let Some(elements) = generator.extract_array_elements(s) {
+                    // Check if this is an indexed array assignment like arr=(one two three)
+                    let elements_perl: Vec<String> = elements.iter()
+                        .map(|s| format!("\"{}\"", generator.escape_perl_string(s)))
+                        .collect();
+                    output.push_str(&format!("@{} = ({});\n", var, elements_perl.join(", ")));
+                } else {
+                    // Regular string assignment
+                    let val = generator.perl_string_literal(value);
+                    // Declare the variable if it's not already declared
+                    if !generator.declared_locals.contains(var) {
+                        output.push_str(&format!("my ${} = {};\n", var, val));
+                        generator.declared_locals.insert(var.clone());
+                    } else {
+                        // Variable already declared, just assign the value
+                        output.push_str(&format!("${} = {};\n", var, val));
+                    }
+                    output.push_str(&format!("local $ENV{{{}}} = {};;\n", var, val));
+                }
             } else {
                 let val = generator.perl_string_literal(value);
                 // Declare the variable if it's not already declared
