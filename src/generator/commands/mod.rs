@@ -85,3 +85,11 @@ pub use mv::*;
 pub use touch::*;
 pub use head::*;
 pub use tail::*;
+
+// Re-export _impl functions to fix linking issues
+pub use simple_commands::generate_simple_command_impl;
+pub use pipeline_commands::generate_pipeline_impl;
+pub use subshell_commands::generate_subshell_impl;
+pub use subshell_commands::generate_background_impl;
+pub use system_commands::generate_command_string_for_system_impl;
+pub use utilities::escape_perl_string;

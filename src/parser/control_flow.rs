@@ -794,6 +794,7 @@ pub fn parse_block(parser: &mut Parser) -> Result<Command, ParserError> {
     Ok(Command::Block(Block { commands: body_commands }))
 }
 
+#[allow(dead_code)]
 pub fn parse_break_statement(parser: &mut Parser) -> Result<Command, ParserError> {
     parser.lexer.consume(Token::Break)?;
     
