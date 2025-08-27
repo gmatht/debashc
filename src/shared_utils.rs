@@ -6,43 +6,7 @@ pub struct SharedUtils;
 impl SharedUtils {
     // Removed unused parse functions to simplify code
 
-    /// Convert glob pattern to regex pattern
-    pub fn convert_glob_to_regex(pattern: &str) -> String {
-        let mut result = String::new();
-        let mut chars = pattern.chars().peekable();
-        
-        while let Some(ch) = chars.next() {
-            match ch {
-                '.' => result.push_str("\\."),
-                '*' => result.push_str(".*"),
-                '?' => result.push_str("."),
-                '[' => {
-                    result.push(ch);
-                    // Handle character classes
-                    while let Some(&next_ch) = chars.peek() {
-                        if next_ch == ']' {
-                            result.push(chars.next().unwrap());
-                            break;
-                        }
-                        result.push(chars.next().unwrap());
-                    }
-                }
-                ']' => result.push(ch),
-                '(' => result.push_str("\\("),
-                ')' => result.push_str("\\)"),
-                '|' => result.push_str("\\|"),
-                '^' => result.push_str("\\^"),
-                '$' => result.push_str("\\$"),
-                '+' => result.push_str("\\+"),
-                '\\' => result.push_str("\\\\"),
-                _ => result.push(ch),
-            }
-        }
-        
-        result
-    }
-
-    // Removed unused convert_extglob_to_regex function
+    /// Convert glob pattern to regex pattern    // Removed unused convert_extglob_to_regex function
 
     // Removed unused expand_brace_expression function
 
