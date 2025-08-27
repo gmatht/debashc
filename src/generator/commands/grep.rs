@@ -19,13 +19,16 @@ pub fn generate_grep_command(generator: &mut Generator, cmd: &SimpleCommand, inp
             _ => generator.word_to_perl(pattern)
         };
         
+        output.push_str(&generator.indent());
         output.push_str(&format!("my @lines = split(/\\n/, {});\n", input_var));
         // Escape the pattern for Perl regex
         // For patterns like "\.txt$", the backslash is escaping the dot in shell
         // In Perl regex, we need to escape the dot with a single backslash
         // So "\.txt$" should become "\.txt$" (no escaping needed)
         let escaped_pattern = pattern_str.to_string();
+        output.push_str(&generator.indent());
         output.push_str(&format!("my @filtered = grep /{}/, @lines;\n", escaped_pattern));
+        output.push_str(&generator.indent());
         output.push_str(&format!("{} = join(\"\\n\", @filtered);\n", input_var));
     }
     output.push_str("\n");

@@ -62,7 +62,9 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
     let mut output = String::new();
     let has_env = !cmd.env_vars.is_empty() && cmd.name != "true";
     if has_env {
+        output.push_str(&generator.indent());
         output.push_str("{\n");
+        generator.indent_level += 1;
         for (var, value) in &cmd.env_vars {
             // Check if this is an associative array assignment like map[foo]=bar
             if let Some((array_name, key)) = generator.extract_array_key(var) {
@@ -70,6 +72,7 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
                 // For associative array assignments, generate $array{key} = value instead of $ENV{var}
                 // Quote the key to avoid bareword errors in strict mode
                 let quoted_key = format!("\"{}\"", generator.escape_perl_string(&key));
+                output.push_str(&generator.indent());
                 output.push_str(&format!("${}{{{}}} = {};\n", array_name, quoted_key, val));
             } else if let Word::Literal(s) = value {
                 if let Some(elements) = generator.extract_array_elements(s) {
@@ -77,18 +80,22 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
                     let elements_perl: Vec<String> = elements.iter()
                         .map(|s| format!("\"{}\"", generator.escape_perl_string(s)))
                         .collect();
+                    output.push_str(&generator.indent());
                     output.push_str(&format!("@{} = ({});\n", var, elements_perl.join(", ")));
                 } else {
                     // Regular string assignment
                     let val = generator.perl_string_literal(value);
                     // Always assign the value, but only declare if not already declared
                     if !generator.declared_locals.contains(var) {
+                        output.push_str(&generator.indent());
                         output.push_str(&format!("my ${} = {};\n", var, val));
                         generator.declared_locals.insert(var.clone());
                     } else {
                         // Variable already declared, just assign the value
+                        output.push_str(&generator.indent());
                         output.push_str(&format!("${} = {};\n", var, val));
                     }
+                    output.push_str(&generator.indent());
                     output.push_str(&format!("local $ENV{{{}}} = {};;\n", var, val));
                 }
             } else {
@@ -96,15 +103,21 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
                 let val = generator.perl_string_literal(value);
                 // Always assign the value, but only declare if not already declared
                 if !generator.declared_locals.contains(var) {
+                    output.push_str(&generator.indent());
                     output.push_str(&format!("my ${} = {};\n", var, val));
                     generator.declared_locals.insert(var.clone());
                 } else {
                     // Variable already declared, just assign the value
+                    output.push_str(&generator.indent());
                     output.push_str(&format!("${} = {};\n", var, val));
                 }
+                output.push_str(&generator.indent());
                 output.push_str(&format!("local $ENV{{{}}} = {};;\n", var, val));
             }
         }
+        generator.indent_level -= 1;
+        output.push_str(&generator.indent());
+        output.push_str("}\n");
     }
 
     // Pre-process process substitution and here-string redirects to create temporary files
@@ -119,6 +132,7 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
                 let global_counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
                 let temp_file = format!("/tmp/process_sub_{}_{}.tmp", global_counter, temp_file_counter);
                 let temp_var = format!("temp_file_ps_{}_{}", global_counter, temp_file_counter);
+                output.push_str(&generator.indent());
                 output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
                 
                 // Generate the command for system call
@@ -128,7 +142,9 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
                 let _clean_cmd = cmd_str.replace('\n', " ").replace("  ", " ");
                 // Use proper Perl system call syntax with list form to avoid shell interpretation
                 let fh_var = format!("fh_ps_{}_{}", global_counter, temp_file_counter);
+                output.push_str(&generator.indent());
                 output.push_str(&format!("open(my ${}, '>', ${}) or die \"Cannot create temp file: $!\\n\";\n", fh_var, temp_var));
+                output.push_str(&generator.indent());
                 output.push_str(&format!("close(${});\n", fh_var));
                 // For now, just create the file - the actual command execution would need more complex handling
                 process_sub_files.push((temp_var, temp_file));
@@ -139,6 +155,7 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
                 let global_counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
                 let temp_file = format!("/tmp/process_sub_out_{}_{}.tmp", global_counter, temp_file_counter);
                 let temp_var = format!("temp_file_out_{}_{}", global_counter, temp_file_counter);
+                output.push_str(&generator.indent());
                 output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
                 process_sub_files.push((temp_var, temp_file));
             }
@@ -149,13 +166,17 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
                 let global_counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
                 let temp_file = format!("/tmp/here_string_{}_{}.tmp", global_counter, temp_file_counter);
                 let temp_var = format!("temp_file_hs_{}_{}", global_counter, temp_file_counter);
+                output.push_str(&generator.indent());
                 output.push_str(&format!("my ${} = '{}';\n", temp_var, temp_file));
                 
                 // Create the temporary file with the here-string content
                 if let Some(content) = &redir.heredoc_body {
                     let fh_var = format!("fh_hs_{}_{}", global_counter, temp_file_counter);
+                    output.push_str(&generator.indent());
                     output.push_str(&format!("open(my ${}, '>', ${}) or die \"Cannot create temp file: $!\\n\";\n", fh_var, temp_var));
+                    output.push_str(&generator.indent());
                     output.push_str(&format!("print ${} {};\n", fh_var, generator.perl_string_literal(&Word::Literal(content.clone()))));
+                    output.push_str(&generator.indent());
                     output.push_str(&format!("close(${});\n", fh_var));
                 }
                 
@@ -169,6 +190,7 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
     if cmd.name == "echo" {
         // Special handling for echo command
         if cmd.args.is_empty() {
+            output.push_str(&generator.indent());
             output.push_str("print \"\\n\";\n");
         } else {
             let args: Vec<String> = cmd.args.iter()
@@ -217,10 +239,12 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
             
             // Use proper Perl print statement formatting
             if args.len() == 1 {
+                output.push_str(&generator.indent());
                 output.push_str(&format!("print {}, \"\\n\";\n", args[0]));
             } else {
                 // For multiple arguments, use comma separation for proper Perl syntax
                 let args_str = args.join(", ");
+                output.push_str(&generator.indent());
                 output.push_str(&format!("print {}, \"\\n\";\n", args_str));
             }
         }
@@ -236,9 +260,11 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
                     if !generator.declared_locals.contains(var) {
                         // For now, assume this is a loop variable or already in scope
                         // and just assign to it without redeclaring
+                        output.push_str(&generator.indent());
                         output.push_str(&format!("${} = {};\n", var, perl_expr));
                     } else {
                         // Variable already declared, just assign the value
+                        output.push_str(&generator.indent());
                         output.push_str(&format!("${} = {};\n", var, perl_expr));
                     }
                 },
@@ -248,9 +274,11 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
                     if !generator.declared_locals.contains(var) {
                         // For now, assume this is a loop variable or already in scope
                         // and just assign to it without redeclaring
+                        output.push_str(&generator.indent());
                         output.push_str(&format!("${} = {};\n", var, val));
                     } else {
                         // Variable already declared, just assign the value
+                        output.push_str(&generator.indent());
                         output.push_str(&format!("${} = {};\n", var, val));
                     }
                 }
@@ -269,28 +297,28 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
         } else if generator.declared_functions.contains(cmd_name) {
             // Check if this is a function call
             if cmd.args.is_empty() {
+                output.push_str(&generator.indent());
                 output.push_str(&format!("{}();\n", cmd_name));
             } else {
                 let args: Vec<String> = cmd.args.iter()
                     .map(|arg| generator.word_to_perl(arg))
                     .collect();
+                output.push_str(&generator.indent());
                 output.push_str(&format!("{}({});\n", cmd_name, args.join(", ")));
             }
         } else {
             // Fallback to system call
             if cmd.args.is_empty() {
+                output.push_str(&generator.indent());
                 output.push_str(&format!("system('{}');\n", cmd_name));
             } else {
                 let args: Vec<String> = cmd.args.iter()
                     .map(|arg| generator.word_to_perl(arg))
                     .collect();
+                output.push_str(&generator.indent());
                 output.push_str(&format!("system('{}', {});\n", cmd_name, args.join(", ")));
             }
         }
-    }
-
-    if has_env {
-        output.push_str("}\n");
     }
 
     output

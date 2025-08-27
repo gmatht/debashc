@@ -64,6 +64,7 @@ pub fn generate_pipeline_impl(generator: &mut Generator, pipeline: &Pipeline) ->
                 // Use the dedicated ls command function, but ensure it sets the pipeline variable
                 output.push_str(&generator.indent());
                 output.push_str(&generate_ls_command(generator, cmd));
+                output.push_str(&generator.indent());
                 output.push_str("my $output = join(\"\\n\", @ls_files);\n");
             } else {
                 // First command - capture its output using system command

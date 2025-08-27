@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::generator::Generator;
 
-pub fn generate_sort_command(_generator: &mut Generator, cmd: &SimpleCommand, input_var: &str) -> String {
+pub fn generate_sort_command(generator: &mut Generator, cmd: &SimpleCommand, input_var: &str) -> String {
     let mut output = String::new();
     
     let mut numeric = false;
@@ -21,21 +21,32 @@ pub fn generate_sort_command(_generator: &mut Generator, cmd: &SimpleCommand, in
         }
     }
     
+    output.push_str(&generator.indent());
     output.push_str(&format!("my @lines = split(/\\n/, {});\n", input_var));
     if numeric {
         // For numeric sort, extract the first field (number) and sort by that
         // Use the entire line as secondary sort key for stable sort behavior
+        output.push_str(&generator.indent());
         output.push_str("my @sorted = sort { \n");
+        generator.indent_level += 1;
+        output.push_str(&generator.indent());
         output.push_str("    my $a_num = (split(/\\s+/, $a))[0] || 0;\n");
+        output.push_str(&generator.indent());
         output.push_str("    my $b_num = (split(/\\s+/, $b))[0] || 0;\n");
+        output.push_str(&generator.indent());
         output.push_str("    $a_num <=> $b_num || $a cmp $b;\n");
+        generator.indent_level -= 1;
+        output.push_str(&generator.indent());
         output.push_str("} @lines;\n");
     } else {
+        output.push_str(&generator.indent());
         output.push_str("my @sorted = sort @lines;\n");
     }
     if reverse {
+        output.push_str(&generator.indent());
         output.push_str("@sorted = reverse(@sorted);\n");
     }
+    output.push_str(&generator.indent());
     output.push_str(&format!("{} = join(\"\\n\", @sorted);\n", input_var));
     output.push_str("\n");
     

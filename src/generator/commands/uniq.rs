@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::generator::Generator;
 
-pub fn generate_uniq_command(_generator: &mut Generator, cmd: &SimpleCommand, input_var: &str) -> String {
+pub fn generate_uniq_command(generator: &mut Generator, cmd: &SimpleCommand, input_var: &str) -> String {
     let mut output = String::new();
     
     let mut count = false;
@@ -15,23 +15,45 @@ pub fn generate_uniq_command(_generator: &mut Generator, cmd: &SimpleCommand, in
         }
     }
     
+    output.push_str(&generator.indent());
     output.push_str(&format!("my @lines = split(/\\n/, {});\n", input_var));
     if count {
+        output.push_str(&generator.indent());
         output.push_str("my %counts;\n");
+        output.push_str(&generator.indent());
         output.push_str("foreach my $line (@lines) {\n");
+        generator.indent_level += 1;
+        output.push_str(&generator.indent());
         output.push_str("$counts{$line}++;\n");
+        generator.indent_level -= 1;
+        output.push_str(&generator.indent());
         output.push_str("}\n");
+        output.push_str(&generator.indent());
         output.push_str("my @result;\n");
+        output.push_str(&generator.indent());
         output.push_str("foreach my $line (keys %counts) {\n");
+        generator.indent_level += 1;
+        output.push_str(&generator.indent());
         output.push_str("push @result, sprintf(\"%7d %s\", $counts{$line}, $line);\n");
+        generator.indent_level -= 1;
+        output.push_str(&generator.indent());
         output.push_str("}\n");
+        output.push_str(&generator.indent());
         output.push_str(&format!("{} = join(\"\\n\", @result);\n", input_var));
     } else {
+        output.push_str(&generator.indent());
         output.push_str("my %seen;\n");
+        output.push_str(&generator.indent());
         output.push_str("my @result;\n");
+        output.push_str(&generator.indent());
         output.push_str("foreach my $line (@lines) {\n");
+        generator.indent_level += 1;
+        output.push_str(&generator.indent());
         output.push_str("push @result, $line unless $seen{$line}++;\n");
+        generator.indent_level -= 1;
+        output.push_str(&generator.indent());
         output.push_str("}\n");
+        output.push_str(&generator.indent());
         output.push_str(&format!("{} = join(\"\\n\", @result);\n", input_var));
     }
     output.push_str("\n");
