@@ -240,7 +240,12 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
             // Use proper Perl print statement formatting
             if args.len() == 1 {
                 output.push_str(&generator.indent());
-                output.push_str(&format!("print {}, \"\\n\";\n", args[0]));
+                // Check if this is a simple string literal that we can optimize
+                if let Some(optimized_arg) = generator.optimize_string_with_newline(&args[0]) {
+                    output.push_str(&format!("print {};\n", optimized_arg));
+                } else {
+                    output.push_str(&format!("print {}, \"\\n\";\n", args[0]));
+                }
             } else {
                 // For multiple arguments, use comma separation for proper Perl syntax
                 let args_str = args.join(", ");

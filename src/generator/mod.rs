@@ -201,4 +201,20 @@ impl Generator {
     pub fn escape_perl_string(&self, s: &str) -> String {
         commands::utilities::escape_perl_string(s)
     }
+
+    /// Optimizes a string argument by appending a newline if it's a simple string literal
+    pub fn optimize_string_with_newline(&self, arg: &str) -> Option<String> {
+        // Check if this is a simple quoted string that we can optimize
+        let trimmed = arg.trim();
+        if trimmed.starts_with("\"") && trimmed.ends_with("\"") {
+            // Extract the content between quotes
+            let content = &trimmed[1..trimmed.len()-1];
+            // Check if it doesn't already end with \n
+            if !content.ends_with("\\n") {
+                // Create optimized version with newline appended
+                return Some(format!("\"{}\\n\"", content));
+            }
+        }
+        None
+    }
 }
