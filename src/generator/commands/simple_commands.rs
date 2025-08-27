@@ -17,7 +17,7 @@ fn generate_command_specific(generator: &mut Generator, cmd: &SimpleCommand, inp
     
     match cmd_name.as_str() {
         "grep" => Some(super::grep::generate_grep_command(generator, cmd, default_input)),
-        "cat" => Some(super::cat::generate_cat_command(generator, cmd)),
+        "cat" => Some(super::cat::generate_cat_command(generator, cmd, &cmd.redirects)),
         "find" => Some(super::find::generate_find_command(generator, cmd)),
         "ls" => Some(super::ls::generate_ls_command(generator, cmd)),
         "wc" => Some(super::wc::generate_wc_command(generator, cmd, default_input)),

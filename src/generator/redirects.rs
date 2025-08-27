@@ -25,7 +25,7 @@ pub fn generate_redirect_impl(generator: &mut Generator, redirect: &Redirect) ->
                 // Create a temporary file with the heredoc content
                 output.push_str(&format!("my $temp_content = {};\n", generator.perl_string_literal(&Word::Literal(body.clone()))));
                 let fh = generator.get_unique_file_handle();
-                output.push_str(&format!("open(my {}, '>', '/tmp/heredoc_temp') or die \"Cannot create temp file: $!\\n\";\n", fh));
+                output.push_str(&format!("open(my ${}, '>', '/tmp/heredoc_temp') or die \"Cannot create temp file: $!\\n\";\n", fh));
                 output.push_str(&format!("print {} $temp_content;\n", fh));
                 output.push_str(&format!("close({});\n", fh));
                 output.push_str("open(STDIN, '<', '/tmp/heredoc_temp') or die \"Cannot open temp file: $!\\n\";\n");

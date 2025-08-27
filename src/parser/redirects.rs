@@ -79,17 +79,21 @@ fn parse_heredoc(lexer: &mut Lexer, target: &Word) -> Result<Option<String>, Par
         _ => return Err(ParserError::InvalidSyntax("Heredoc delimiter must be a literal string".to_string())),
     };
     
+    eprintln!("DEBUG: parse_heredoc called with delimiter: '{}'", delim);
     let mut body = String::new();
     let mut found_delim = false;
+    let mut at_line_start = true;
 
     // Skip to the next newline token
     while let Some(token) = lexer.peek() {
         match token {
             Token::Newline => {
+                eprintln!("DEBUG: Found newline, breaking to start content collection");
                 lexer.next(); // consume the newline
                 break;
             }
             _ => {
+                eprintln!("DEBUG: Skipping token: {:?}", token);
                 lexer.next(); // consume other tokens
             }
         }
@@ -97,37 +101,82 @@ fn parse_heredoc(lexer: &mut Lexer, target: &Word) -> Result<Option<String>, Par
 
     // Collect lines until we find the delimiter at start of line
     while let Some(token) = lexer.peek() {
+        eprintln!("DEBUG: Processing token: {:?}, at_line_start: {}, pos: {:?}", token, at_line_start, lexer.current_position());
         match token {
             Token::Newline => {
+                eprintln!("DEBUG: Found newline in content");
                 lexer.next(); // consume the newline
-                // Check if the next token is the delimiter
-                if let Some(Token::Identifier) = lexer.peek() {
-                    let next_word = lexer.get_current_text().unwrap_or_default();
-                    if next_word == delim {
-                        found_delim = true;
-                        break;
-                    }
-                }
+                at_line_start = true;
                 body.push('\n');
             }
             Token::Identifier => {
+                // This is part of the heredoc content, not a delimiter
                 let word = lexer.get_identifier_text()?;
-                if word == delim {
+                eprintln!("DEBUG: Adding identifier to body: '{}', at_line_start: {}, delimiter: '{}'", word, at_line_start, delim);
+                // Check if this identifier is the delimiter (at start of line)
+                if at_line_start && word == delim {
+                    eprintln!("DEBUG: Found delimiter at start of line, stopping");
                     found_delim = true;
+                    // Consume the delimiter token to prevent it from being parsed as a separate command
+                    lexer.next();
                     break;
                 }
+                // Also check if this is the delimiter at the end of content (fallback)
+                if word == delim {
+                    eprintln!("DEBUG: Found delimiter at end of content, stopping");
+                    found_delim = true;
+                    // Consume the delimiter token to prevent it from being parsed as a separate command
+                    lexer.next();
+                    break;
+                }
+                // Add newline before this word if we're not at line start and this is a new word
+                if !at_line_start {
+                    body.push('\n');
+                }
                 body.push_str(&word);
+                at_line_start = false;
+                lexer.next();
+            }
+            Token::Space => {
+                // Add spaces to the body
+                let text = lexer.get_current_text().unwrap_or_default();
+                eprintln!("DEBUG: Adding space token to body: '{}'", text);
+                body.push_str(&text);
+                at_line_start = false;
+                lexer.next();
+            }
+            Token::Tab => {
+                // Add tabs to the body
+                let text = lexer.get_current_text().unwrap_or_default();
+                eprintln!("DEBUG: Adding tab token to body: '{}'", text);
+                body.push_str(&text);
+                at_line_start = false;
+                lexer.next();
             }
             _ => {
                 // For any other token, just consume it and add to body
                 let text = lexer.get_current_text().unwrap_or_default();
+                eprintln!("DEBUG: Adding other token to body: '{}'", text);
+                // Only add space before this token if we're not at line start and the previous token was an identifier
+                // This prevents adding spaces between consecutive punctuation tokens
+                if !at_line_start && body.ends_with(|c: char| c.is_alphanumeric() || c == '_') {
+                    body.push(' ');
+                }
                 body.push_str(&text);
+                at_line_start = false;
                 lexer.next();
             }
         }
     }
 
+    eprintln!("DEBUG: Final heredoc body: '{}'", body);
     if found_delim {
+        // Ensure the heredoc body ends with a newline
+        if !body.ends_with('\n') {
+            body.push('\n');
+        }
+        // Skip any whitespace after the delimiter
+        lexer.skip_whitespace_and_comments();
         Ok(Some(body))
     } else {
         Ok(Some(String::new()))

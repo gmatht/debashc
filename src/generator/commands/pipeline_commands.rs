@@ -55,7 +55,7 @@ pub fn generate_pipeline_impl(generator: &mut Generator, pipeline: &Pipeline) ->
             if cmd_name == "cat" {
                 // Use the dedicated cat command function
                 output.push_str(&generator.indent());
-                output.push_str(&generate_cat_command(generator, cmd));
+                output.push_str(&generate_cat_command(generator, cmd, &cmd.redirects));
             } else if cmd_name == "find" {
                 // Use the dedicated find command function
                 output.push_str(&generator.indent());

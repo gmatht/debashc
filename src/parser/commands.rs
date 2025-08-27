@@ -33,115 +33,88 @@ impl Parser {
     }
 
     pub fn parse(&mut self) -> Result<Vec<Command>, ParserError> {
-        let mut commands = Vec::new();
+        let mut commands = vec![];
         
-        // Skip initial whitespace and comments
-        self.lexer.skip_whitespace_and_comments();
-        
-        // If the file contains only comments and whitespace, return empty commands
-        if self.lexer.is_eof() {
-            return Ok(commands);
+        // Skip initial whitespace but preserve newlines for proper command separation
+        let mut newline_count = 0;
+        loop {
+            match self.lexer.peek() {
+                Some(Token::Space) | Some(Token::Tab) | Some(Token::Comment) => {
+                    self.lexer.next();
+                }
+                Some(Token::Newline) => {
+                    newline_count += 1;
+                    self.lexer.next();
+                }
+                _ => break,
+            }
         }
         
         while !self.lexer.is_eof() {
-            // Progress guard to prevent hangs: ensure each loop consumes or advances tokens
-            let loop_start_pos = self.lexer.current_position();
+            let current_token = self.lexer.peek();
             
-            // Check if we're at EOF after skipping whitespace and comments
             if self.lexer.is_eof() {
                 break;
             }
             
-            // Check if we're at a newline/semicolon/& (empty command or separator)
-            if let Some(token) = self.lexer.peek() {
-                match token {
-                    Token::Newline => {
-                        // Consume consecutive newlines
-                        let mut count = 0usize;
-                        while matches!(self.lexer.peek(), Some(Token::Newline)) {
-                            self.lexer.next();
-                            count += 1;
-                        }
-                        // If two or more, record a blank line in AST
-                        if count >= 2 {
-                            commands.push(Command::BlankLine);
-                        }
-                        self.lexer.skip_whitespace_and_comments();
-                        continue;
-                    }
-                    Token::Semicolon | Token::CarriageReturn | Token::Background => {
-                        self.lexer.next();
-                        self.lexer.skip_whitespace_and_comments();
-                        continue;
-                    }
-                    _ => {}
-                }
-            }
-            
-            // Handle comments at the top level
-            while let Some(Token::Comment) = self.lexer.peek() {
+            // Check if we're at a newline before parsing the command
+            if let Some(Token::Newline) = self.lexer.peek() {
+                // Consume the newline and continue to next iteration
                 self.lexer.next();
-                self.lexer.skip_whitespace_and_comments();
-                if self.lexer.is_eof() {
-                    break;
-                }
-            }
-            
-            if self.lexer.is_eof() {
-                break;
+                continue;
             }
             
             let mut command = self.parse_command()?;
-
-            // Check if this command is followed by a pipeline or logical operator
-            if let Some(token) = self.lexer.peek() {
-                match token {
-                    Token::Pipe => {
-                        command = self.parse_pipeline_from_command(command)?;
-                    }
-                    Token::Or | Token::And => {
-                        command = self.parse_pipeline_from_command(command)?;
-                    }
-                    _ => {}
+            
+            if let Command::Simple(ref simple_cmd) = command {
+                if simple_cmd.name.as_literal().unwrap_or("") == "" && simple_cmd.args.is_empty() {
+                    // This is an empty command from a newline, skip it
+                    continue;
                 }
             }
-
-            // If a background '&' follows immediately, wrap the command
-            if let Some(Token::Background) = self.lexer.peek() {
-                self.lexer.next();
-                command = Command::Background(Box::new(command));
-            }
-
+            
             commands.push(command);
             
-            // Handle semicolons, newlines, and background '&'
-            let mut newline_count = 0usize;
-            while let Some(token) = self.lexer.peek() {
-                match token {
-                    Token::Semicolon | Token::Background => {
+            // Handle separators and comments after command
+            newline_count = 0;
+            loop {
+                match self.lexer.peek() {
+                    Some(Token::Space) | Some(Token::Tab) | Some(Token::Comment) => {
                         self.lexer.next();
                     }
-                    Token::Newline => {
-                        self.lexer.next();
+                    Some(Token::Newline) => {
                         newline_count += 1;
+                        self.lexer.next();
                     }
-                    _ => break,
+                    Some(Token::Semicolon) => {
+                        self.lexer.next();
+                        break;
+                    }
+                    Some(Token::Background) => {
+                        // Convert last command to background
+                        if let Some(last_command) = commands.pop() {
+                            commands.push(Command::Background(Box::new(last_command)));
+                        }
+                        self.lexer.next();
+                        // Skip whitespace and comments after & but preserve newlines
+                        loop {
+                            match self.lexer.peek() {
+                                Some(Token::Space) | Some(Token::Tab) | Some(Token::Comment) => {
+                                    self.lexer.next();
+                                }
+                                _ => break,
+                            }
+                        }
+                        break;
+                    }
+                    _ => {
+                        break;
+                    }
                 }
-            }
-            if newline_count >= 2 {
-                commands.push(Command::BlankLine);
             }
             
-            // Skip whitespace and comments before next command
-            self.lexer.skip_whitespace_and_comments();
-
-            // If no progress was made in this iteration, advance by one token to avoid infinite loop
-            let loop_end_pos = self.lexer.current_position();
-            if loop_end_pos == loop_start_pos {
-                // Consume one token defensively. If already EOF, break.
-                if self.lexer.next().is_none() {
-                    break;
-                }
+            if newline_count >= 2 {
+                commands.push(Command::BlankLine);
             }
         }
         
@@ -149,8 +122,16 @@ impl Parser {
     }
 
     pub fn parse_command(&mut self) -> Result<Command, ParserError> {
-        // Skip whitespace and comments
-        self.lexer.skip_whitespace_and_comments();
+        // Skip whitespace and comments, but NOT newlines
+        // Newlines need to be handled as command separators
+        while let Some(token) = self.lexer.peek() {
+            match token {
+                Token::Space | Token::Tab | Token::Comment => {
+                    self.lexer.next();
+                }
+                _ => break,
+            }
+        }
         
         if self.lexer.is_eof() {
             return Err(ParserError::UnexpectedEOF);
@@ -179,7 +160,6 @@ impl Parser {
                 while pos < 10 && matches!(self.lexer.peek_n(pos), Some(Token::Space | Token::Tab | Token::Comment | Token::Newline)) {
                     pos += 1;
                 }
-                eprintln!("DEBUG: Checking for associative array assignment at pos {}: {:?} and {:?}", pos, self.lexer.peek_n(pos), self.lexer.peek_n(pos + 1));
                 if matches!(self.lexer.peek_n(pos), Some(Token::CasePattern)) && matches!(self.lexer.peek_n(pos + 1), Some(Token::Assign)) {
                                     // This is an array assignment, parse it directly
                 let var_name = self.lexer.get_identifier_text()?;
@@ -234,10 +214,20 @@ impl Parser {
                 Some(Token::ParenOpen) => self.parse_subshell()?,
                 Some(Token::BraceOpen) => parse_block(self)?,
                 Some(Token::TestBracket) => self.parse_test_expression()?,
-                Some(Token::Semicolon) | Some(Token::Newline) | Some(Token::CarriageReturn) => {
+                Some(Token::Semicolon) => {
                     // Skip semicolon and continue parsing
                     self.lexer.next();
                     self.parse_command()?
+                }
+                Some(Token::Newline) | Some(Token::CarriageReturn) => {
+                    // Newlines should be handled at the top level, not here
+                    // Return an empty command to indicate we hit a newline
+                    return Ok(Command::Simple(SimpleCommand {
+                        name: Word::Literal("".to_string()),
+                        args: vec![],
+                        redirects: vec![],
+                        env_vars: HashMap::new(),
+                    }));
                 }
                 _ => self.parse_pipeline()?,
             }
@@ -478,6 +468,10 @@ impl Parser {
         while let Some(token) = self.lexer.peek() {
             match token {
                 Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn => {
+                    break;
+                }
+                Token::ParenClose => {
+                    // Stop parsing arguments when we hit a closing parenthesis
                     break;
                 }
                 Token::RedirectIn | Token::RedirectOut | Token::RedirectAppend | Token::RedirectInErr | Token::RedirectOutErr | Token::RedirectInOut | Token::Heredoc | Token::HeredocTabs | Token::HereString => {

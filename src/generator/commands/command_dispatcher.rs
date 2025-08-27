@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::generator::Generator;
+use super::cat::generate_cat_command;
 
 pub fn generate_command_impl(generator: &mut Generator, command: &Command) -> String {
     match command {
@@ -23,6 +24,24 @@ pub fn generate_command_impl(generator: &mut Generator, command: &Command) -> St
         Command::Return(value) => generator.generate_return_statement(value),
         Command::BlankLine => "\n".to_string(),
         Command::Redirect(redirect_cmd) => {
+            // Check if this is a cat command with heredocs
+            if let Command::Simple(cat_cmd) = &*redirect_cmd.command {
+                if let Word::Literal(cmd_name) = &cat_cmd.name {
+                    if cmd_name == "cat" {
+                        // Check if any of the redirects are heredocs
+                        let has_heredoc = redirect_cmd.redirects.iter().any(|r| {
+                            matches!(r.operator, RedirectOperator::Heredoc | RedirectOperator::HeredocTabs)
+                        });
+                        
+                        if has_heredoc {
+                            // Use the dedicated cat command generator for heredocs
+                            return generate_cat_command(generator, cat_cmd, &redirect_cmd.redirects);
+                        }
+                    }
+                }
+            }
+            
+            // Default redirect handling for other commands
             let mut result = generate_command_impl(generator, &redirect_cmd.command);
             for redirect in &redirect_cmd.redirects {
                 result.push_str(&generator.generate_redirect(redirect));

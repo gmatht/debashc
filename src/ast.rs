@@ -467,6 +467,14 @@ impl Word {
         }
     }
 
+    /// Get the literal value if this word is a literal, None otherwise
+    pub fn as_literal(&self) -> Option<&str> {
+        match self {
+            Word::Literal(s) => Some(s),
+            _ => None,
+        }
+    }
+
 
 
 
