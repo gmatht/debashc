@@ -52,7 +52,6 @@ pub use simple_commands::*;
 pub use pipeline_commands::*;
 pub use subshell_commands::*;
 pub use system_commands::*;
-pub use utilities::*;
 
 // Re-export individual command functions
 pub use grep::*;

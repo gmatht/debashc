@@ -9,8 +9,6 @@ pub mod utilities;
 pub mod errors;
 
 // Re-export the main Parser struct and error types
-pub use commands::Parser;
-pub use errors::ParserError;
 
 // Re-export the main parsing function
 
