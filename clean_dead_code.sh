@@ -147,28 +147,42 @@ if [ "$REMOVE_DEAD_CODE" = "true" ] || [ "$DRY_RUN" = "true" ]; then
     grep "never used" cargo_check_output.tmp | head -5
     
     # The file paths are on the next line after "never used" warnings
-    # Use a Windows-compatible approach with awk
-    files_to_process=$(awk '
-        /warning:.*never used/ {
-            # Read the next line to get the file path
-            getline next_line
-            if (next_line ~ /-->/) {
-                # Extract file path from the --> line
-                split(next_line, parts, "-->")
-                if (length(parts) >= 2) {
-                    # Extract just the file path part (before the colon)
-                    split(parts[2], file_parts, ":")
-                    if (length(file_parts) >= 1) {
-                        # Clean up the file path
-                        gsub(/^[[:space:]]+|[[:space:]]+$/, "", file_parts[1])
-                        if (file_parts[1] ~ /^src/) {
-                            print file_parts[1]
-                        }
-                    }
-                }
-            }
-        }
-    ' cargo_check_output.tmp | sort -u)
+    # Use a simple Python script for reliable parsing
+    cat > /tmp/extract_file_paths.py << 'EOF'
+import re
+import sys
+
+def extract_file_paths():
+    try:
+        with open('cargo_check_output.tmp', 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        lines = content.split('\n')
+        file_paths = set()
+        
+        for i, line in enumerate(lines):
+            if 'warning:' in line and 'never used' in line:
+                # Look at the next line for the file path
+                if i + 1 < len(lines):
+                    next_line = lines[i + 1]
+                    if '-->' in next_line:
+                        # Extract file path from --> line
+                        match = re.search(r'--> (.+?):', next_line)
+                        if match:
+                            file_path = match.group(1).strip()
+                            if file_path.startswith('src'):
+                                file_paths.add(file_path)
+        
+        return '\n'.join(sorted(file_paths))
+    except Exception as e:
+        print(f'Error: {e}', file=sys.stderr)
+        return ''
+
+if __name__ == '__main__':
+    print(extract_file_paths())
+EOF
+
+    files_to_process=$(python3 /tmp/extract_file_paths.py)
     
     echo -e "${BLUE}  Extracted file paths:${NC}"
     echo "$files_to_process"
@@ -195,35 +209,50 @@ if [ "$REMOVE_DEAD_CODE" = "true" ] || [ "$DRY_RUN" = "true" ]; then
                 # Get functions to remove from this file - handle Windows paths properly
                 echo -e "${BLUE}    Looking for functions in: $file_path${NC}"
                 
-                # Use a Windows-compatible approach to extract functions from this specific file
-                functions_to_remove=$(awk -v target_file="$file_path" '
-                    /warning:.*never used/ {
-                        # Read the next line to get the file path
-                        getline next_line
-                        if (next_line ~ /-->/) {
-                            # Extract file path from the --> line
-                            split(next_line, parts, "-->")
-                            if (length(parts) >= 2) {
-                                # Extract just the file path part (before the colon)
-                                split(parts[2], file_parts, ":")
-                                if (length(file_parts) >= 1) {
-                                    # Clean up the file path
-                                    gsub(/^[[:space:]]+|[[:space:]]+$/, "", file_parts[1])
-                                    # Check if this warning is for our target file
-                                    if (file_parts[1] == target_file) {
-                                        # Extract function name from the warning line
-                                        if ($0 ~ /`/) {
-                                            split($0, func_parts, "`")
-                                            if (length(func_parts) >= 2) {
-                                                print func_parts[2]
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                ' cargo_check_output.tmp)
+                # Use a simple Python script for reliable function extraction
+                cat > /tmp/extract_functions.py << 'EOF'
+import re
+import sys
+
+def extract_functions_for_file(target_file):
+    try:
+        with open('cargo_check_output.tmp', 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        lines = content.split('\n')
+        functions = []
+        
+        for i, line in enumerate(lines):
+            if 'warning:' in line and 'never used' in line:
+                # Look at the next line for the file path
+                if i + 1 < len(lines):
+                    next_line = lines[i + 1]
+                    if '-->' in next_line:
+                        # Extract file path from --> line
+                        match = re.search(r'--> (.+?):', next_line)
+                        if match:
+                            file_path = match.group(1).strip()
+                            if file_path == target_file:
+                                # Extract function name from the warning line
+                                func_match = re.search(r'`([^`]+)`', line)
+                                if func_match:
+                                    functions.append(func_match.group(1))
+        
+        return ' '.join(functions)
+    except Exception as e:
+        print(f'Error: {e}', file=sys.stderr)
+        return ''
+
+if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        print('Usage: python3 script.py <target_file>')
+        sys.exit(1)
+    
+    target_file = sys.argv[1]
+    print(extract_functions_for_file(target_file))
+EOF
+
+                functions_to_remove=$(python3 /tmp/extract_functions.py "$file_path")
                 
                 if [ -n "$functions_to_remove" ]; then
                     echo -e "${YELLOW}      Found functions to remove: $functions_to_remove${NC}"
@@ -234,7 +263,7 @@ if [ "$REMOVE_DEAD_CODE" = "true" ] || [ "$DRY_RUN" = "true" ]; then
                 if [ "$DRY_RUN" = "false" ] && [ -n "$functions_to_remove" ]; then
                     echo -e "${BLUE}    Removing functions: $functions_to_remove${NC}"
                     # Remove dead functions using Python
-                    python3 -c "
+                    cat > /tmp/remove_functions.py << 'EOF'
 import re
 import sys
 
@@ -249,23 +278,59 @@ def remove_dead_functions(file_path, functions_to_remove):
         if not func_name or func_name == file_path:
             continue
             
-        # Pattern to match function definitions (various Rust function syntaxes)
-        patterns = [
-            # pub fn func_name(...)
-            rf'(\s*)(pub\s+)?fn\s+{re.escape(func_name)}\s*\([^)]*\)\s*->\s*[^{]*\s*{{[^}}]*}}',
-            # fn func_name(...)
-            rf'(\s*)(pub\s+)?fn\s+{re.escape(func_name)}\s*\([^)]*\)\s*{{[^}}]*}}',
-            # pub fn func_name(...) -> Type
-            rf'(\s*)(pub\s+)?fn\s+{re.escape(func_name)}\s*\([^)]*\)\s*->\s*[^{]*\s*{{[^}}]*}}',
-            # fn func_name(...) -> Type
-            rf'(\s*)(pub\s+)?fn\s+{re.escape(func_name)}\s*\([^)]*\)\s*{{[^}}]*}}',
-        ]
+        # Find the start of the function
+        func_pattern = r'(\s*)(pub\s+)?fn\s+' + re.escape(func_name) + r'\s*\([^)]*\)(?:\s*->\s*[^{]*)?\s*\{'
+        match = re.search(func_pattern, content)
         
-        for pattern in patterns:
-            if re.search(pattern, content, re.DOTALL):
-                content = re.sub(pattern, '', content, flags=re.DOTALL)
-                removed_count += 1
-                break
+        if match:
+            start_pos = match.start()
+            
+            # Find the matching closing brace by counting braces
+            brace_count = 0
+            in_string = False
+            in_char = False
+            escape_next = False
+            
+            for i in range(start_pos, len(content)):
+                char = content[i]
+                
+                if escape_next:
+                    escape_next = False
+                    continue
+                
+                if char == '\\':
+                    escape_next = True
+                    continue
+                
+                if char == '"' and not in_char:
+                    in_string = not in_string
+                    continue
+                
+                if char == '\'' and not in_string:
+                    in_char = not in_char
+                    continue
+                
+                if in_string or in_char:
+                    continue
+                
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        # Found the end of the function
+                        end_pos = i + 1
+                        
+                        # Remove the function (including the newline after it)
+                        before_func = content[:start_pos]
+                        after_func = content[end_pos:]
+                        
+                        # Clean up extra whitespace and newlines
+                        after_func = re.sub(r'^\s*\n', '', after_func)
+                        
+                        content = before_func + after_func
+                        removed_count += 1
+                        break
     
     # Clean up extra blank lines
     content = re.sub(r'\n\s*\n\s*\n', '\n\n', content)
@@ -293,7 +358,9 @@ if __name__ == '__main__':
     except Exception as e:
         print(f'Error processing {file_path}: {e}')
         sys.exit(1)
-" "$file_path" $functions_to_remove || echo "    ⚠️  Python processing failed, skipping"
+EOF
+
+                    python3 /tmp/remove_functions.py "$file_path" $functions_to_remove || echo "    ⚠️  Python processing failed, skipping"
                 fi
             fi
         done
