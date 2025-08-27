@@ -18,16 +18,17 @@ pub fn generate_if_statement_impl(generator: &mut Generator, if_stmt: &IfStateme
     
     // Generate then branch
     generator.indent_level += 1;
-    output.push_str(&generator.indent());
     
     // Check if the then branch is a single command that doesn't need block wrapping
     match &*if_stmt.then_branch {
         Command::Block(block) if block.commands.len() == 1 => {
             // Single command in block - generate it directly without block wrapper
+            // The command will add its own indentation, so we don't add it here
             output.push_str(&generator.generate_command(&block.commands[0]));
         }
         _ => {
             // Multiple commands or complex structure - use block generation
+            output.push_str(&generator.indent());
             output.push_str(&generator.generate_command(&if_stmt.then_branch));
         }
     }
@@ -39,16 +40,17 @@ pub fn generate_if_statement_impl(generator: &mut Generator, if_stmt: &IfStateme
         output.push_str(&generator.indent());
         output.push_str("} else {\n");
         generator.indent_level += 1;
-        output.push_str(&generator.indent());
         
         // Check if the else branch is a single command that doesn't need block wrapping
         match &**else_branch {
             Command::Block(block) if block.commands.len() == 1 => {
                 // Single command in block - generate it directly without block wrapper
+                // The command will add its own indentation, so we don't add it here
                 output.push_str(&generator.generate_command(&block.commands[0]));
             }
             _ => {
                 // Multiple commands or complex structure - use block generation
+                output.push_str(&generator.indent());
                 output.push_str(&generator.generate_command(else_branch));
             }
         }
@@ -149,7 +151,6 @@ pub fn generate_while_loop_impl(generator: &mut Generator, while_loop: &WhileLoo
     
     // Generate body
     generator.indent_level += 1;
-    output.push_str(&generator.indent());
     output.push_str(&generator.generate_block_commands(&while_loop.body));
     generator.indent_level -= 1;
     
@@ -167,7 +168,28 @@ pub fn generate_for_loop_impl(generator: &mut Generator, for_loop: &ForLoop) -> 
     
     // Handle different types of for loop items
     let items: Vec<String> = for_loop.items.iter()
-        .map(|word| generator.word_to_perl(word))
+        .map(|word| {
+            // Special handling for for loop items to avoid quoting array variables
+            match word {
+                Word::StringInterpolation(interp) => {
+                    // Check if this is just a single array variable like "$@" or "$*"
+                    if interp.parts.len() == 1 {
+                        if let StringPart::Variable(var) = &interp.parts[0] {
+                            match var.as_str() {
+                                "@" => "@ARGV".to_string(),  // $@ -> @ARGV (no quotes)
+                                "*" => "@ARGV".to_string(),  // $* -> @ARGV (no quotes)
+                                _ => generator.word_to_perl(word)
+                            }
+                        } else {
+                            generator.word_to_perl(word)
+                        }
+                    } else {
+                        generator.word_to_perl(word)
+                    }
+                }
+                _ => generator.word_to_perl(word)
+            }
+        })
         .collect();
     output.push_str(&items.join(", "));
     
@@ -175,7 +197,6 @@ pub fn generate_for_loop_impl(generator: &mut Generator, for_loop: &ForLoop) -> 
     
     // Generate body
     generator.indent_level += 1;
-    output.push_str(&generator.indent());
     output.push_str(&generator.generate_block_commands(&for_loop.body));
     generator.indent_level -= 1;
     
@@ -289,7 +310,6 @@ pub fn indent_impl(generator: &Generator) -> String {
 pub fn generate_block_commands_impl(generator: &mut Generator, block: &Block) -> String {
     let mut output = String::new();
     for command in &block.commands {
-        output.push_str(&generator.indent());
         output.push_str(&generator.generate_command(command));
         if !output.ends_with('\n') {
             output.push('\n');

@@ -247,10 +247,43 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
                     output.push_str(&format!("print {}, \"\\n\";\n", args[0]));
                 }
             } else {
-                // For multiple arguments, use comma separation for proper Perl syntax
-                let args_str = args.join(", ");
-                output.push_str(&generator.indent());
-                output.push_str(&format!("print {}, \"\\n\";\n", args_str));
+                // For multiple arguments, try to create a single interpolated string
+                // Work with the original Word objects instead of processed strings
+                let mut combined_string = String::new();
+                let mut can_interpolate = true;
+                
+                for (i, word) in cmd.args.iter().enumerate() {
+                    if i > 0 {
+                        combined_string.push(' ');
+                    }
+                    
+                    match word {
+                        Word::Literal(s) => {
+                            // Add the literal text directly
+                            combined_string.push_str(s);
+                        }
+                        Word::Variable(var) => {
+                            // Add the variable for interpolation
+                            combined_string.push_str(&format!("${}", var));
+                        }
+                        _ => {
+                            // For other complex word types, fall back to concatenation
+                            can_interpolate = false;
+                            break;
+                        }
+                    }
+                }
+                
+                if can_interpolate {
+                    // Create a single interpolated string
+                    output.push_str(&generator.indent());
+                    output.push_str(&format!("print \"{}\\n\";\n", combined_string));
+                } else {
+                    // Fall back to the original comma-separated approach
+                    let args_str = args.join(", ");
+                    output.push_str(&generator.indent());
+                    output.push_str(&format!("print {}, \"\\n\";\n", args_str));
+                }
             }
         }
     } else if cmd.name == "true" && !cmd.env_vars.is_empty() && cmd.args.is_empty() {

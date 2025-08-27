@@ -188,31 +188,31 @@ pub fn generate_test_expression_impl(generator: &mut Generator, test_expr: &Test
         // String is not empty: [[ -n $var ]]
         let var = expr.replace("-n ", "").trim().to_string();
         format!("({} ne '')", var)
-    } else if expr.contains(" -f ") {
+    } else if expr.contains(" -f ") || expr.starts_with("-f ") {
         // File exists and is regular file: [[ -f $var ]]
         let var = expr.replace("-f ", "").trim().to_string();
         format!("-f {}", var)
-    } else if expr.contains(" -d ") {
+    } else if expr.contains(" -d ") || expr.starts_with("-d ") {
         // File exists and is directory: [[ -d $var ]]
         let var = expr.replace("-d ", "").trim().to_string();
         format!("-d {}", var)
-    } else if expr.contains(" -e ") {
+    } else if expr.contains(" -e ") || expr.starts_with("-e ") {
         // File exists: [[ -e $var ]]
         let var = expr.replace("-e ", "").trim().to_string();
         format!("-e {}", var)
-    } else if expr.contains(" -r ") {
+    } else if expr.contains(" -r ") || expr.starts_with("-r ") {
         // File is readable: [[ -r $var ]]
         let var = expr.replace("-r ", "").trim().to_string();
         format!("-r {}", var)
-    } else if expr.contains(" -w ") {
+    } else if expr.contains(" -w ") || expr.starts_with("-w ") {
         // File is writable: [[ -w $var ]]
         let var = expr.replace("-w ", "").trim().to_string();
         format!("-w {}", var)
-    } else if expr.contains(" -x ") {
+    } else if expr.contains(" -x ") || expr.starts_with("-x ") {
         // File is executable: [[ -x $var ]]
         let var = expr.replace("-x ", "").trim().to_string();
         format!("-x {}", var)
-    } else if expr.contains(" -s ") {
+    } else if expr.contains(" -s ") || expr.starts_with("-s ") {
         // File exists and has size greater than 0: [[ -s $var ]]
         let var = expr.replace("-s ", "").trim().to_string();
         format!("(-s {}) > 0", var)

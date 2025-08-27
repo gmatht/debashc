@@ -92,59 +92,50 @@ pub fn brace_item_to_word_impl(_generator: &Generator, item: &BraceItem) -> Word
 }
 
 pub fn convert_string_interpolation_to_perl_impl(generator: &Generator, interp: &StringInterpolation) -> String {
-    // Convert string interpolation to proper Perl string concatenation
-    let parts: Vec<String> = interp.parts.iter().map(|part| {
+    // Convert string interpolation to a single Perl interpolated string
+    let mut combined_string = String::new();
+    
+    for part in &interp.parts {
         match part {
             StringPart::Literal(s) => {
-                // Check if the string contains already escaped quotes
-                // If the string contains \" or \', we need to handle it specially
-                if s.contains("\\\"") || s.contains("\\'") {
-                    // The string already has escaped quotes, don't double-escape
-                    // Just escape newlines and tabs, but preserve the existing quote escaping
-                    let escaped = s.replace("\n", "\\n")
-                                  .replace("\t", "\\t")
-                                  .replace("\r", "\\r");
-                    format!("\"{}\"", escaped)
-                } else {
-                    // Normal case, escape as-is
-                    format!("\"{}\"", generator.escape_perl_string(s))
-                }
+                // Add the literal text directly to the interpolated string
+                combined_string.push_str(s);
             },
             StringPart::Variable(var) => {
                 // Handle special shell variables
                 match var.as_str() {
-                    "#" => "scalar(@ARGV)".to_string(),  // $# -> scalar(@ARGV) for argument count
-                    "@" => "@ARGV".to_string(),          // $@ -> @ARGV for arguments array
-                    "*" => "@ARGV".to_string(),          // $* -> @ARGV for arguments array
+                    "#" => combined_string.push_str("${scalar(@ARGV)}"),  // Complex expression needs ${...}
+                    "@" => combined_string.push_str("@ARGV"),          // Arrays don't need $ in interpolation
+                    "*" => combined_string.push_str("@ARGV"),          // Arrays don't need $ in interpolation
                     _ => {
                         // Check if this is a shell positional parameter ($1, $2, etc.)
                         if var.chars().all(|c| c.is_digit(10)) {
                             // Convert $1 to $_[0], $2 to $_[1], etc.
                             let index = var.parse::<usize>().unwrap_or(0);
-                            format!("$_[{}]", index - 1) // Perl arrays are 0-indexed
+                            combined_string.push_str(&format!("$_[{}]", index - 1)); // Perl arrays are 0-indexed
                         } else {
-                            // Regular variable
-                            format!("${}", var)
+                            // Regular variable - add directly for interpolation
+                            combined_string.push_str(&format!("${}", var));
                         }
                     }
                 }
             },
             StringPart::MapAccess(map_name, key) => {
                 if map_name == "map" {
-                    format!("$map{{{}}}", key)
+                    combined_string.push_str(&format!("$map{{{}}}", key));
                 } else {
-                    format!("${}{{{}}}", map_name, key)
+                    combined_string.push_str(&format!("${}{{{}}}", map_name, key));
                 }
             }
             _ => {
                 // Handle other StringPart variants by converting them to debug format for now
-                format!("{:?}", part)
+                combined_string.push_str(&format!("{:?}", part));
             }
         }
-    }).collect();
+    }
     
-    // Join with Perl concatenation operator
-    parts.join(" . ")
+    // Return as a single interpolated string
+    format!("\"{}\"", combined_string)
 }
 
 pub fn convert_arithmetic_to_perl_impl(_generator: &Generator, expr: &str) -> String {
