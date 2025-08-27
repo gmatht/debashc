@@ -19,7 +19,19 @@ pub fn generate_if_statement_impl(generator: &mut Generator, if_stmt: &IfStateme
     // Generate then branch
     generator.indent_level += 1;
     output.push_str(&generator.indent());
-    output.push_str(&generator.generate_command(&if_stmt.then_branch));
+    
+    // Check if the then branch is a single command that doesn't need block wrapping
+    match &*if_stmt.then_branch {
+        Command::Block(block) if block.commands.len() == 1 => {
+            // Single command in block - generate it directly without block wrapper
+            output.push_str(&generator.generate_command(&block.commands[0]));
+        }
+        _ => {
+            // Multiple commands or complex structure - use block generation
+            output.push_str(&generator.generate_command(&if_stmt.then_branch));
+        }
+    }
+    
     generator.indent_level -= 1;
     
     // Generate else branch if present
@@ -28,7 +40,19 @@ pub fn generate_if_statement_impl(generator: &mut Generator, if_stmt: &IfStateme
         output.push_str("} else {\n");
         generator.indent_level += 1;
         output.push_str(&generator.indent());
-        output.push_str(&generator.generate_command(else_branch));
+        
+        // Check if the else branch is a single command that doesn't need block wrapping
+        match &**else_branch {
+            Command::Block(block) if block.commands.len() == 1 => {
+                // Single command in block - generate it directly without block wrapper
+                output.push_str(&generator.generate_command(&block.commands[0]));
+            }
+            _ => {
+                // Multiple commands or complex structure - use block generation
+                output.push_str(&generator.generate_command(else_branch));
+            }
+        }
+        
         generator.indent_level -= 1;
     }
     

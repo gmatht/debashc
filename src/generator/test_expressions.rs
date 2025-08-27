@@ -191,79 +191,79 @@ pub fn generate_test_expression_impl(generator: &mut Generator, test_expr: &Test
     } else if expr.contains(" -f ") {
         // File exists and is regular file: [[ -f $var ]]
         let var = expr.replace("-f ", "").trim().to_string();
-        format!("(-f {})", var)
+        format!("-f {}", var)
     } else if expr.contains(" -d ") {
         // File exists and is directory: [[ -d $var ]]
         let var = expr.replace("-d ", "").trim().to_string();
-        format!("(-d {})", var)
+        format!("-d {}", var)
     } else if expr.contains(" -e ") {
         // File exists: [[ -e $var ]]
         let var = expr.replace("-e ", "").trim().to_string();
-        format!("(-e {})", var)
+        format!("-e {}", var)
     } else if expr.contains(" -r ") {
         // File is readable: [[ -r $var ]]
         let var = expr.replace("-r ", "").trim().to_string();
-        format!("(-r {})", var)
+        format!("-r {}", var)
     } else if expr.contains(" -w ") {
         // File is writable: [[ -w $var ]]
         let var = expr.replace("-w ", "").trim().to_string();
-        format!("(-w {})", var)
+        format!("-w {}", var)
     } else if expr.contains(" -x ") {
         // File is executable: [[ -x $var ]]
         let var = expr.replace("-x ", "").trim().to_string();
-        format!("(-x {})", var)
+        format!("-x {}", var)
     } else if expr.contains(" -s ") {
         // File exists and has size greater than 0: [[ -s $var ]]
         let var = expr.replace("-s ", "").trim().to_string();
-        format!("((-s {}) > 0)", var)
+        format!("(-s {}) > 0", var)
     } else if expr.contains(" -L ") {
         // File exists and is symbolic link: [[ -L $var ]]
         let var = expr.replace("-L ", "").trim().to_string();
-        format!("(-l {})", var)
+        format!("-l {}", var)
     } else if expr.contains(" -S ") {
         // File exists and is socket: [[ -S $var ]]
         let var = expr.replace("-S ", "").trim().to_string();
-        format!("(-S {})", var)
+        format!("-S {}", var)
     } else if expr.contains(" -p ") {
         // File exists and is named pipe: [[ -p $var ]]
         let var = expr.replace("-p ", "").trim().to_string();
-        format!("(-p {})", var)
+        format!("-p {}", var)
     } else if expr.contains(" -b ") {
         // File exists and is block device: [[ -b $var ]]
         let var = expr.replace("-b ", "").trim().to_string();
-        format!("(-b {})", var)
+        format!("-b {}", var)
     } else if expr.contains(" -c ") {
         // File exists and is character device: [[ -c $var ]]
         let var = expr.replace("-c ", "").trim().to_string();
-        format!("(-c {})", var)
+        format!("-c {}", var)
     } else if expr.contains(" -t ") {
         // File descriptor is terminal: [[ -t $var ]]
         let var = expr.replace("-t ", "").trim().to_string();
-        format!("(-t {})", var)
+        format!("-t {}", var)
     } else if expr.contains(" -u ") {
         // File exists and set-user-id bit is set: [[ -u $var ]]
         let var = expr.replace("-u ", "").trim().to_string();
-        format!("(-u {})", var)
+        format!("-u {}", var)
     } else if expr.contains(" -g ") {
         // File exists and set-group-id bit is set: [[ -g $var ]]
         let var = expr.replace("-g ", "").trim().to_string();
-        format!("(-g {})", var)
+        format!("-g {}", var)
     } else if expr.contains(" -k ") {
         // File exists and sticky bit is set: [[ -k $var ]]
         let var = expr.replace("-k ", "").trim().to_string();
-        format!("(-k {})", var)
+        format!("-k {}", var)
     } else if expr.contains(" -O ") {
         // File exists and is owned by effective user ID: [[ -O $var ]]
         let var = expr.replace("-O ", "").trim().to_string();
-        format!("(-O {})", var)
+        format!("-O {}", var)
     } else if expr.contains(" -G ") {
         // File exists and is owned by effective group ID: [[ -G $var ]]
         let var = expr.replace("-G ", "").trim().to_string();
-        format!("(-G {})", var)
+        format!("-G {}", var)
     } else if expr.contains(" -N ") {
         // File exists and has been modified since it was last read: [[ -N $var ]]
         let var = expr.replace("-N ", "").trim().to_string();
-        format!("(-N {})", var)
+        format!("-N {}", var)
     } else if expr.contains(" -h ") || expr.contains(" -L ") {
         // File exists and is symbolic link: [[ -h $var ]] or [[ -L $var ]]
         let var = if expr.contains("-h ") {
@@ -271,7 +271,7 @@ pub fn generate_test_expression_impl(generator: &mut Generator, test_expr: &Test
         } else {
             expr.replace("-L ", "").trim().to_string()
         };
-        format!("(-l {})", var)
+        format!("-l {}", var)
     } else if expr.contains(" -a ") {
         // Logical AND: [[ expr1 -a expr2 ]]
         let parts: Vec<&str> = expr.split(" -a ").collect();
