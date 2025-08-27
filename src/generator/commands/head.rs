@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::generator::Generator;
 
-pub fn generate_head_command(generator: &mut Generator, cmd: &SimpleCommand, input_var: &str) -> String {
+pub fn generate_head_command(_generator: &mut Generator, cmd: &SimpleCommand, input_var: &str) -> String {
     let mut output = String::new();
     
     // head command syntax: head [options] [file...]

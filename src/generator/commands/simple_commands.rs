@@ -94,7 +94,7 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
 
     // Pre-process process substitution and here-string redirects to create temporary files
     let mut process_sub_files = Vec::new();
-    let mut has_here_string = false;
+    let mut _has_here_string = false;
     let mut temp_file_counter = 0;
     for redir in &cmd.redirects {
         match &redir.operator {
@@ -129,7 +129,7 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
             }
             RedirectOperator::HereString => {
                 // Here-string: <<< content
-                has_here_string = true;
+                _has_here_string = true;
                 temp_file_counter += 1;
                 let global_counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
                 let temp_file = format!("/tmp/here_string_{}_{}.tmp", global_counter, temp_file_counter);

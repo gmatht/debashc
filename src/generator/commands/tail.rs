@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::generator::Generator;
 
-pub fn generate_tail_command(generator: &mut Generator, cmd: &SimpleCommand, input_var: &str) -> String {
+pub fn generate_tail_command(_generator: &mut Generator, cmd: &SimpleCommand, input_var: &str) -> String {
     let mut output = String::new();
     
     // tail command syntax: tail [options] [file...]

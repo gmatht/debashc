@@ -362,7 +362,7 @@ pub fn generate_test_command_impl(generator: &mut Generator, cmd: &SimpleCommand
 }
 
 // Helper methods for test expressions
-pub fn convert_extglob_to_perl_regex_impl(generator: &Generator, pattern: &str) -> String {
+pub fn convert_extglob_to_perl_regex_impl(_generator: &Generator, pattern: &str) -> String {
     // Convert extglob patterns to Perl regex
     let mut result = pattern.to_string();
     
@@ -398,7 +398,7 @@ pub fn convert_extglob_to_perl_regex_impl(generator: &Generator, pattern: &str) 
     result
 }
 
-pub fn convert_glob_to_regex_impl(generator: &Generator, pattern: &str) -> String {
+pub fn convert_glob_to_regex_impl(_generator: &Generator, pattern: &str) -> String {
     let mut result = pattern.to_string();
     
     // Escape regex special characters first
@@ -420,7 +420,7 @@ pub fn convert_glob_to_regex_impl(generator: &Generator, pattern: &str) -> Strin
     result
 }
 
-pub fn convert_test_args_to_expression_impl(generator: &Generator, args: &[Word]) -> TestExpression {
+pub fn convert_test_args_to_expression_impl(_generator: &Generator, args: &[Word]) -> TestExpression {
     // Convert test command arguments to a test expression string
     let mut expr_parts = Vec::new();
     

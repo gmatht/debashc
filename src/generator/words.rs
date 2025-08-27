@@ -46,7 +46,7 @@ pub fn word_to_perl_for_test_impl(generator: &mut Generator, word: &Word) -> Str
 }
 
 // Helper methods
-pub fn handle_range_expansion_impl(generator: &Generator, s: &str) -> String {
+pub fn handle_range_expansion_impl(_generator: &Generator, s: &str) -> String {
     let parts: Vec<&str> = s.split("..").collect();
     if parts.len() == 2 {
         if let (Ok(start), Ok(end)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
@@ -63,7 +63,7 @@ pub fn handle_range_expansion_impl(generator: &Generator, s: &str) -> String {
     }
 }
 
-pub fn handle_comma_expansion_impl(generator: &Generator, s: &str) -> String {
+pub fn handle_comma_expansion_impl(_generator: &Generator, s: &str) -> String {
     let parts: Vec<&str> = s.split(',').collect();
     if parts.len() > 1 {
         parts.join(" ")
@@ -83,7 +83,7 @@ pub fn handle_brace_expansion_impl(generator: &mut Generator, expansion: &BraceE
     }
 }
 
-pub fn brace_item_to_word_impl(generator: &Generator, item: &BraceItem) -> Word {
+pub fn brace_item_to_word_impl(_generator: &Generator, item: &BraceItem) -> Word {
     match item {
         BraceItem::Literal(s) => Word::Literal(s.clone()),
         BraceItem::Range(range) => Word::Literal(format!("{}..{}", range.start, range.end)),
@@ -147,7 +147,7 @@ pub fn convert_string_interpolation_to_perl_impl(generator: &Generator, interp: 
     parts.join(" . ")
 }
 
-pub fn convert_arithmetic_to_perl_impl(generator: &Generator, expr: &str) -> String {
+pub fn convert_arithmetic_to_perl_impl(_generator: &Generator, expr: &str) -> String {
     // Convert shell arithmetic expression to Perl syntax
     let result = expr.to_string();
     

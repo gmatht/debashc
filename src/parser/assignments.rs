@@ -92,7 +92,7 @@ pub fn parse_array_elements(lexer: &mut Lexer) -> Result<Vec<String>, ParserErro
                 lexer.next(); // consume )
                 break;
             }
-            Some(Token::Space) | Some(Token::ParenClose) | Some(Token::Tab) | Some(Token::Newline) => {
+            Some(Token::Space) | Some(Token::Tab) | Some(Token::Newline) => {
                 println!("DEBUG: Found whitespace/newline, adding current_element: '{}'", current_element);
                 if !current_element.is_empty() {
                     elements.push(current_element.trim().to_string());

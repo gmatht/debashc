@@ -1,5 +1,5 @@
 use wasm_bindgen::prelude::*;
-use crate::{Lexer, parser::Parser, Generator};
+use crate::{Lexer, parser::commands::Parser, Generator};
 
 #[wasm_bindgen]
 pub struct Debashc;

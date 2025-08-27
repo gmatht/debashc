@@ -5,7 +5,7 @@ pub fn generate_gzip_command(generator: &mut Generator, cmd: &SimpleCommand, inp
     let mut output = String::new();
     
     // gzip command syntax: gzip [options] [file]
-    let mut compress_mode = true; // Default to compression
+    let mut _compress_mode = true; // Default to compression
     let mut decompress_mode = false;
     let mut keep_original = false;
     let mut files = Vec::new();
@@ -16,7 +16,7 @@ pub fn generate_gzip_command(generator: &mut Generator, cmd: &SimpleCommand, inp
             match arg_str.as_str() {
                 "-d" | "--decompress" => {
                     decompress_mode = true;
-                    compress_mode = false;
+                    _compress_mode = false;
                 }
                 "-k" | "--keep" => keep_original = true,
                 "-f" | "--force" => {}, // Force overwrite (handled by gzip)

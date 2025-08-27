@@ -14,7 +14,7 @@ pub fn generate_wget_command(generator: &mut Generator, cmd: &SimpleCommand) -> 
             if let Word::Literal(arg_str) = arg {
                 if arg_str == "-O" {
                     // Output file option
-                    if let Some(next_arg) = cmd.args.iter().find(|&a| a == arg) {
+                    if let Some(_next_arg) = cmd.args.iter().find(|&a| a == arg) {
                         if let Some(idx) = cmd.args.iter().position(|a| a == arg) {
                             if idx + 1 < cmd.args.len() {
                                 output_file = generator.word_to_perl(&cmd.args[idx + 1]);

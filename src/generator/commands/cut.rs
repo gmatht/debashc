@@ -6,7 +6,7 @@ pub fn generate_cut_command(generator: &mut Generator, cmd: &SimpleCommand, inpu
     
     // cut command syntax: cut -d delimiter -f fields
     let mut delimiter = "\t".to_string(); // Default tab delimiter
-    let mut fields = "1".to_string(); // Default to first field
+    let mut _fields = "1".to_string(); // Default to first field
     
     // Parse cut options
     let mut i = 0;
@@ -19,7 +19,7 @@ pub fn generate_cut_command(generator: &mut Generator, cmd: &SimpleCommand, inpu
                 }
             } else if arg == "-f" && i + 1 < cmd.args.len() {
                 if let Some(next_arg) = cmd.args.get(i + 1) {
-                    fields = generator.word_to_perl(next_arg);
+                    _fields = generator.word_to_perl(next_arg);
                     i += 1; // Skip the fields argument
                 }
             }

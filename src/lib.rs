@@ -9,7 +9,7 @@ pub mod cmd;
 
 // Only export the main types to avoid conflicts
 pub use lexer::{Lexer, Token};
-pub use parser::Parser;
+pub use parser::commands::Parser;
 pub use parser::utilities::ParserUtilities;
 pub use ast::*;
 pub use generator::Generator;

@@ -5,7 +5,7 @@ pub fn generate_mv_command(generator: &mut Generator, cmd: &SimpleCommand) -> St
     let mut output = String::new();
     
     // mv command syntax: mv [options] source... destination
-    let mut force = false;
+    let mut _force = false;
     let mut sources = Vec::new();
     let mut destination = "".to_string();
     
@@ -13,7 +13,7 @@ pub fn generate_mv_command(generator: &mut Generator, cmd: &SimpleCommand) -> St
     for arg in &cmd.args {
         if let Word::Literal(arg_str) = arg {
             match arg_str.as_str() {
-                "-f" | "--force" => force = true,
+                "-f" | "--force" => _force = true,
                 _ => {
                     if !arg_str.starts_with('-') {
                         sources.push(generator.word_to_perl(arg));

@@ -40,7 +40,7 @@ pub fn generate_redirect_impl(generator: &mut Generator, redirect: &Redirect) ->
     output
 }
 
-pub fn generate_shopt_command_impl(generator: &mut Generator, cmd: &ShoptCommand) -> String {
+pub fn generate_shopt_command_impl(_generator: &mut Generator, cmd: &ShoptCommand) -> String {
     let mut output = String::new();
     
     // Handle shopt command for shell options

@@ -144,7 +144,7 @@ pub fn parse_word(lexer: &mut Lexer) -> Result<Word, ParserError> {
             
             Ok(Word::Literal(combined))
         }
-        Some(Token::Character) | Some(Token::NonZero) | Some(Token::Exists) | Some(Token::File) | Some(Token::Directory) | Some(Token::Readable) | Some(Token::Writable) | Some(Token::Executable) | Some(Token::Symlink) | Some(Token::SymlinkH) | Some(Token::PipeFile) | Some(Token::Socket) | Some(Token::Block) | Some(Token::SetGid) | Some(Token::Sticky) | Some(Token::SetUid) | Some(Token::Owned) | Some(Token::GroupOwned) | Some(Token::Modified) | Some(Token::Eq) | Some(Token::Ne) | Some(Token::Lt) | Some(Token::Le) | Some(Token::Gt) | Some(Token::Ge) | Some(Token::Zero) => {
+        Some(Token::Character) | Some(Token::NonZero) | Some(Token::SymlinkH) | Some(Token::PipeFile) | Some(Token::Socket) | Some(Token::Block) | Some(Token::SetGid) | Some(Token::Sticky) | Some(Token::SetUid) | Some(Token::Owned) | Some(Token::GroupOwned) | Some(Token::Modified) | Some(Token::Eq) | Some(Token::Ne) | Some(Token::Lt) | Some(Token::Le) | Some(Token::Gt) | Some(Token::Ge) | Some(Token::Zero) => {
             // Handle test operator tokens like -e, -f, -d, etc.
             // These are already complete flags, just get their text
             Ok(Word::Literal(lexer.get_raw_token_text()?))

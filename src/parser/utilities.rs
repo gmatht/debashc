@@ -217,7 +217,8 @@ impl ParserUtilities for Lexer {
     }
 
     fn offset_to_line_col(&mut self, offset: usize) -> (usize, usize) {
-        self.offset_to_line_col(offset)
+        // Delegate to the lexer's implementation
+        Lexer::offset_to_line_col(self, offset)
     }
 
     fn peek(&mut self) -> Option<Token> {

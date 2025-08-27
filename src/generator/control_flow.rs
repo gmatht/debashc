@@ -233,14 +233,14 @@ pub fn generate_block_impl(generator: &mut Generator, block: &Block) -> String {
     output
 }
 
-pub fn generate_break_statement_impl(generator: &Generator, level: &Option<String>) -> String {
+pub fn generate_break_statement_impl(_generator: &Generator, level: &Option<String>) -> String {
     match level {
         Some(level_str) => format!("last LABEL{};", level_str),
         None => "last;".to_string(),
     }
 }
 
-pub fn generate_continue_statement_impl(generator: &Generator, level: &Option<String>) -> String {
+pub fn generate_continue_statement_impl(_generator: &Generator, level: &Option<String>) -> String {
     match level {
         Some(level_str) => format!("next LABEL{};", level_str),
         None => "next;".to_string(),
