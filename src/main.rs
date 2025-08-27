@@ -209,7 +209,7 @@ fn run_shell_script(filename: &str) -> Result<std::process::Output, String> {
     
     // Normalize line endings
     let unix_content = shell_content.replace("\r\n", "\n");
-    let script_path = "examples/__temp_script.sh";
+    let script_path = "__temp_script.sh";
     
     if let Err(e) = shared_utils::SharedUtils::write_utf8_file(script_path, &unix_content) {
         return Err(format!("Failed to write temp script: {}", e));
@@ -255,16 +255,16 @@ fn run_shell_script(filename: &str) -> Result<std::process::Output, String> {
             script_path);
         let wsl_working_dir = format!("/mnt/{}/examples", 
             current_dir.replace(":", "").replace("\\", "/"));
-        // Change to the examples directory first, then run the script with debug info
-        cmd.args(&["bash", "-c", &format!("cd {} && pwd && ls -la && bash {}", wsl_working_dir, wsl_script_path)]);
+        // Change to the examples directory first, then run the script from parent directory
+        cmd.args(&["bash", "-c", &format!("cd {} && bash ../__temp_script.sh", wsl_working_dir)]);
         cmd
     } else if shell_cmd == "git" {
         let mut cmd = Command::new("git");
-        cmd.args(&["bash", "-c", &format!("cd examples && bash __temp_script.sh")]);
+        cmd.args(&["bash", "-c", &format!("cd examples && bash ../__temp_script.sh")]);
         cmd
     } else {
         let mut cmd = Command::new(shell_cmd);
-        cmd.args(&["-c", &format!("cd examples && bash __temp_script.sh")]);
+        cmd.args(&["-c", &format!("cd examples && bash ../__temp_script.sh")]);
         cmd
     };
     
@@ -291,7 +291,7 @@ fn run_shell_script(filename: &str) -> Result<std::process::Output, String> {
         }
     };
     
-    // Cleanup temp script file
+    // Cleanup temp script file immediately after execution
     let _ = fs::remove_file(script_path);
     
     Ok(output)
@@ -1048,8 +1048,8 @@ fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
         }
     };
 
-    // Cleanup temp files (disabled for debugging)
-    // cleanup_tmp(lang, &tmp_file);
+    // Cleanup temp files
+    cleanup_tmp(lang, &tmp_file);
 
     // Normalize and compare
     let shell_stdout = String::from_utf8_lossy(&shell_output.stdout).to_string().replace("\r\n", "\n").trim().to_string();
@@ -1306,8 +1306,8 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
         cache.update_perl_cache(filename, trans_stdout_raw, trans_stderr_raw, trans_exit_code, &translated_code);
     }
 
-    // Cleanup temp files (disabled for debugging)
-    // cleanup_tmp(lang, &tmp_file);
+    // Cleanup temp files
+    cleanup_tmp(lang, &tmp_file);
 
     // Normalize and compare
     let shell_stdout = String::from_utf8_lossy(&shell_output.stdout).to_string().replace("\r\n", "\n").trim().to_string();

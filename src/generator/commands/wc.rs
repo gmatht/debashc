@@ -67,7 +67,7 @@ pub fn generate_wc_command(_generator: &mut Generator, cmd: &SimpleCommand, inpu
         output.push_str("$result .= \"$byte_count \";\n");
     }
     output.push_str("$result =~ s/\\s+$//;\n"); // Remove trailing space
-    output.push_str(&format!("{} = $result . \"\\n\";\n", input_var));
+    output.push_str(&format!("{} = $result;\n", input_var));
     output.push_str("\n");
     
     output
