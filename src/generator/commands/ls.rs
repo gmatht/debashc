@@ -14,7 +14,6 @@ pub fn generate_ls_command(generator: &mut Generator, cmd: &SimpleCommand) -> St
     output.push_str("}\n");
     output.push_str("closedir($dh);\n");
     output.push_str("}\n");
-    output.push_str("my $output = join(\"\\n\", @ls_files);\n");
-    
+    // Just generate the ls logic, don't set output variable
     output
 }

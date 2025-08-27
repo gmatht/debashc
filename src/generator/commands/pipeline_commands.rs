@@ -61,9 +61,10 @@ pub fn generate_pipeline_impl(generator: &mut Generator, pipeline: &Pipeline) ->
                 output.push_str(&generator.indent());
                 output.push_str(&generate_find_command(generator, cmd));
             } else if cmd_name == "ls" {
-                // Use the dedicated ls command function
+                // Use the dedicated ls command function, but ensure it sets the pipeline variable
                 output.push_str(&generator.indent());
                 output.push_str(&generate_ls_command(generator, cmd));
+                output.push_str("my $output = join(\"\\n\", @ls_files);\n");
             } else {
                 // First command - capture its output using system command
                 output.push_str(&generator.indent());
@@ -261,7 +262,9 @@ pub fn generate_pipeline_impl(generator: &mut Generator, pipeline: &Pipeline) ->
         
         // Output the final result
         output.push_str(&generator.indent());
-        output.push_str("$output;\n");
+        output.push_str("print $output;\n");
+        output.push_str(&generator.indent());
+        output.push_str("print \"\\n\";\n");
         
         generator.indent_level -= 1;
         output.push_str("};\n");

@@ -20,10 +20,8 @@ impl SharedUtils {
 
     /// Write content to file with proper UTF-8 encoding
     pub fn write_utf8_file(path: &str, content: &str) -> io::Result<()> {
-        // Ensure the content is valid UTF-8 and write with BOM if needed
+        // Write UTF-8 content without BOM for better shell compatibility
         let mut file = fs::File::create(path)?;
-        // Write UTF-8 BOM for better compatibility
-        file.write_all(&[0xEF, 0xBB, 0xBF])?;
         file.write_all(content.as_bytes())?;
         file.flush()?;
         Ok(())

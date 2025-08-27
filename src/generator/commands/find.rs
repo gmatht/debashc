@@ -40,7 +40,7 @@ pub fn generate_find_command(generator: &mut Generator, cmd: &SimpleCommand) -> 
     output.push_str("if (opendir(my $dh, $dir)) {\n");
     output.push_str("while (my $file = readdir($dh)) {\n");
     output.push_str("next if $file eq '.' || $file eq '..';\n");
-    output.push_str("my $full_path = $dir eq '.' ? $file : \"$dir/$file\";\n");
+    output.push_str("my $full_path = $dir eq '.' ? \"./$file\" : \"$dir/$file\";\n");
     output.push_str("if (-d $full_path) {\n");
     output.push_str("find_files($full_path, $pattern);\n");
     output.push_str("} elsif ($file =~ /^$pattern$/) {\n");

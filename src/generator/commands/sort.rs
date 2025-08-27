@@ -24,7 +24,12 @@ pub fn generate_sort_command(_generator: &mut Generator, cmd: &SimpleCommand, in
     output.push_str(&format!("my @lines = split(/\\n/, {});\n", input_var));
     if numeric {
         // For numeric sort, extract the first field (number) and sort by that
-        output.push_str("my @sorted = sort { (split(/\\s+/, $a))[0] <=> (split(/\\s+/, $b))[0] } @lines;\n");
+        // Use the entire line as secondary sort key for stable sort behavior
+        output.push_str("my @sorted = sort { \n");
+        output.push_str("    my $a_num = (split(/\\s+/, $a))[0] || 0;\n");
+        output.push_str("    my $b_num = (split(/\\s+/, $b))[0] || 0;\n");
+        output.push_str("    $a_num <=> $b_num || $a cmp $b;\n");
+        output.push_str("} @lines;\n");
     } else {
         output.push_str("my @sorted = sort @lines;\n");
     }

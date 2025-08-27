@@ -988,9 +988,9 @@ fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
         "perl" => {
             let mut gen = Generator::new();
             let code = gen.generate(&commands);
-            let tmp = "__tmp_test_output.pl";
+            let tmp = "examples/__tmp_test_output.pl";
             if let Err(e) = shared_utils::SharedUtils::write_utf8_file(tmp, &code) { return Err(format!("Failed to write Perl temp file: {}", e)); }
-            (tmp.to_string(), vec!["perl", tmp])
+            (tmp.to_string(), vec!["perl", "__tmp_test_output.pl"])
         }
         _ => { return Err(format!("Unsupported language for --test-file: {}", lang)); }
     };
@@ -1048,8 +1048,8 @@ fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
         }
     };
 
-    // Cleanup temp files
-    cleanup_tmp(lang, &tmp_file);
+    // Cleanup temp files (disabled for debugging)
+    // cleanup_tmp(lang, &tmp_file);
 
     // Normalize and compare
     let shell_stdout = String::from_utf8_lossy(&shell_output.stdout).to_string().replace("\r\n", "\n").trim().to_string();
@@ -1215,9 +1215,9 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
             "perl" => {
                 let mut gen = Generator::new();
                 let code = gen.generate(&commands);
-                let tmp = "__tmp_test_output.pl";
+                let tmp = "examples/__tmp_test_output.pl";
                 if let Err(e) = shared_utils::SharedUtils::write_utf8_file(tmp, &code) { return Err(format!("Failed to write Perl temp file: {}", e)); }
-                (tmp.to_string(), vec!["perl", tmp], code)
+                (tmp.to_string(), vec!["perl", "__tmp_test_output.pl"], code)
             }
             _ => { return Err(format!("Unsupported language for --test-file: {}", lang)); }
         };
@@ -1264,6 +1264,12 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
         } else {
             let mut cmd = Command::new(run_cmd[0]);
             for a in &run_cmd[1..] { cmd.arg(a); }
+            
+            // For Perl scripts, change to examples directory first to match shell script behavior
+            if lang == "perl" {
+                cmd.current_dir("examples");
+            }
+            
             let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
                 Ok(c) => c,
                 Err(e) => { cleanup_tmp(lang, &tmp_file); return Err(format!("Failed to run translated program: {}", e)); }
@@ -1300,8 +1306,8 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
         cache.update_perl_cache(filename, trans_stdout_raw, trans_stderr_raw, trans_exit_code, &translated_code);
     }
 
-    // Cleanup temp files
-    cleanup_tmp(lang, &tmp_file);
+    // Cleanup temp files (disabled for debugging)
+    // cleanup_tmp(lang, &tmp_file);
 
     // Normalize and compare
     let shell_stdout = String::from_utf8_lossy(&shell_output.stdout).to_string().replace("\r\n", "\n").trim().to_string();
