@@ -215,6 +215,13 @@ impl Generator {
                 return Some(format!("\"{}\\n\"", content));
             }
         }
+        
+        // Check if this is a single variable (like $i) that we can optimize
+        if trimmed.starts_with("$") && !trimmed.contains(",") && !trimmed.contains(" ") {
+            // Single variable, optimize to "$var\n"
+            return Some(format!("\"{}\\n\"", trimmed));
+        }
+        
         None
     }
 }
