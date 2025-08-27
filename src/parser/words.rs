@@ -168,6 +168,172 @@ pub fn parse_word(lexer: &mut Lexer) -> Result<Word, ParserError> {
     result
 }
 
+/// Parse a word without skipping newlines at the end.
+/// This is used specifically for argument parsing where we want to preserve newlines.
+pub fn parse_word_no_newline_skip(lexer: &mut Lexer) -> Result<Word, ParserError> {
+    // Combine contiguous bare-word tokens (identifiers, numbers, slashes, dots) into a single literal
+    // This handles filenames like "file.txt" by combining Identifier + Dot + Identifier
+    if matches!(lexer.peek(), Some(Token::Identifier) | Some(Token::Number) | Some(Token::OctalNumber) | Some(Token::Slash) | Some(Token::Dot)) {
+        let mut combined = String::new();
+        loop {
+            match lexer.peek() {
+                Some(Token::Identifier) | Some(Token::Number) | Some(Token::OctalNumber) | Some(Token::Slash) | Some(Token::Dot) => {
+                    // Append raw token text and consume
+                    if let Some(text) = lexer.get_current_text() {
+                        combined.push_str(&text);
+                        lexer.next();
+                    } else {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        // Skip inline whitespace after consuming the word, but NOT newlines
+        lexer.skip_inline_whitespace_and_comments();
+        return Ok(Word::Literal(combined));
+    }
+
+    let result = match lexer.peek() {
+        Some(Token::Identifier) => Ok(Word::Literal(lexer.get_identifier_text()?)),
+        Some(Token::Number) => Ok(Word::Literal(lexer.get_number_text()?)),
+        Some(Token::OctalNumber) => Ok(Word::Literal(lexer.get_raw_token_text()?)),
+        Some(Token::DoubleQuotedString) => {
+            // Always parse as string interpolation for double-quoted strings
+            // This handles both simple strings and strings with variables
+            Ok(parse_string_interpolation(lexer)?)
+        },
+        Some(Token::SingleQuotedString) => Ok(Word::Literal(lexer.get_string_text()?)),
+        Some(Token::BacktickString) => Ok(Word::Literal(lexer.get_raw_token_text()?)),
+        Some(Token::DollarSingleQuotedString) => Ok(parse_ansic_quoted_string(lexer)?),
+        Some(Token::DollarDoubleQuotedString) => Ok(parse_string_interpolation(lexer)?),
+        Some(Token::BraceOpen) => Ok(parse_brace_expansion(lexer)?),
+        Some(Token::Source) => {
+            // Treat standalone 'source' as a normal word (e.g., `source file.sh`)
+            lexer.next();
+            Ok(Word::Literal("source".to_string()))
+        }
+        Some(Token::Range) => {
+            // Treat standalone '..' as a literal (e.g., `cd ..`)
+            lexer.next();
+            Ok(Word::Literal("..".to_string()))
+        }
+        Some(Token::Star) => {
+            // Treat standalone '*' as a literal (e.g., `ls *`)
+            lexer.next();
+            Ok(Word::Literal("*".to_string()))
+        }
+        Some(Token::Dot) => {
+            // Treat standalone '.' as a literal (e.g., `ls .`)
+            lexer.next();
+            Ok(Word::Literal(".".to_string()))
+        }
+        Some(Token::CasePattern) => {
+            // Treat case statement patterns like *.txt as literals.
+            // get_raw_token_text() consumes the current token, so do not call next() here.
+            Ok(Word::Literal(lexer.get_raw_token_text()?))
+        }
+        Some(Token::Slash) => {
+            // Treat standalone '/' as a literal (e.g., `cd /`)
+            lexer.next();
+            Ok(Word::Literal("/".to_string()))
+        }
+        // Test operators
+        Some(Token::File) => {
+            lexer.next();
+            Ok(Word::Literal("-f".to_string()))
+        }
+        Some(Token::Directory) => {
+            lexer.next();
+            Ok(Word::Literal("-d".to_string()))
+        }
+        Some(Token::Exists) => {
+            lexer.next();
+            Ok(Word::Literal("-e".to_string()))
+        }
+        Some(Token::Readable) => {
+            lexer.next();
+            Ok(Word::Literal("-r".to_string()))
+        }
+        Some(Token::Writable) => {
+            lexer.next();
+            Ok(Word::Literal("-w".to_string()))
+        }
+        Some(Token::Executable) => {
+            lexer.next();
+            Ok(Word::Literal("-x".to_string()))
+        }
+        Some(Token::Size) => {
+            lexer.next();
+            Ok(Word::Literal("-s".to_string()))
+        }
+        Some(Token::Symlink) => {
+            lexer.next();
+            Ok(Word::Literal("-L".to_string()))
+        }
+        Some(Token::TestBracketClose) => {
+            lexer.next();
+            Ok(Word::Literal("]".to_string()))
+        }
+        Some(Token::Tilde) => {
+            // Treat standalone '~' as a literal (e.g., `cd ~`)
+            lexer.next();
+            Ok(Word::Literal("~".to_string()))
+        }
+        Some(Token::LongOption) => {
+            // Treat long options like --color=always as literals
+            Ok(Word::Literal(lexer.get_raw_token_text()?))
+        }
+        Some(Token::RegexPattern) => {
+            // Treat regex patterns as literals
+            Ok(Word::Literal(lexer.get_raw_token_text()?))
+        }
+        Some(Token::RegexMatch) => {
+            // Treat regex match operator as literal
+            Ok(Word::Literal(lexer.get_raw_token_text()?))
+        }
+        Some(Token::NameFlag) | Some(Token::MaxDepthFlag) | Some(Token::TypeFlag) => {
+            // Treat command-line flags as literals
+            Ok(Word::Literal(lexer.get_raw_token_text()?))
+        }
+        Some(Token::Minus) => {
+            // Handle minus tokens like -l, -c, etc.
+            // Consume the minus and combine with following identifier if present
+            lexer.next(); // consume the minus
+            let mut combined = "-".to_string();
+            
+            // Look ahead to see if there's an identifier following
+            if let Some(Token::Identifier) = lexer.peek() {
+                let identifier = lexer.get_identifier_text()?;
+                combined.push_str(&identifier);
+            }
+            
+            Ok(Word::Literal(combined))
+        }
+        Some(Token::Character) | Some(Token::NonZero) | Some(Token::SymlinkH) | Some(Token::PipeFile) | Some(Token::Socket) | Some(Token::Block) | Some(Token::SetGid) | Some(Token::Sticky) | Some(Token::SetUid) | Some(Token::Owned) | Some(Token::GroupOwned) | Some(Token::Modified) | Some(Token::Eq) | Some(Token::Ne) | Some(Token::Lt) | Some(Token::Le) | Some(Token::Gt) | Some(Token::Ge) | Some(Token::Zero) => {
+            // Handle test operator tokens like -e, -f, -d, etc.
+            // These are already complete flags, just get their text
+            Ok(Word::Literal(lexer.get_raw_token_text()?))
+        }
+        Some(Token::Dollar) => Ok(parse_variable_expansion(lexer)?),
+        Some(Token::DollarBrace) | Some(Token::DollarParen) | Some(Token::DollarHashSimple) | Some(Token::DollarAtSimple) | Some(Token::DollarStarSimple)
+        | Some(Token::DollarBraceHash) | Some(Token::DollarBraceBang) | Some(Token::DollarBraceStar) | Some(Token::DollarBraceAt)
+        | Some(Token::DollarBraceHashStar) | Some(Token::DollarBraceHashAt) | Some(Token::DollarBraceBangStar) | Some(Token::DollarBraceBangAt)
+            => Ok(parse_variable_expansion(lexer)?),
+        Some(Token::Arithmetic) | Some(Token::ArithmeticEval) => Ok(parse_arithmetic_expression(lexer)?),
+        _ => {
+            let (line, col) = lexer.offset_to_line_col(0);
+            let token = lexer.peek().unwrap_or(Token::Identifier).to_owned();
+            Err(ParserError::UnexpectedToken { token, line, col })
+        }
+    };
+    
+    // Don't skip inline whitespace after consuming the word - this preserves newlines
+    // for argument parsing context
+    
+    result
+}
+
 pub fn parse_variable_expansion(lexer: &mut Lexer) -> Result<Word, ParserError> {
     match lexer.peek() {
         Some(Token::Dollar) => {

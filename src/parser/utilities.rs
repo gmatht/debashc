@@ -249,8 +249,16 @@ impl ParserUtilities for Lexer {
                 self.next();
                 Ok(())
             } else {
-                let (line, col) = self.offset_to_line_col(0);
-                Err(ParserError::UnexpectedToken { token, line, col })
+                // Get the current token's position for accurate error reporting
+                if let Some((_, start, _)) = self.tokens.get(self.current) {
+                    let (line, col) = self.offset_to_line_col(*start);
+                    Err(ParserError::UnexpectedToken { token, line, col })
+                } else {
+                    // Fallback to current position if we can't get the span
+                    let current_pos = self.current_position();
+                    let (line, col) = self.offset_to_line_col(current_pos);
+                    Err(ParserError::UnexpectedToken { token, line, col })
+                }
             }
         } else {
             Err(ParserError::UnexpectedEOF)

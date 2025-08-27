@@ -2,7 +2,7 @@ use crate::ast::*;
 use crate::lexer::{Lexer, Token};
 use crate::parser::errors::ParserError;
 use crate::parser::utilities::ParserUtilities;
-use crate::parser::words::parse_word;
+use crate::parser::words::{parse_word, parse_word_no_newline_skip};
 use crate::parser::redirects::parse_redirect;
 use crate::parser::assignments::parse_array_elements;
 use crate::parser::control_flow::{
@@ -434,6 +434,10 @@ impl Parser {
                 Token::Arithmetic => {
                     self.parse_arithmetic_expression()?
                 }
+                Token::DoubleQuotedString | Token::SingleQuotedString => {
+                    // Handle quoted command names like "ls" or 'grep'
+                    parse_word(&mut self.lexer)?
+                }
 
                 _ => {
                     let (line, col) = self.lexer.offset_to_line_col(0);
@@ -467,7 +471,13 @@ impl Parser {
         // Parse arguments
         while let Some(token) = self.lexer.peek() {
             match token {
-                Token::Space | Token::Tab | Token::Comment | Token::Newline | Token::CarriageReturn => {
+                Token::Space | Token::Tab | Token::Comment => {
+                    // Skip inline whitespace and comments, but continue parsing arguments
+                    self.lexer.next();
+                    continue;
+                }
+                Token::Newline | Token::CarriageReturn => {
+                    // Newlines should break argument parsing as they separate commands
                     break;
                 }
                 Token::ParenClose => {
@@ -480,15 +490,58 @@ impl Parser {
                 Token::Pipe | Token::And | Token::Or | Token::Semicolon | Token::Background => {
                     break;
                 }
-                Token::Character | Token::NonZero | Token::Exists | Token::File | Token::Size | Token::Readable | Token::Writable | Token::Executable | Token::NewerThan | Token::OlderThan => {
+                Token::Character | Token::NonZero | Token::Exists | Token::File | Token::Size | Token::Readable | Token::Writable | Token::Executable | Token::NewerThan | Token::OlderThan |
+                Token::NameFlag | Token::MaxDepthFlag | Token::TypeFlag => {
                     // These are valid argument tokens
-                    args.push(parse_word(&mut self.lexer)?);
+                    args.push(parse_word_no_newline_skip(&mut self.lexer)?);
+                    
+                    // If this is a flag that takes an argument, continue parsing to get the argument
+                    if let Word::Literal(arg_str) = args.last().unwrap() {
+                        if arg_str == "-name" || arg_str == "-maxdepth" || arg_str == "-type" {
+                            // Skip whitespace and comments
+                            self.lexer.skip_whitespace_and_comments();
+                            
+                            // Check if the next token is a valid argument to the flag
+                            if let Some(next_token) = self.lexer.peek() {
+                                match next_token {
+                                    Token::Identifier | Token::DoubleQuotedString | Token::SingleQuotedString => {
+                                        // This is an argument to the flag, parse it
+                                        args.push(parse_word_no_newline_skip(&mut self.lexer)?);
+                                    }
+                                    _ => {
+                                        // Not an argument to the flag, continue
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 _ => {
-                    args.push(parse_word(&mut self.lexer)?);
+                    // Check if this token should break out of argument parsing
+                    match token {
+                        Token::Pipe | Token::And | Token::Or => {
+                            // Pipeline operators should break argument parsing
+                            break;
+                        }
+                        _ => {
+                            // For any other token, try to parse it as a word
+                            // This handles cases like quoted strings, identifiers, etc.
+                            args.push(parse_word_no_newline_skip(&mut self.lexer)?);
+                        }
+                    }
                 }
             }
         }
+        
+
+        
+
+        
+
+        
+
+        
+
         
         Ok(Command::Simple(SimpleCommand {
             name,
