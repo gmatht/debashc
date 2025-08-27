@@ -12,4 +12,3 @@ pub mod grep_handler;
 // pub use string_interpolation::*;
 // pub use word_handling::*;
 // pub use pattern_expansion::*;
-pub use grep_handler::*;

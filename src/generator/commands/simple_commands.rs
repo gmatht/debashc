@@ -5,6 +5,59 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 // Static counter for generating unique temp file names
 static TEMP_FILE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+/// Dispatch to command-specific generators
+fn generate_command_specific(generator: &mut Generator, cmd: &SimpleCommand, input_var: &str) -> Option<String> {
+    let cmd_name = match &cmd.name {
+        Word::Literal(s) => s,
+        _ => return None
+    };
+    
+    // Use default input variable for commands that need it
+    let default_input = if input_var.is_empty() { "input_data" } else { input_var };
+    
+    match cmd_name.as_str() {
+        "grep" => Some(super::grep::generate_grep_command(generator, cmd, default_input)),
+        "cat" => Some(super::cat::generate_cat_command(generator, cmd)),
+        "find" => Some(super::find::generate_find_command(generator, cmd)),
+        "ls" => Some(super::ls::generate_ls_command(generator, cmd)),
+        "wc" => Some(super::wc::generate_wc_command(generator, cmd, default_input)),
+        "sort" => Some(super::sort::generate_sort_command(generator, cmd, default_input)),
+        "uniq" => Some(super::uniq::generate_uniq_command(generator, cmd, default_input)),
+        "xargs" => Some(super::xargs::generate_xargs_command(generator, cmd, default_input)),
+        "awk" => Some(super::awk::generate_awk_command(generator, cmd, default_input)),
+        "sed" => Some(super::sed::generate_sed_command(generator, cmd, default_input)),
+        "comm" => Some(super::comm::generate_comm_command(generator, cmd, default_input)),
+        "tr" => Some(super::tr::generate_tr_command(generator, cmd, default_input)),
+        "sleep" => Some(super::sleep::generate_sleep_command(generator, cmd)),
+        "cut" => Some(super::cut::generate_cut_command(generator, cmd, default_input)),
+        "basename" => Some(super::basename::generate_basename_command(generator, cmd, default_input)),
+        "dirname" => Some(super::dirname::generate_dirname_command(generator, cmd, default_input)),
+        "date" => Some(super::date::generate_date_command(generator, cmd)),
+        "time" => Some(super::time::generate_time_command(generator, cmd)),
+        "wget" => Some(super::wget::generate_wget_command(generator, cmd)),
+        "which" => Some(super::which::generate_which_command(generator, cmd)),
+        "yes" => Some(super::yes::generate_yes_command(generator, cmd)),
+        "zcat" => Some(super::zcat::generate_zcat_command(generator, cmd)),
+        "strings" => Some(super::strings::generate_strings_command(generator, cmd, default_input)),
+        "tee" => Some(super::tee::generate_tee_command(generator, cmd, default_input)),
+        "sha256sum" => Some(super::sha256sum::generate_sha256sum_command(generator, cmd, default_input)),
+        "sha512sum" => Some(super::sha512sum::generate_sha512sum_command(generator, cmd, default_input)),
+        "gzip" => Some(super::gzip::generate_gzip_command(generator, cmd, default_input)),
+        "kill" => Some(super::kill::generate_kill_command(generator, cmd)),
+        "nohup" => Some(super::nohup::generate_nohup_command(generator, cmd)),
+        "nice" => Some(super::nice::generate_nice_command(generator, cmd)),
+        "curl" => Some(super::curl::generate_curl_command(generator, cmd)),
+        "mkdir" => Some(super::mkdir::generate_mkdir_command(generator, cmd)),
+        "rm" => Some(super::rm::generate_rm_command(generator, cmd)),
+        "cp" => Some(super::cp::generate_cp_command(generator, cmd)),
+        "mv" => Some(super::mv::generate_mv_command(generator, cmd)),
+        "touch" => Some(super::touch::generate_touch_command(generator, cmd)),
+        "head" => Some(super::head::generate_head_command(generator, cmd, default_input)),
+        "tail" => Some(super::tail::generate_tail_command(generator, cmd, default_input)),
+        _ => None
+    }
+}
+
 pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleCommand) -> String {
     let mut output = String::new();
     let has_env = !cmd.env_vars.is_empty() && cmd.name != "true";
@@ -190,30 +243,32 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
         }
     } else {
         // Handle other commands
-        if cmd.args.is_empty() {
+        let cmd_name = match &cmd.name {
+            Word::Literal(s) => s,
+            _ => "unknown_command"
+        };
+        
+        // First try to use command-specific generators
+        if let Some(specific_output) = generate_command_specific(generator, cmd, "") {
+            output.push_str(&specific_output);
+        } else if generator.declared_functions.contains(cmd_name) {
             // Check if this is a function call
-            let cmd_name = match &cmd.name {
-                Word::Literal(s) => s,
-                _ => "unknown_command"
-            };
-            if generator.declared_functions.contains(cmd_name) {
+            if cmd.args.is_empty() {
                 output.push_str(&format!("{}();\n", cmd_name));
             } else {
-                output.push_str(&format!("system('{}');\n", cmd_name));
+                let args: Vec<String> = cmd.args.iter()
+                    .map(|arg| generator.word_to_perl(arg))
+                    .collect();
+                output.push_str(&format!("{}({});\n", cmd_name, args.join(", ")));
             }
         } else {
-            let args: Vec<String> = cmd.args.iter()
-                .map(|arg| generator.word_to_perl(arg))
-                .collect();
-            
-            // Check if this is a function call
-            let cmd_name = match &cmd.name {
-                Word::Literal(s) => s,
-                _ => "unknown_command"
-            };
-            if generator.declared_functions.contains(cmd_name) {
-                output.push_str(&format!("{}({});\n", cmd_name, args.join(", ")));
+            // Fallback to system call
+            if cmd.args.is_empty() {
+                output.push_str(&format!("system('{}');\n", cmd_name));
             } else {
+                let args: Vec<String> = cmd.args.iter()
+                    .map(|arg| generator.word_to_perl(arg))
+                    .collect();
                 output.push_str(&format!("system('{}', {});\n", cmd_name, args.join(", ")));
             }
         }

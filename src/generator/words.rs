@@ -149,7 +149,7 @@ pub fn convert_string_interpolation_to_perl_impl(generator: &Generator, interp: 
 
 pub fn convert_arithmetic_to_perl_impl(generator: &Generator, expr: &str) -> String {
     // Convert shell arithmetic expression to Perl syntax
-    let mut result = expr.to_string();
+    let result = expr.to_string();
     
     // Convert shell variables to Perl variables (e.g., i -> $i)
     // This is a simple regex-based approach - in practice, the parser should handle this better

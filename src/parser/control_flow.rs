@@ -947,8 +947,8 @@ pub fn parse_simple_command(parser: &mut Parser) -> Result<Command, ParserError>
     }
     
     let mut args = Vec::new();
-    let mut redirects = Vec::new();
-    let mut env_vars = HashMap::new();
+    let redirects = Vec::new();
+    let env_vars = HashMap::new();
     
     // Parse the command name
     let name = match parser.lexer.peek() {

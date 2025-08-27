@@ -1,5 +1,5 @@
 use crate::ast::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 pub mod commands;
 pub mod control_flow;
@@ -191,6 +191,6 @@ impl Generator {
     }
 
     pub fn escape_perl_string(&self, s: &str) -> String {
-        commands::escape_perl_string(s)
+        commands::utilities::escape_perl_string(s)
     }
 }

@@ -329,7 +329,7 @@ impl Parser {
         self.lexer.skip_whitespace_and_comments();
         
         let mut args = Vec::new();
-        let mut redirects = Vec::new();
+        let redirects = Vec::new();
         let mut env_vars = HashMap::new();
         
         // Parse environment variable-style assignments at the start

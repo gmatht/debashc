@@ -5,10 +5,7 @@ mod shared_utils;
 mod generator;
 mod cmd;
 
-use lexer::*;
-use parser::*;
 // use ast::*; // not needed at top-level
-use generator::*;
 
 use std::env;
 use std::fs;
@@ -24,7 +21,7 @@ use sha2::{Sha256, Digest};
 
 // Use the debug module for controlling DEBUG output
 use debashl::debug::set_debug_enabled;
-use debashl::{Lexer, Parser, Generator};
+use debashl::{Lexer, Parser, Generator, lexer::Token};
 
 /// Cross-platform helper to create ExitStatus from exit code
 /// This is a workaround since ExitStatus::from_raw is platform-specific
@@ -1187,7 +1184,7 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
                 while !lexer.is_eof() && token_count < 1000 { // Limit to prevent infinite loops
                     if let Some(token) = lexer.peek() {
                         // Skip Newline tokens in debug output
-                        if let debashl::Token::Newline = token {
+                        if let Token::Newline = token {
                             lexer.next(); // Advance to next token
                             continue;
                         }

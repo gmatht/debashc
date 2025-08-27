@@ -7,10 +7,8 @@ pub mod generator;
 pub mod wasm;
 pub mod cmd;
 
-pub use lexer::*;
-pub use parser::*;
+// Only export the main types to avoid conflicts
+pub use lexer::Lexer;
+pub use parser::Parser;
 pub use ast::*;
-pub use debug::*;
-pub use shared_utils::*;
-pub use generator::*;
-pub use wasm::*;
+pub use generator::Generator;
