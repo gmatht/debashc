@@ -30,6 +30,8 @@ impl Generator {
         let mut output = String::new();
         
         for command in ast {
+            // Reset indentation level for each top-level command to prevent staircase effect
+            self.indent_level = 0;
             output.push_str(&self.generate_command(command));
         }
         

@@ -3,7 +3,6 @@ mod parser;
 mod ast;
 mod shared_utils;
 mod generator;
-mod cmd;
 
 // use ast::*; // not needed at top-level
 

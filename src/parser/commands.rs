@@ -337,7 +337,7 @@ impl Parser {
             match token {
                 Token::Identifier => {
                     // Handle compound assignment operators
-                    let compound_op = self.lexer.peek_n(1).cloned();
+                    let compound_op = self.lexer.peek_n(1).as_ref().cloned();
                     if let Some(compound_op) = compound_op {
                         match compound_op {
                             Token::PlusAssign => {
