@@ -7,7 +7,6 @@ pub fn generate_mv_command(generator: &mut Generator, cmd: &SimpleCommand) -> St
     // mv command syntax: mv [options] source... destination
     let mut _force = false;
     let mut sources = Vec::new();
-    let mut destination = "".to_string();
     
     // Parse mv options
     for arg in &cmd.args {
@@ -29,7 +28,7 @@ pub fn generate_mv_command(generator: &mut Generator, cmd: &SimpleCommand) -> St
         output.push_str("die \"mv: missing file operand\\n\";\n");
     } else {
         // Last argument is the destination
-        destination = sources.pop().unwrap();
+        let destination = sources.pop().unwrap();
         
         output.push_str("use File::Copy qw(move);\n");
         output.push_str("use File::Path qw(make_path);\n");

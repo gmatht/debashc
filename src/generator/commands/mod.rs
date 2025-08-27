@@ -48,10 +48,13 @@ pub mod tail;
 
 // Re-export main functions
 pub use command_dispatcher::*;
-pub use simple_commands::*;
-pub use pipeline_commands::*;
-pub use subshell_commands::*;
-pub use system_commands::*;
+// Removed unused wildcard imports to fix warnings
+pub use simple_commands::generate_simple_command_impl;
+pub use pipeline_commands::generate_pipeline_impl;
+pub use subshell_commands::generate_subshell_impl;
+pub use subshell_commands::generate_background_impl;
+pub use system_commands::generate_command_string_for_system_impl;
+pub use utilities::escape_perl_string;
 
 // Re-export individual command functions
 pub use grep::*;
@@ -85,11 +88,3 @@ pub use mv::*;
 pub use touch::*;
 pub use head::*;
 pub use tail::*;
-
-// Re-export _impl functions to fix linking issues
-pub use simple_commands::generate_simple_command_impl;
-pub use pipeline_commands::generate_pipeline_impl;
-pub use subshell_commands::generate_subshell_impl;
-pub use subshell_commands::generate_background_impl;
-pub use system_commands::generate_command_string_for_system_impl;
-pub use utilities::escape_perl_string;

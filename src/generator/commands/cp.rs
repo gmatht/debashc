@@ -8,7 +8,6 @@ pub fn generate_cp_command(generator: &mut Generator, cmd: &SimpleCommand) -> St
     let mut recursive = false;
     let mut preserve = false;
     let mut sources = Vec::new();
-    let mut destination = "".to_string();
     
     // Parse cp options
     for arg in &cmd.args {
@@ -31,7 +30,7 @@ pub fn generate_cp_command(generator: &mut Generator, cmd: &SimpleCommand) -> St
         output.push_str("die \"cp: missing file operand\\n\";\n");
     } else {
         // Last argument is the destination
-        destination = sources.pop().unwrap();
+        let destination = sources.pop().unwrap();
         
         output.push_str("use File::Copy qw(copy);\n");
         output.push_str("use File::Path qw(make_path);\n");

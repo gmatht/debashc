@@ -12,12 +12,7 @@ impl SharedUtils {
 
     // Removed unused escape_string_for_language function
 
-    /// Generate indentation string
-    pub fn indent(level: usize) -> String {
-        "    ".repeat(level)
-    }
-
-    // Removed unused extract_var_name function
+    /// Generate indentation string    // Removed unused extract_var_name function
 
     /// Check if a string looks like a variable name
     pub fn is_variable_name(s: &str) -> bool {
