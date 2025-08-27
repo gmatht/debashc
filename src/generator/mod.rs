@@ -29,6 +29,11 @@ impl Generator {
     pub fn generate(&mut self, ast: &[Command]) -> String {
         let mut output = String::new();
         
+        // Add Perl shebang and pragmas
+        output.push_str("#!/usr/bin/env perl\n");
+        output.push_str("use strict;\n");
+        output.push_str("use warnings;\n\n");
+        
         for command in ast {
             // Reset indentation level for each top-level command to prevent staircase effect
             self.indent_level = 0;
