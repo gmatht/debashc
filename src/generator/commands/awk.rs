@@ -17,6 +17,7 @@ pub fn generate_awk_command(_generator: &mut Generator, _cmd: &SimpleCommand, in
     output.push_str("}\n");
     output.push_str("}\n");
     output.push_str(&format!("{} = join(\"\\n\", @result);\n", input_var));
+    output.push_str("\n");
     
     output
 }

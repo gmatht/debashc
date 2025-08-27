@@ -52,6 +52,7 @@ pub fn generate_xargs_command(_generator: &mut Generator, cmd: &SimpleCommand, i
         // Fallback to system command for other cases
         output.push_str(&format!("{} = `echo \"${}\" | {}`;\n", input_var, input_var, command));
     }
+    output.push_str("\n");
     
     output
 }

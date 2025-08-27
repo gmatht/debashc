@@ -47,6 +47,7 @@ pub fn generate_tr_command(generator: &mut Generator, cmd: &SimpleCommand, input
         // Fallback for insufficient arguments
         output.push_str(&format!("{} = `echo \"${}\" | tr`;\n", input_var, input_var));
     }
+    output.push_str("\n");
     
     output
 }

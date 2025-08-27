@@ -33,6 +33,7 @@ pub fn generate_strings_command(_generator: &mut Generator, cmd: &SimpleCommand,
     output.push_str("}\n");
     output.push_str("}\n");
     output.push_str(&format!("{} = join(\"\\n\", @result);\n", input_var));
+    output.push_str("\n");
     
     output
 }

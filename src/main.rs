@@ -211,7 +211,7 @@ fn run_shell_script(filename: &str) -> Result<std::process::Output, String> {
     let unix_content = shell_content.replace("\r\n", "\n");
     let script_path = "examples/__temp_script.sh";
     
-    if let Err(e) = fs::write(script_path, &unix_content) {
+    if let Err(e) = shared_utils::SharedUtils::write_utf8_file(script_path, &unix_content) {
         return Err(format!("Failed to write temp script: {}", e));
     }
     
@@ -260,11 +260,11 @@ fn run_shell_script(filename: &str) -> Result<std::process::Output, String> {
         cmd
     } else if shell_cmd == "git" {
         let mut cmd = Command::new("git");
-        cmd.args(&["bash", script_path]);
+        cmd.args(&["bash", "-c", &format!("cd examples && bash __temp_script.sh")]);
         cmd
     } else {
         let mut cmd = Command::new(shell_cmd);
-        cmd.arg(script_path);
+        cmd.args(&["-c", &format!("cd examples && bash __temp_script.sh")]);
         cmd
     };
     
@@ -536,9 +536,9 @@ fn main() {
                     
                     // Handle output file option
                     if let Some(output_filename) = &output_file {
-                        // Write to output file
-                        match fs::write(output_filename, &code) {
-                            Ok(_) => println!("Generated Perl code written to: {}", output_filename),
+                        // Write to output file with UTF-8 encoding
+                        match shared_utils::SharedUtils::write_utf8_file(output_filename, &code) {
+                            Ok(_) => println!("Generated Perl code written to: {} (UTF-8 encoded)", output_filename),
                             Err(e) => println!("Error writing to output file {}: {}", output_filename, e),
                         }
                     } else {
@@ -547,7 +547,7 @@ fn main() {
                         println!("{}", code);
                         println!("\n--- Running generated Perl code ---");
                         let tmp = "__tmp_run.pl";
-                        if fs::write(tmp, &code).is_ok() {
+                        if shared_utils::SharedUtils::write_utf8_file(tmp, &code).is_ok() {
                             let _ = std::process::Command::new("perl").arg(tmp).status();
                             let _ = fs::remove_file(tmp);
                         }
@@ -836,9 +836,9 @@ fn main() {
                         
                         // Handle output file option
                         if let Some(output_filename) = &output_file {
-                            // Write to output file
-                            match fs::write(output_filename, &code) {
-                                Ok(_) => println!("Generated Perl code written to: {}", output_filename),
+                            // Write to output file with UTF-8 encoding
+                            match shared_utils::SharedUtils::write_utf8_file(output_filename, &code) {
+                                Ok(_) => println!("Generated Perl code written to: {} (UTF-8 encoded)", output_filename),
                                 Err(e) => println!("Error writing to output file {}: {}", output_filename, e),
                             }
                         } else {
@@ -847,7 +847,7 @@ fn main() {
                             println!("{}", code);
                             println!("\n--- Running generated Perl code ---");
                             let tmp = "__tmp_run.pl";
-                            if fs::write(tmp, &code).is_ok() {
+                            if shared_utils::SharedUtils::write_utf8_file(tmp, &code).is_ok() {
                                 let _ = std::process::Command::new("perl").arg(tmp).status();
                                 let _ = fs::remove_file(tmp);
                             }
@@ -877,9 +877,9 @@ fn main() {
                         
                         // Handle output file option
                         if let Some(output_filename) = &output_file {
-                            // Write to output file
-                            match fs::write(output_filename, &code) {
-                                Ok(_) => println!("Generated Perl code written to: {}", output_filename),
+                            // Write to output file with UTF-8 encoding
+                            match shared_utils::SharedUtils::write_utf8_file(output_filename, &code) {
+                                Ok(_) => println!("Generated Perl code written to: {} (UTF-8 encoded)", output_filename),
                                 Err(e) => println!("Error writing to output file {}: {}", output_filename, e),
                             }
                         } else {
@@ -888,7 +888,7 @@ fn main() {
                             println!("{}", code);
                             println!("\n--- Running generated Perl code ---");
                             let tmp = "__tmp_run.pl";
-                            if fs::write(tmp, &code).is_ok() {
+                            if shared_utils::SharedUtils::write_utf8_file(tmp, &code).is_ok() {
                                 let _ = std::process::Command::new("perl").arg(tmp).status();
                                 let _ = fs::remove_file(tmp);
                             }
@@ -912,7 +912,7 @@ fn main() {
                         
                         // Write to temporary file and execute
                         let tmp_file = "__tmp_direct_exec.pl";
-                        if fs::write(tmp_file, &perl_code).is_ok() {
+                        if shared_utils::SharedUtils::write_utf8_file(tmp_file, &perl_code).is_ok() {
                             println!("Generated Perl code:");
                             println!("{}", perl_code);
                             println!("\n--- Running generated Perl code ---");
@@ -962,7 +962,7 @@ fn run_generated(lang: &str, input: &str) {
             let mut gen = Generator::new();
             let code = gen.generate(&commands);
             let tmp = "__tmp_run.pl";
-            if fs::write(tmp, &code).is_ok() {
+            if shared_utils::SharedUtils::write_utf8_file(tmp, &code).is_ok() {
                 let _ = std::process::Command::new("perl").arg(tmp).status();
                 let _ = fs::remove_file(tmp);
             }
@@ -989,7 +989,7 @@ fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
             let mut gen = Generator::new();
             let code = gen.generate(&commands);
             let tmp = "__tmp_test_output.pl";
-            if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Perl temp file: {}", e)); }
+            if let Err(e) = shared_utils::SharedUtils::write_utf8_file(tmp, &code) { return Err(format!("Failed to write Perl temp file: {}", e)); }
             (tmp.to_string(), vec!["perl", tmp])
         }
         _ => { return Err(format!("Unsupported language for --test-file: {}", lang)); }
@@ -1142,7 +1142,7 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
     // If we have cached Perl code but need to set up temp file and run command
     if lang == "perl" && cached_perl_code.is_some() && tmp_file.is_empty() {
         let tmp = "__tmp_test_output.pl";
-        if let Err(e) = fs::write(tmp, &translated_code) { 
+        if let Err(e) = shared_utils::SharedUtils::write_utf8_file(tmp, &translated_code) { 
             return Err(format!("Failed to write Perl temp file: {}", e)); 
         }
         tmp_file = tmp.to_string();
@@ -1216,7 +1216,7 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
                 let mut gen = Generator::new();
                 let code = gen.generate(&commands);
                 let tmp = "__tmp_test_output.pl";
-                if let Err(e) = fs::write(tmp, &code) { return Err(format!("Failed to write Perl temp file: {}", e)); }
+                if let Err(e) = shared_utils::SharedUtils::write_utf8_file(tmp, &code) { return Err(format!("Failed to write Perl temp file: {}", e)); }
                 (tmp.to_string(), vec!["perl", tmp], code)
             }
             _ => { return Err(format!("Unsupported language for --test-file: {}", lang)); }

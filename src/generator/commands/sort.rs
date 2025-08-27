@@ -32,6 +32,7 @@ pub fn generate_sort_command(_generator: &mut Generator, cmd: &SimpleCommand, in
         output.push_str("@sorted = reverse(@sorted);\n");
     }
     output.push_str(&format!("{} = join(\"\\n\", @sorted);\n", input_var));
+    output.push_str("\n");
     
     output
 }

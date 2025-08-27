@@ -1,5 +1,9 @@
 // Removed unused import: use crate::ast::*;
 
+use std::fs;
+use std::io;
+use std::io::Write;
+
 /// Shared utilities for shell script generators
 pub struct SharedUtils;
 
@@ -13,6 +17,17 @@ impl SharedUtils {
     // Removed unused escape_string_for_language function
 
     /// Generate indentation string    // Removed unused extract_var_name function
+
+    /// Write content to file with proper UTF-8 encoding
+    pub fn write_utf8_file(path: &str, content: &str) -> io::Result<()> {
+        // Ensure the content is valid UTF-8 and write with BOM if needed
+        let mut file = fs::File::create(path)?;
+        // Write UTF-8 BOM for better compatibility
+        file.write_all(&[0xEF, 0xBB, 0xBF])?;
+        file.write_all(content.as_bytes())?;
+        file.flush()?;
+        Ok(())
+    }
 
     /// Check if a string looks like a variable name
     pub fn is_variable_name(s: &str) -> bool {

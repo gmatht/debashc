@@ -28,6 +28,7 @@ pub fn generate_cat_command(generator: &mut Generator, cmd: &SimpleCommand) -> S
     output.push_str(&format!("warn \"cat: {}: No such file or directory\";\n", filename));
     output.push_str("exit(1);\n");
     output.push_str("}\n");
+    output.push_str("\n");
     
     output
 }

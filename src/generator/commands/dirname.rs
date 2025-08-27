@@ -20,6 +20,7 @@ pub fn generate_dirname_command(generator: &mut Generator, cmd: &SimpleCommand, 
         // Default to current directory
         output.push_str(&format!("{} = '.';\n", input_var));
     }
+    output.push_str("\n");
     
     output
 }

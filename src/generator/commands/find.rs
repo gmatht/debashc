@@ -52,6 +52,7 @@ pub fn generate_find_command(generator: &mut Generator, cmd: &SimpleCommand) -> 
     output.push_str("}\n");
     output.push_str(&format!("find_files('{}', '{}');\n", path, pattern));
     output.push_str("my $output = join(\"\\n\", @find_files);\n");
+    output.push_str("\n");
     
     output
 }

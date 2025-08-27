@@ -32,7 +32,13 @@ impl Generator {
         for command in ast {
             // Reset indentation level for each top-level command to prevent staircase effect
             self.indent_level = 0;
-            output.push_str(&self.generate_command(command));
+            let command_output = self.generate_command(command);
+            output.push_str(&command_output);
+            
+            // Ensure proper newline separation between commands
+            if !command_output.ends_with('\n') {
+                output.push('\n');
+            }
         }
         
         output

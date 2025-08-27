@@ -32,6 +32,7 @@ pub fn generate_sed_command(_generator: &mut Generator, cmd: &SimpleCommand, inp
     output.push_str("push @result, $line;\n");
     output.push_str("}\n");
     output.push_str(&format!("{} = join(\"\\n\", @result);\n", input_var));
+    output.push_str("\n");
     
     output
 }

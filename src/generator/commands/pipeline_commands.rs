@@ -54,12 +54,15 @@ pub fn generate_pipeline_impl(generator: &mut Generator, pipeline: &Pipeline) ->
             
             if cmd_name == "cat" {
                 // Use the dedicated cat command function
+                output.push_str(&generator.indent());
                 output.push_str(&generate_cat_command(generator, cmd));
             } else if cmd_name == "find" {
                 // Use the dedicated find command function
+                output.push_str(&generator.indent());
                 output.push_str(&generate_find_command(generator, cmd));
             } else if cmd_name == "ls" {
                 // Use the dedicated ls command function
+                output.push_str(&generator.indent());
                 output.push_str(&generate_ls_command(generator, cmd));
             } else {
                 // First command - capture its output using system command
@@ -78,6 +81,8 @@ pub fn generate_pipeline_impl(generator: &mut Generator, pipeline: &Pipeline) ->
         
         // Generate subsequent commands in the pipeline
         for command in pipeline.commands.iter().skip(1) {
+            // Add newline between pipeline commands for better formatting
+            output.push_str("\n");
             if let Command::Simple(cmd) = command {
                 let cmd_name = match &cmd.name {
                     Word::Literal(s) => s,
@@ -86,90 +91,119 @@ pub fn generate_pipeline_impl(generator: &mut Generator, pipeline: &Pipeline) ->
                 
                 if cmd_name == "grep" {
                     // Use the dedicated grep command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_grep_command(generator, cmd, "$output"));
                 } else if cmd_name == "wc" {
                     // Use the dedicated wc command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_wc_command(generator, cmd, "$output"));
                 } else if cmd_name == "sort" {
                     // Use the dedicated sort command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_sort_command(generator, cmd, "$output"));
                 } else if cmd_name == "uniq" {
                     // Use the dedicated uniq command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_uniq_command(generator, cmd, "$output"));
                 } else if cmd_name == "awk" {
                     // Use the dedicated awk command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_awk_command(generator, cmd, "$output"));
                 } else if cmd_name == "sed" {
                     // Use the dedicated sed command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_sed_command(generator, cmd, "$output"));
                 } else if cmd_name == "comm" {
                     // Use the dedicated comm command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_comm_command(generator, cmd, "$output"));
                 } else if cmd_name == "tr" {
                     // Use the dedicated tr command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_tr_command(generator, cmd, "$output"));
                 } else if cmd_name == "cut" {
                     // Use the dedicated cut command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_cut_command(generator, cmd, "$output"));
                 } else if cmd_name == "basename" {
                     // Use the dedicated basename command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_basename_command(generator, cmd, "$output"));
                 } else if cmd_name == "dirname" {
                     // Use the dedicated dirname command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_dirname_command(generator, cmd, "$output"));
                 } else if cmd_name == "strings" {
                     // Use the dedicated strings command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_strings_command(generator, cmd, "$output"));
                 } else if cmd_name == "tee" {
                     // Use the dedicated tee command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_tee_command(generator, cmd, "$output"));
                 } else if cmd_name == "sha256sum" {
                     // Use the dedicated sha256sum command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_sha256sum_command(generator, cmd, "$output"));
                 } else if cmd_name == "sha512sum" {
                     // Use the dedicated sha512sum command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_sha512sum_command(generator, cmd, "$output"));
                 } else if cmd_name == "gzip" {
                     // Use the dedicated gzip command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_gzip_command(generator, cmd, "$output"));
                 } else if cmd_name == "kill" {
                     // Use the dedicated kill command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_kill_command(generator, cmd));
                 } else if cmd_name == "nohup" {
                     // Use the dedicated nohup command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_nohup_command(generator, cmd));
                 } else if cmd_name == "nice" {
                     // Use the dedicated nice command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_nice_command(generator, cmd));
                 } else if cmd_name == "curl" {
                     // Use the dedicated curl command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_curl_command(generator, cmd));
                 } else if cmd_name == "mkdir" {
                     // Use the dedicated mkdir command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_mkdir_command(generator, cmd));
                 } else if cmd_name == "rm" {
                     // Use the dedicated rm command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_rm_command(generator, cmd));
                 } else if cmd_name == "cp" {
                     // Use the dedicated cp command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_cp_command(generator, cmd));
                 } else if cmd_name == "mv" {
                     // Use the dedicated mv command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_mv_command(generator, cmd));
                 } else if cmd_name == "touch" {
                     // Use the dedicated touch command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_touch_command(generator, cmd));
                 } else if cmd_name == "head" {
                     // Use the dedicated head command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_head_command(generator, cmd, "$output"));
                 } else if cmd_name == "tail" {
                     // Use the dedicated tail command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_tail_command(generator, cmd, "$output"));
                 } else if cmd_name == "find" {
                     // Use the dedicated find command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_find_command(generator, cmd));
                 } else if cmd_name == "xargs" {
                     // Use the dedicated xargs command function
+                    output.push_str(&generator.indent());
                     output.push_str(&generate_xargs_command(generator, cmd, "$output"));
                 } else {
                     // Use backticks for other commands
@@ -227,7 +261,7 @@ pub fn generate_pipeline_impl(generator: &mut Generator, pipeline: &Pipeline) ->
         
         // Output the final result
         output.push_str(&generator.indent());
-        output.push_str("print $output;\n");
+        output.push_str("$output;\n");
         
         generator.indent_level -= 1;
         output.push_str("};\n");

@@ -43,6 +43,7 @@ pub fn generate_tee_command(generator: &mut Generator, cmd: &SimpleCommand, inpu
         // Keep the output for further processing
         output.push_str(&format!("{} = join(\"\\n\", @lines);\n", input_var));
     }
+    output.push_str("\n");
     
     output
 }

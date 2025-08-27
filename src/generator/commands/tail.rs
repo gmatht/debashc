@@ -45,6 +45,7 @@ pub fn generate_tail_command(_generator: &mut Generator, cmd: &SimpleCommand, in
     output.push_str("if ($start_index < 0) { $start_index = 0; }\n");
     output.push_str("my @result = @lines[$start_index..$#lines];\n");
     output.push_str(&format!("{} = join(\"\\n\", @result);\n", input_var));
+    output.push_str("\n");
     
     output
 }

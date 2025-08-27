@@ -87,6 +87,7 @@ pub fn generate_gzip_command(generator: &mut Generator, cmd: &SimpleCommand, inp
         }
         output.push_str(&format!("{} = join(\"\\n\", @results);\n", input_var));
     }
+    output.push_str("\n");
     
     output
 }

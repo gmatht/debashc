@@ -62,6 +62,7 @@ pub fn generate_sha512sum_command(generator: &mut Generator, cmd: &SimpleCommand
         }
         output.push_str(&format!("{} = join(\"\\n\", @results);\n", input_var));
     }
+    output.push_str("\n");
     
     output
 }

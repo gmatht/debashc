@@ -25,6 +25,7 @@ pub fn generate_grep_command(generator: &mut Generator, cmd: &SimpleCommand, inp
         output.push_str(&format!("my @filtered = grep /{}/, @lines;\n", escaped_pattern));
         output.push_str(&format!("{} = join(\"\\n\", @filtered);\n", input_var));
     }
+    output.push_str("\n");
     
     output
 }
