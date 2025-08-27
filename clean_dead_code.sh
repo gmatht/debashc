@@ -142,7 +142,36 @@ if [ "$REMOVE_DEAD_CODE" = "true" ] || [ "$DRY_RUN" = "true" ]; then
     
     # Get unique files with dead code using a more robust approach for Windows paths
     echo -e "${BLUE}  Extracting files with dead code...${NC}"
-    files_to_process=$(grep "never used" cargo_check_output.tmp | awk '/-->/ {print}' | awk -F"-->" '{print $2}' | awk -F":" '{print $1}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sort -u | awk '$0 ~ /^src/ || $0 ~ /^src\\\\/ {print}' || true)
+    # Extract files with dead code - handle both Windows and Unix paths
+    echo -e "${BLUE}  Raw cargo check output for debugging:${NC}"
+    grep "never used" cargo_check_output.tmp | head -5
+    
+    # The file paths are on the next line after "never used" warnings
+    # Use a Windows-compatible approach with awk
+    files_to_process=$(awk '
+        /warning:.*never used/ {
+            # Read the next line to get the file path
+            getline next_line
+            if (next_line ~ /-->/) {
+                # Extract file path from the --> line
+                split(next_line, parts, "-->")
+                if (length(parts) >= 2) {
+                    # Extract just the file path part (before the colon)
+                    split(parts[2], file_parts, ":")
+                    if (length(file_parts) >= 1) {
+                        # Clean up the file path
+                        gsub(/^[[:space:]]+|[[:space:]]+$/, "", file_parts[1])
+                        if (file_parts[1] ~ /^src/) {
+                            print file_parts[1]
+                        }
+                    }
+                }
+            }
+        }
+    ' cargo_check_output.tmp | sort -u)
+    
+    echo -e "${BLUE}  Extracted file paths:${NC}"
+    echo "$files_to_process"
     
     if [ -z "$files_to_process" ]; then
         echo -e "${YELLOW}  No source files with dead code found to process${NC}"
@@ -157,18 +186,55 @@ if [ "$REMOVE_DEAD_CODE" = "true" ] || [ "$DRY_RUN" = "true" ]; then
                 echo -e "${BLUE}  Processing: $file_path${NC}"
                 
                 if [ "$DRY_RUN" = "false" ]; then
-                # Create backup
-                backup_file="$BACKUP_DIR/$(basename "$file_path")"
-                cp "$file_path" "$backup_file"
-                echo -e "${GREEN}    ✅ Backup created: $backup_file${NC}"
-            fi
+                    # Create backup
+                    backup_file="$BACKUP_DIR/$(basename "$file_path")"
+                    cp "$file_path" "$backup_file"
+                    echo -e "${GREEN}    ✅ Backup created: $backup_file${NC}"
+                fi
+                
+                # Get functions to remove from this file - handle Windows paths properly
+                echo -e "${BLUE}    Looking for functions in: $file_path${NC}"
+                
+                # Use a Windows-compatible approach to extract functions from this specific file
+                functions_to_remove=$(awk -v target_file="$file_path" '
+                    /warning:.*never used/ {
+                        # Read the next line to get the file path
+                        getline next_line
+                        if (next_line ~ /-->/) {
+                            # Extract file path from the --> line
+                            split(next_line, parts, "-->")
+                            if (length(parts) >= 2) {
+                                # Extract just the file path part (before the colon)
+                                split(parts[2], file_parts, ":")
+                                if (length(file_parts) >= 1) {
+                                    # Clean up the file path
+                                    gsub(/^[[:space:]]+|[[:space:]]+$/, "", file_parts[1])
+                                    # Check if this warning is for our target file
+                                    if (file_parts[1] == target_file) {
+                                        # Extract function name from the warning line
+                                        if ($0 ~ /`/) {
+                                            split($0, func_parts, "`")
+                                            if (length(func_parts) >= 2) {
+                                                print func_parts[2]
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ' cargo_check_output.tmp)
+                
+                if [ -n "$functions_to_remove" ]; then
+                    echo -e "${YELLOW}      Found functions to remove: $functions_to_remove${NC}"
+                else
+                    echo -e "${YELLOW}      No functions found to remove from this file${NC}"
+                fi
             
-            # Get functions to remove from this file
-            functions_to_remove=$(grep "never used" cargo_check_output.tmp | grep "--> $file_path" | awk -F"\`" '{print $2}' 2>/dev/null)
-            
-            if [ "$DRY_RUN" = "false" ]; then
-                # Remove dead functions using Python
-                python3 -c "
+                if [ "$DRY_RUN" = "false" ] && [ -n "$functions_to_remove" ]; then
+                    echo -e "${BLUE}    Removing functions: $functions_to_remove${NC}"
+                    # Remove dead functions using Python
+                    python3 -c "
 import re
 import sys
 
