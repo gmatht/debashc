@@ -425,7 +425,7 @@ impl Parser {
         
         // Check if this is a builtin command
         if let Word::Literal(name_str) = &name {
-            if is_builtin_command(name_str) {
+            if is_builtin_command(&name_str) {
                 // Parse as builtin command
                 while let Some(token) = self.lexer.peek() {
                     match token {

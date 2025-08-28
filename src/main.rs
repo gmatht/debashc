@@ -988,6 +988,12 @@ fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
         "perl" => {
             let mut gen = Generator::new();
             let code = gen.generate(&commands);
+            
+            // Check PERL_MUST_NOT_CONTAIN constraints for Perl code
+            if let Err(violation_msg) = check_perl_must_not_contain(&shell_content, &code) {
+                return Err(format!("PERL_MUST_NOT_CONTAIN constraint violation in {}:\n{}", filename, violation_msg));
+            }
+            
             let tmp = "examples/__tmp_test_output.pl";
             if let Err(e) = shared_utils::SharedUtils::write_utf8_file(tmp, &code) { return Err(format!("Failed to write Perl temp file: {}", e)); }
             (tmp.to_string(), vec!["perl", "__tmp_test_output.pl"])
@@ -1230,6 +1236,13 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
         // Cache the Perl code if we generated it
         if lang == "perl" {
             // We'll update the cache after running the Perl code to store the output
+        }
+    }
+    
+    // Check PERL_MUST_NOT_CONTAIN constraints for Perl code
+    if lang == "perl" {
+        if let Err(violation_msg) = check_perl_must_not_contain(&shell_content, &translated_code) {
+            return Err(format!("PERL_MUST_NOT_CONTAIN constraint violation in {}:\n{}", filename, violation_msg));
         }
     }
     
@@ -2107,5 +2120,32 @@ mod tests {
         let input = "echo hello world";
         let result = Parser::new(input).parse();
         assert!(result.is_ok());
+    }
+}
+
+/// Check if the generated Perl code contains forbidden patterns specified in PERL_MUST_NOT_CONTAIN comments
+fn check_perl_must_not_contain(shell_content: &str, perl_code: &str) -> Result<(), String> {
+    let lines: Vec<&str> = shell_content.lines().collect();
+    let mut violations = Vec::new();
+    
+    for (line_num, line) in lines.iter().enumerate() {
+        if line.contains("#PERL_MUST_NOT_CONTAIN:") {
+            // Extract the forbidden pattern after the comment
+            if let Some(pattern_start) = line.find("#PERL_MUST_NOT_CONTAIN:") {
+                let pattern = line[pattern_start + "#PERL_MUST_NOT_CONTAIN:".len()..].trim();
+                if !pattern.is_empty() {
+                    // Check if the forbidden pattern exists in the generated Perl code
+                    if perl_code.contains(pattern) {
+                        violations.push(format!("Line {}: Found forbidden pattern '{}' in generated Perl code", line_num + 1, pattern));
+                    }
+                }
+            }
+        }
+    }
+    
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("PERL_MUST_NOT_CONTAIN violations:\n{}", violations.join("\n")))
     }
 }
