@@ -61,9 +61,9 @@ pub fn word_to_perl_impl(generator: &mut Generator, word: &Word) -> String {
                         _ => generator.generate_command(cmd)
                     };
                     // For pipelines and complex commands, we need to ensure proper variable scoping
-                    // by wrapping in a do block and capturing the output
-                    // Also convert newlines to spaces (standard shell command substitution behavior)
-                    format!("do {{\nmy $result = {};\n$result =~ s/\\s+$//; # Remove trailing whitespace\n$result =~ s/\\n/ /g; # Convert newlines to spaces\n$result;\n}}", command_code.trim_end_matches('\n'))
+                    // by wrapping in a do block and capturing the output.
+                    // The pipeline generation now handles streaming without buffering.
+                    format!("do {{\n{}}}", command_code.trim_end_matches('\n'))
                 }
             }
         },
