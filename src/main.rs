@@ -1738,45 +1738,69 @@ fn generate_unified_diff(expected: &str, actual: &str, expected_label: &str, act
     diff.push_str(&format!("--- {}\n", expected_label));
     diff.push_str(&format!("+++ {}\n", actual_label));
     
-    // Only show lines that differ, with minimal context
-    let max_lines = expected_lines.len().max(actual_lines.len());
+    // Find the longest common subsequence to identify unchanged lines
     let mut i = 0;
+    let mut j = 0;
     
-    while i < max_lines {
-        let expected_line = expected_lines.get(i).unwrap_or(&"");
-        let actual_line = actual_lines.get(i).unwrap_or(&"");
-        
-        if expected_line == actual_line {
-            // Skip identical lines to reduce noise
+    while i < expected_lines.len() && j < actual_lines.len() {
+        if expected_lines[i] == actual_lines[j] {
+            // Lines are identical - show with space prefix
+            diff.push_str(&format!(" {}\n", expected_lines[i]));
             i += 1;
-            continue;
-        }
-        
-        // Show context before the difference (up to 1 line)
-        if i > 0 {
-            let prev_line = expected_lines.get(i - 1).unwrap_or(&"");
-            if !prev_line.is_empty() {
-                diff.push_str(&format!(" {}\n", prev_line));
+            j += 1;
+        } else {
+            // Lines differ - need to find the next match
+            let mut found_match = false;
+            
+            // Look ahead in expected lines for a match
+            for look_ahead in i + 1..expected_lines.len() {
+                if look_ahead < expected_lines.len() && j < actual_lines.len() && 
+                   expected_lines[look_ahead] == actual_lines[j] {
+                    // Found a match ahead - the lines from i to look_ahead-1 were deleted
+                    for k in i..look_ahead {
+                        diff.push_str(&format!("-{}\n", expected_lines[k]));
+                    }
+                    i = look_ahead;
+                    found_match = true;
+                    break;
+                }
+            }
+            
+            // Look ahead in actual lines for a match
+            if !found_match {
+                for look_ahead in j + 1..actual_lines.len() {
+                    if i < expected_lines.len() && look_ahead < actual_lines.len() && 
+                       expected_lines[i] == actual_lines[look_ahead] {
+                        // Found a match ahead - the lines from j to look_ahead-1 were inserted
+                        for k in j..look_ahead {
+                            diff.push_str(&format!("+{}\n", actual_lines[k]));
+                        }
+                        j = look_ahead;
+                        found_match = true;
+                        break;
+                    }
+                }
+            }
+            
+            // If no match found ahead, treat as modification
+            if !found_match {
+                diff.push_str(&format!("-{}\n", expected_lines[i]));
+                diff.push_str(&format!("+{}\n", actual_lines[j]));
+                i += 1;
+                j += 1;
             }
         }
-        
-        // Show the differing lines
-        if !expected_line.is_empty() {
-            diff.push_str(&format!("-{}\n", expected_line));
-        }
-        if !actual_line.is_empty() {
-            diff.push_str(&format!("+{}\n", actual_line));
-        }
-        
-        // Show context after the difference (up to 1 line)
-        if i + 1 < max_lines {
-            let next_line = expected_lines.get(i + 1).unwrap_or(&"");
-            if !next_line.is_empty() {
-                diff.push_str(&format!(" {}\n", next_line));
-            }
-        }
-        
+    }
+    
+    // Handle remaining lines
+    while i < expected_lines.len() {
+        diff.push_str(&format!("-{}\n", expected_lines[i]));
         i += 1;
+    }
+    
+    while j < actual_lines.len() {
+        diff.push_str(&format!("+{}\n", actual_lines[j]));
+        j += 1;
     }
     
     diff
@@ -2106,7 +2130,6 @@ fn show_help(program_name: &str) {
         println!("                                   - If NUM is provided, run only the NUMth test");
         println!("  fail [NUM] [gen1 gen2 ...]      - Shorthand for --next-fail");
                         println!("  --clear-cache                    - Clear the command cache");
-                        println!("  --diff <file1> <file2>          - Manually diff two files");
     println!();
     println!("AST FORMATTING OPTIONS (for --next-fail):");
     println!();
@@ -2131,7 +2154,6 @@ fn show_help(program_name: &str) {
         println!("  {} --next-fail perl", program_name);
         println!("  {} --next-fail 10 perl --ast-pretty", program_name);
     println!("  {} --clear-cache", program_name);
-    println!("  {} --diff file1.txt file2.txt", program_name);
     println!();
     println!("DIRECT EXECUTION EXAMPLES:");
     println!("  {} examples/simple.sh           - Run shell script directly", program_name);
