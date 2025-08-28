@@ -4,30 +4,54 @@ use crate::generator::Generator;
 fn generate_ls_helper(generator: &mut Generator, dir: &str, array_name: &str, sort_files: bool) -> String {
     let mut output = String::new();
     
+    // Always declare the array first
     output.push_str(&generator.indent());
     output.push_str(&format!("my @{};\n", array_name));
-    output.push_str(&generator.indent());
-    output.push_str(&format!("if (opendir(my $dh, '{}')) {{\n", dir));
-    generator.indent_level += 1;
-    output.push_str(&generator.indent());
-    output.push_str("while (my $file = readdir($dh)) {\n");
-    generator.indent_level += 1;
-    output.push_str(&generator.indent());
-    output.push_str("next if $file eq '.' || $file eq '..';\n");
-    output.push_str(&generator.indent());
-    output.push_str(&format!("push @{}, $file;\n", array_name));
-    generator.indent_level -= 1;
-    output.push_str(&generator.indent());
-    output.push_str("}\n");
-    output.push_str(&generator.indent());
-    output.push_str("closedir($dh);\n");
+    
     if sort_files {
+        // For sorting, we still need to collect files first
+        output.push_str(&generator.indent());
+        output.push_str(&format!("if (opendir(my $dh, '{}')) {{\n", dir));
+        generator.indent_level += 1;
+        output.push_str(&generator.indent());
+        output.push_str("while (my $file = readdir($dh)) {\n");
+        generator.indent_level += 1;
+        output.push_str(&generator.indent());
+        output.push_str("next if $file eq '.' || $file eq '..';\n");
+        output.push_str(&generator.indent());
+        output.push_str(&format!("push @{}, $file;\n", array_name));
+        generator.indent_level -= 1;
+        output.push_str(&generator.indent());
+        output.push_str("}\n");
+        output.push_str(&generator.indent());
+        output.push_str("closedir($dh);\n");
         output.push_str(&generator.indent());
         output.push_str(&format!("@{} = sort {{ $a cmp $b }} @{};\n", array_name, array_name));
+        generator.indent_level -= 1;
+        output.push_str(&generator.indent());
+        output.push_str("}\n");
+    } else {
+        // For non-sorting, collect to array instead of printing directly
+        // This is needed for pipeline context where we need the array
+        output.push_str(&generator.indent());
+        output.push_str(&format!("if (opendir(my $dh, '{}')) {{\n", dir));
+        generator.indent_level += 1;
+        output.push_str(&generator.indent());
+        output.push_str("while (my $file = readdir($dh)) {\n");
+        generator.indent_level += 1;
+        output.push_str(&generator.indent());
+        output.push_str("next if $file eq '.' || $file eq '..';\n");
+        output.push_str(&generator.indent());
+        output.push_str(&format!("push @{}, $file;\n", array_name));
+        generator.indent_level -= 1;
+        output.push_str(&generator.indent());
+        output.push_str("}\n");
+        output.push_str(&generator.indent());
+        output.push_str("closedir($dh);\n");
+        generator.indent_level -= 1;
+        output.push_str(&generator.indent());
+        output.push_str("}\n");
     }
-    generator.indent_level -= 1;
-    output.push_str(&generator.indent());
-    output.push_str("}\n");
     
     output
 }
@@ -56,24 +80,22 @@ pub fn generate_ls_command(generator: &mut Generator, cmd: &SimpleCommand, pipel
         }
     }
     
-    output.push_str(&generate_ls_helper(generator, dir, "ls_files", !single_column));
-    
     // Only print files if not in pipeline context
     if !pipeline_context {
-        output.push_str(&generator.indent());
         if single_column {
             // -1 flag: one file per line, preserve directory order (no sorting)
-            output.push_str("foreach my $file (@ls_files) {\n");
-            generator.indent_level += 1;
-            output.push_str(&generator.indent());
-            output.push_str("print \"$file\\n\";\n");
-            generator.indent_level -= 1;
-            output.push_str(&generator.indent());
-            output.push_str("}\n");
+            output.push_str(&generate_ls_helper(generator, dir, "ls_files", false));
         } else {
             // Default: space-separated on one line, with sorting
+            output.push_str(&generate_ls_helper(generator, dir, "ls_files", true));
+            output.push_str(&generator.indent());
             output.push_str("print join(\" \", @ls_files) . \"\\n\";\n");
         }
+    } else {
+        // In pipeline context, always collect to array for output
+        // For -1 flag, we want newline-separated output, so use single_column=true
+        // For other flags, we want space-separated output, so use single_column=false
+        output.push_str(&generate_ls_helper(generator, dir, "ls_files", single_column));
     }
     
     output

@@ -46,7 +46,13 @@ pub fn generate_grep_command(generator: &mut Generator, cmd: &SimpleCommand, inp
         } else {
             &escaped_pattern
         };
-        output.push_str(&format!("my @grep_filtered_{} = grep /{}/, @grep_lines_{};\n", command_index, regex_pattern, command_index));
+        if invert_match {
+            // Negative grep: exclude lines that match the pattern
+            output.push_str(&format!("my @grep_filtered_{} = grep !/{}/, @grep_lines_{};\n", command_index, regex_pattern, command_index));
+        } else {
+            // Positive grep: include lines that match the pattern
+            output.push_str(&format!("my @grep_filtered_{} = grep /{}/, @grep_lines_{};\n", command_index, regex_pattern, command_index));
+        }
         
         if count_only {
             output.push_str(&format!("{} = scalar(@grep_filtered_{});\n", input_var, command_index));

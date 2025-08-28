@@ -50,8 +50,20 @@ pub fn word_to_perl_impl(generator: &mut Generator, word: &Word) -> String {
                     }
                 },
                 _ => {
-                    // For other command types, fall back to generating the command
-                    format!("`{}`", generator.generate_command(cmd))
+                    // For other command types (like pipelines), generate the command
+                    // and wrap it in a way that ensures proper variable scoping
+                    let command_code = match &**cmd {
+                        Command::Pipeline(pipeline) => {
+                            // For pipelines in command substitution, don't print, just return the value
+                            use crate::generator::commands::pipeline_commands::generate_pipeline_with_print_option;
+                            generate_pipeline_with_print_option(generator, pipeline, false)
+                        },
+                        _ => generator.generate_command(cmd)
+                    };
+                    // For pipelines and complex commands, we need to ensure proper variable scoping
+                    // by wrapping in a do block and capturing the output
+                    // Also convert newlines to spaces (standard shell command substitution behavior)
+                    format!("do {{\nmy $result = {};\n$result =~ s/\\s+$//; # Remove trailing whitespace\n$result =~ s/\\n/ /g; # Convert newlines to spaces\n$result;\n}}", command_code.trim_end_matches('\n'))
                 }
             }
         },

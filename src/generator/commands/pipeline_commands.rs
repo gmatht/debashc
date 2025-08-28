@@ -2,6 +2,10 @@ use crate::generator::Generator;
 use crate::ast::*;
 
 pub fn generate_pipeline_impl(generator: &mut Generator, pipeline: &Pipeline) -> String {
+    generate_pipeline_with_print_option(generator, pipeline, true)
+}
+
+pub fn generate_pipeline_with_print_option(generator: &mut Generator, pipeline: &Pipeline, should_print: bool) -> String {
     let mut output = String::new();
     
     if pipeline.commands.len() == 1 {
@@ -202,11 +206,17 @@ pub fn generate_pipeline_impl(generator: &mut Generator, pipeline: &Pipeline) ->
             }
         }
         
-        // Output the final result
-        output.push_str(&generator.indent());
-        output.push_str("print $output;\n");
-        output.push_str(&generator.indent());
-        output.push_str("print \"\\n\";\n");
+        if should_print {
+            // Output the final result
+            output.push_str(&generator.indent());
+            output.push_str("print $output;\n");
+            output.push_str(&generator.indent());
+            output.push_str("print \"\\n\";\n");
+        } else {
+            // Just return the output value for command substitution
+            output.push_str(&generator.indent());
+            output.push_str("$output;\n");
+        }
         
         // Close the do block
         generator.indent_level -= 1;
