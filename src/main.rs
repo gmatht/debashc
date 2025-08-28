@@ -1058,11 +1058,20 @@ fn test_file_equivalence(lang: &str, filename: &str) -> Result<(), String> {
             out
         } else {
             let mut cmd = Command::new(run_cmd[0]);
-            for a in &run_cmd[1..] { cmd.arg(a); }
             
-            // For Perl scripts, change to examples directory first to match shell script behavior
+            // For Perl scripts, handle the file path replacement
             if lang == "perl" {
                 cmd.current_dir("examples");
+                // Replace TEMP_FILE placeholder with actual file path
+                for a in &run_cmd[1..] {
+                    if *a == "TEMP_FILE" {
+                        cmd.arg(&tmp_file);
+                    } else {
+                        cmd.arg(a);
+                    }
+                }
+            } else {
+                for a in &run_cmd[1..] { cmd.arg(a); }
             }
             
             let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
@@ -1316,11 +1325,20 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
             out
         } else {
             let mut cmd = Command::new(run_cmd[0]);
-            for a in &run_cmd[1..] { cmd.arg(a); }
             
-            // For Perl scripts, change to examples directory first to match shell script behavior
+            // For Perl scripts, handle the file path replacement
             if lang == "perl" {
                 cmd.current_dir("examples");
+                // Replace TEMP_FILE placeholder with actual file path
+                for a in &run_cmd[1..] {
+                    if *a == "TEMP_FILE" {
+                        cmd.arg(&tmp_file);
+                    } else {
+                        cmd.arg(a);
+                    }
+                }
+            } else {
+                for a in &run_cmd[1..] { cmd.arg(a); }
             }
             
             let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {

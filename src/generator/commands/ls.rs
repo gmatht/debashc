@@ -80,12 +80,23 @@ pub fn generate_ls_command(generator: &mut Generator, cmd: &SimpleCommand, pipel
 }
 
 pub fn generate_ls_for_substitution(generator: &mut Generator, cmd: &SimpleCommand) -> String {
-    // Parse ls arguments to determine directory
+    // Parse ls arguments to determine directory and flags
     let mut dir = ".";
+    let mut single_column = false; // Default to multi-column (space-separated) like shell ls
     
     for arg in &cmd.args {
         if let Word::Literal(s) = arg {
-            if !s.starts_with('-') {
+            if s.starts_with('-') {
+                // Parse flags
+                for flag in s.chars().skip(1) {
+                    match flag {
+                        '1' => single_column = true,  // -1 flag: explicit single column (newline-separated)
+                        'C' => single_column = false, // -C flag: multi-column (space-separated)
+                        'x' => single_column = false, // -x flag: multi-column (space-separated)
+                        _ => {} // Ignore other flags for now
+                    }
+                }
+            } else {
                 // This is a directory argument (not a flag)
                 dir = s;
             }
@@ -95,9 +106,15 @@ pub fn generate_ls_for_substitution(generator: &mut Generator, cmd: &SimpleComma
     let mut output = String::new();
     output.push_str("do {\n");
     generator.indent_level += 1;
-    output.push_str(&generate_ls_helper(generator, dir, "ls_files_sub", true));
+    output.push_str(&generate_ls_helper(generator, dir, "ls_files_sub", !single_column));
     output.push_str(&generator.indent());
-    output.push_str("join(\" \", @ls_files_sub);\n");
+    if single_column {
+        // -1 flag: join with newlines to preserve one file per line
+        output.push_str("join(\"\\n\", @ls_files_sub);\n");
+    } else {
+        // Default behavior and -C or -x flags: join with spaces for multi-column output
+        output.push_str("join(\" \", @ls_files_sub);\n");
+    }
     generator.indent_level -= 1;
     output.push_str(&generator.indent());
     output.push_str("}");
