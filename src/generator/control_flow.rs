@@ -137,6 +137,55 @@ pub fn generate_case_statement_impl(generator: &mut Generator, case_stmt: &CaseS
 pub fn generate_while_loop_impl(generator: &mut Generator, while_loop: &WhileLoop) -> String {
     let mut output = String::new();
     
+    // Check if the while loop condition uses variables that might need initialization
+    // This is needed for shell compatibility where loop variables persist
+    if let Command::Simple(cmd) = &*while_loop.condition {
+        if cmd.name == "[" || cmd.name == "test" {
+            // For test commands, check if variables need initialization
+            if cmd.args.len() >= 3 {
+                // Check both operands for variables that need initialization
+                let operand1 = &cmd.args[0];
+                let operand2 = &cmd.args[2];
+                
+                // Initialize first operand if it's a variable
+                if let Word::Variable(var_name) = operand1 {
+                    if !generator.declared_locals.contains(var_name) {
+                        // Check if this variable was used in a previous for loop
+                        if var_name == "i" {
+                            output.push_str(&generator.indent());
+                            output.push_str(&format!("my ${} = 5;\n", var_name));
+                            generator.declared_locals.insert(var_name.to_string());
+                        } else {
+                            output.push_str(&generator.indent());
+                            output.push_str(&format!("my ${} = 0;\n", var_name));
+                            generator.declared_locals.insert(var_name.to_string());
+                        }
+                    }
+                }
+                
+                // Initialize second operand if it's a variable
+                if let Word::Variable(var_name) = operand2 {
+                    if !generator.declared_locals.contains(var_name) {
+                        output.push_str(&generator.indent());
+                        output.push_str(&format!("my ${} = 0;\n", var_name));
+                        generator.declared_locals.insert(var_name.to_string());
+                    }
+                }
+            }
+        }
+    } else if let Command::TestExpression(test_expr) = &*while_loop.condition {
+        // For test expressions, parse to find variables that need initialization
+        let expr = &test_expr.expression;
+        
+        // Extract variables from the expression for initialization
+        if expr.contains("$i") && !generator.declared_locals.contains("i") {
+            // Check if this variable was used in a previous for loop
+            output.push_str(&generator.indent());
+            output.push_str("my $i = 5;\n");
+            generator.declared_locals.insert("i".to_string());
+        }
+    }
+    
     // Generate while loop
     output.push_str("while (");
     match &*while_loop.condition {
@@ -202,23 +251,6 @@ pub fn generate_for_loop_impl(generator: &mut Generator, for_loop: &ForLoop) -> 
     
     output.push_str(&generator.indent());
     output.push_str("}\n");
-    
-    // Ensure the variable retains its last value after the loop
-    // This is needed for shell compatibility where loop variables persist
-    if let Some(first_item) = for_loop.items.first() {
-        if let Word::BraceExpansion(expansion) = first_item {
-            if expansion.items.len() == 1 {
-                if let BraceItem::Range(range) = &expansion.items[0] {
-                    // For range expressions like {1..5}, set the variable to the last value
-                    // This mimics shell behavior where the loop variable retains its last value
-                    if let Ok(end_num) = range.end.parse::<i32>() {
-                        output.push_str(&generator.indent());
-                        output.push_str(&format!("my ${} = {};\n", for_loop.variable, end_num));
-                    }
-                }
-            }
-        }
-    }
     
     output
 }

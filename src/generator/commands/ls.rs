@@ -60,7 +60,7 @@ pub fn generate_ls_for_substitution(generator: &mut Generator, cmd: &SimpleComma
     generator.indent_level += 1;
     output.push_str(&generate_ls_helper(generator, dir, "ls_files_sub"));
     output.push_str(&generator.indent());
-    output.push_str("join(\"\\n\", @ls_files_sub);\n");
+    output.push_str("join(\" \", @ls_files_sub);\n");
     generator.indent_level -= 1;
     output.push_str(&generator.indent());
     output.push_str("}");
