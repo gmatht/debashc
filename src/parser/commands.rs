@@ -375,7 +375,7 @@ impl Parser {
                                     env_vars.insert(var_name, array_word);
                                     self.lexer.skip_whitespace_and_comments();
                                 } else {
-                                    // Handle regular assignment like: var=value
+                                    // Handle regular assignment like: var=value or map[foo]=bar
                                     let var_name = self.lexer.get_identifier_text()?;
                                     self.lexer.next(); // consume =
                                     let value_word = parse_word(&mut self.lexer)?;
@@ -391,65 +391,78 @@ impl Parser {
                         break;
                     }
                 }
+                // Handle array subscript assignments like map[foo]=bar
+                Token::CasePattern => {
+                    // This might be an array subscript assignment like map[foo]=bar
+                    // We need to look ahead to see if this is followed by = and a value
+                    let array_access = parse_word(&mut self.lexer)?;
+                    if let Some(Token::Assign) = self.lexer.peek() {
+                        self.lexer.next(); // consume =
+                        let value_word = parse_word(&mut self.lexer)?;
+                        // Convert array access to a string representation for the environment variable key
+                        let key = array_access.to_string();
+                        env_vars.insert(key, value_word);
+                        self.lexer.skip_whitespace_and_comments();
+                    } else {
+                        // Not an assignment, break out of assignment parsing
+                        break;
+                    }
+                }
+
                 _ => break,
             }
         }
         
-        // Parse command name
-        let mut is_double_bracket = false;
-        let name = if let Some(token) = self.lexer.peek() {
-            match token {
-                Token::Identifier => {
-                    let name = self.lexer.get_identifier_text()?;
-                    self.lexer.next(); // consume the identifier
-                    Word::Literal(name)
-                }
-                Token::Set | Token::Export | Token::Readonly | Token::Local | Token::Declare | Token::Typeset |
-                Token::Unset | Token::Shift | Token::Eval | Token::Exec | Token::Source | Token::Trap | Token::Wait | Token::Shopt | Token::Exit => {
-                    Word::Literal(self.lexer.get_raw_token_text()?)
-                }
-                Token::TestBracket => {
-                    self.lexer.next(); // consume the first [
-                    if let Some(Token::TestBracket) = self.lexer.peek() {
-                        self.lexer.next(); // consume the second [
-                        is_double_bracket = true;
-                        Word::Literal("[[".to_string())
-                    } else {
-                        Word::Literal("[".to_string())
-                    }
-                }
-                Token::True => {
-                    self.lexer.next(); // consume true
-                    Word::Literal("true".to_string())
-                }
-                Token::False => {
-                    self.lexer.next(); // consume false
-                    Word::Literal("false".to_string())
-                }
-                Token::Dollar | Token::DollarBrace | Token::DollarParen
-                | Token::DollarBraceHash | Token::DollarBraceBang | Token::DollarBraceStar | Token::DollarBraceAt
-                | Token::DollarBraceHashStar | Token::DollarBraceHashAt | Token::DollarBraceBangStar | Token::DollarBraceBangAt => {
-                    self.parse_variable_expansion()?
-                }
-                Token::Arithmetic => {
-                    self.parse_arithmetic_expression()?
-                }
-                Token::DoubleQuotedString | Token::SingleQuotedString => {
-                    // Handle quoted command names like "ls" or 'grep'
-                    parse_word(&mut self.lexer)?
-                }
+        // Check for double-bracket test [[ ... ]]
+        let is_double_bracket = matches!(self.lexer.peek(), Some(Token::TestBracket)) 
+            && matches!(self.lexer.peek_n(1), Some(Token::TestBracket));
 
-                _ => {
-                    let (line, col) = self.lexer.offset_to_line_col(0);
-                    return Err(ParserError::UnexpectedToken { token: token.to_owned(), line, col });
-                }
-            }
-        } else {
-            return Err(ParserError::UnexpectedEOF);
-        };
+        // Parse the command name first
+        let name = parse_word(&mut self.lexer)?;
         
         // Skip inline whitespace before parsing arguments (but stop at newlines)
         self.lexer.skip_inline_whitespace_and_comments();
+        
+        // Check if this is a builtin command
+        if let Word::Literal(name_str) = &name {
+            if is_builtin_command(name_str) {
+                // Parse as builtin command
+                while let Some(token) = self.lexer.peek() {
+                    match token {
+                        Token::Space | Token::Tab | Token::Comment => {
+                            // Skip inline whitespace and comments, but continue parsing arguments
+                            self.lexer.next();
+                            continue;
+                        }
+                        Token::Newline | Token::CarriageReturn => {
+                            // Newlines should break argument parsing as they separate commands
+                            break;
+                        }
+                        Token::ParenClose => {
+                            // Stop parsing arguments when we hit a closing parenthesis
+                            break;
+                        }
+                        Token::RedirectIn | Token::RedirectOut | Token::RedirectAppend | Token::RedirectInErr | Token::RedirectOutErr | Token::RedirectInOut | Token::Heredoc | Token::HeredocTabs | Token::HereString => {
+                            break;
+                        }
+                        Token::Pipe | Token::And | Token::Or | Token::Semicolon | Token::Background => {
+                            break;
+                        }
+                        _ => {
+                            // For any other token, try to parse it as a word
+                            args.push(parse_word_no_newline_skip(&mut self.lexer)?);
+                        }
+                    }
+                }
+                
+                return Ok(Command::BuiltinCommand(BuiltinCommand {
+                    name: name_str.clone(),
+                    args,
+                    redirects,
+                    env_vars,
+                }));
+            }
+        }
         
         // Special handling for Bash double-bracket test: capture everything until closing ']]'
         if is_double_bracket {
@@ -565,7 +578,13 @@ impl Parser {
         }
         
         // Parse the value
-        let value_word = parse_word(&mut self.lexer)?;
+        let value_word = if matches!(self.lexer.peek(), Some(Token::ParenOpen)) {
+            // This is an array assignment like arr=(one two three)
+            let elements = parse_array_elements(&mut self.lexer)?;
+            Word::Array(var_name.clone(), elements)
+        } else {
+            parse_word(&mut self.lexer)?
+        };
         
         // Check if there's a command following this assignment
         self.lexer.skip_whitespace_and_comments();
@@ -898,6 +917,14 @@ impl Parser {
     fn get_current_shopt_state(&self) -> TestModifiers {
         self.shopt_state.to_owned()
     }
+}
+
+fn is_builtin_command(name: &str) -> bool {
+    matches!(name, 
+        "set" | "unset" | "export" | "readonly" | "declare" | "typeset" | 
+        "local" | "shift" | "eval" | "exec" | "source" | "trap" | "wait" | 
+        "shopt" | "exit" | "return" | "break" | "continue"
+    )
 }
 
 // Re-export the main parsing function

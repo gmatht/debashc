@@ -84,6 +84,11 @@ pub fn parse_array_elements(lexer: &mut Lexer) -> Result<Vec<String>, ParserErro
         println!("DEBUG: Loop {}: token = {:?}, current_element = '{}'", loop_count, token, current_element);
         
         match token {
+            None => {
+                // End of tokens reached, break out of the loop
+                println!("DEBUG: End of tokens reached, breaking");
+                break;
+            }
             Some(Token::ParenClose) => {
                 println!("DEBUG: Found closing parenthesis, adding current_element: '{}'", current_element);
                 if !current_element.is_empty() {

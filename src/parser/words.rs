@@ -34,11 +34,11 @@ pub fn parse_word(lexer: &mut Lexer) -> Result<Word, ParserError> {
         Some(Token::OctalNumber) => Ok(Word::Literal(lexer.get_raw_token_text()?)),
         Some(Token::DoubleQuotedString) => {
             // Always parse as string interpolation for double-quoted strings
-            // This handles both simple strings and strings with variables
+            // This handles both strings and strings with variables
             Ok(parse_string_interpolation(lexer)?)
         },
         Some(Token::SingleQuotedString) => Ok(Word::Literal(lexer.get_string_text()?)),
-        Some(Token::BacktickString) => Ok(Word::Literal(lexer.get_raw_token_text()?)),
+        Some(Token::BacktickString) => parse_backtick_command_substitution(lexer),
         Some(Token::DollarSingleQuotedString) => Ok(parse_ansic_quoted_string(lexer)?),
         Some(Token::DollarDoubleQuotedString) => Ok(parse_string_interpolation(lexer)?),
         Some(Token::BraceOpen) => Ok(parse_brace_expansion(lexer)?),
@@ -46,6 +46,16 @@ pub fn parse_word(lexer: &mut Lexer) -> Result<Word, ParserError> {
             // Treat standalone 'source' as a normal word (e.g., `source file.sh`)
             lexer.next();
             Ok(Word::Literal("source".to_string()))
+        }
+        Some(Token::Set) => {
+            // Treat standalone 'set' as a normal word (e.g., `set -euo pipefail`)
+            lexer.next();
+            Ok(Word::Literal("set".to_string()))
+        }
+        Some(Token::Declare) => {
+            // Treat standalone 'declare' as a normal word (e.g., `declare -a arr`)
+            lexer.next();
+            Ok(Word::Literal("declare".to_string()))
         }
         Some(Token::Range) => {
             // Treat standalone '..' as a literal (e.g., `cd ..`)
@@ -204,7 +214,7 @@ pub fn parse_word_no_newline_skip(lexer: &mut Lexer) -> Result<Word, ParserError
             Ok(parse_string_interpolation(lexer)?)
         },
         Some(Token::SingleQuotedString) => Ok(Word::Literal(lexer.get_string_text()?)),
-        Some(Token::BacktickString) => Ok(Word::Literal(lexer.get_raw_token_text()?)),
+        Some(Token::BacktickString) => parse_backtick_command_substitution(lexer),
         Some(Token::DollarSingleQuotedString) => Ok(parse_ansic_quoted_string(lexer)?),
         Some(Token::DollarDoubleQuotedString) => Ok(parse_string_interpolation(lexer)?),
         Some(Token::BraceOpen) => Ok(parse_brace_expansion(lexer)?),
@@ -212,6 +222,16 @@ pub fn parse_word_no_newline_skip(lexer: &mut Lexer) -> Result<Word, ParserError
             // Treat standalone 'source' as a normal word (e.g., `source file.sh`)
             lexer.next();
             Ok(Word::Literal("source".to_string()))
+        }
+        Some(Token::Set) => {
+            // Treat standalone 'set' as a normal word (e.g., `set -euo pipefail`)
+            lexer.next();
+            Ok(Word::Literal("set".to_string()))
+        }
+        Some(Token::Declare) => {
+            // Treat standalone 'declare' as a normal word (e.g., `declare -a arr`)
+            lexer.next();
+            Ok(Word::Literal("declare".to_string()))
         }
         Some(Token::Range) => {
             // Treat standalone '..' as a literal (e.g., `cd ..`)
@@ -910,4 +930,31 @@ fn parse_parameter_expansion(_lexer: &mut Lexer) -> Result<Word, ParserError> {
 fn parse_array_slicing(_lexer: &mut Lexer, _array_name: String) -> Result<Word, ParserError> {
     // TODO: Implement array slicing parsing
     Err(ParserError::InvalidSyntax("Array slicing not yet implemented".to_string()))
+}
+
+fn parse_backtick_command_substitution(lexer: &mut Lexer) -> Result<Word, ParserError> {
+    // Parse backtick command substitution
+    let backtick_text = lexer.get_raw_token_text()?;
+    // Remove the surrounding backticks
+    let command_text = &backtick_text[1..backtick_text.len()-1];
+    
+    
+    // Parse the command_text as a simple command
+    // For now, we'll split on whitespace and assume the first word is the command name
+    let parts: Vec<&str> = command_text.split_whitespace().collect();
+    if parts.is_empty() {
+        return Err(ParserError::InvalidSyntax("Empty command in backticks".to_string()));
+    }
+    
+    let name = Word::Literal(parts[0].to_string());
+    let args: Vec<Word> = parts[1..].iter().map(|&s| Word::Literal(s.to_string())).collect();
+    
+    let cmd = Command::Simple(SimpleCommand {
+        name,
+        args,
+        redirects: vec![],
+        env_vars: HashMap::new(),
+    });
+    
+    Ok(Word::CommandSubstitution(Box::new(cmd)))
 }

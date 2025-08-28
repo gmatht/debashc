@@ -1,7 +1,26 @@
 use crate::ast::*;
 use crate::generator::Generator;
 
-pub fn generate_find_command(generator: &mut Generator, cmd: &SimpleCommand) -> String {
+fn escape_glob_pattern(pattern: &str) -> String {
+    pattern.chars().map(|c| match c {
+        '*' => ".*".to_string(),
+        '?' => ".".to_string(),
+        '.' => "\\.".to_string(),
+        '[' => "\\[".to_string(),
+        ']' => "\\]".to_string(),
+        '(' => "\\(".to_string(),
+        ')' => "\\)".to_string(),
+        '+' => "\\+".to_string(),
+        '^' => "\\^".to_string(),
+        '$' => "\\$".to_string(),
+        '|' => "\\|".to_string(),
+        '{' => "\\{".to_string(),
+        '}' => "\\}".to_string(),
+        _ => c.to_string()
+    }).collect()
+}
+
+pub fn generate_find_command(generator: &mut Generator, cmd: &SimpleCommand, generate_output: bool) -> String {
     let mut output = String::new();
     
     let mut path = ".";
@@ -77,9 +96,11 @@ pub fn generate_find_command(generator: &mut Generator, cmd: &SimpleCommand) -> 
     output.push_str(&generator.indent());
     output.push_str("}\n");
     output.push_str(&generator.indent());
-    output.push_str(&format!("find_files('{}', '{}');\n", path, pattern));
-    output.push_str(&generator.indent());
-    output.push_str("my $output = join(\"\\n\", @find_files);\n");
+    output.push_str(&format!("find_files('{}', '{}');\n", path, escape_glob_pattern(&pattern)));
+    if generate_output {
+        output.push_str(&generator.indent());
+        output.push_str("$output = join(\"\\n\", @find_files);\n");
+    }
     output.push_str("\n");
     
     output

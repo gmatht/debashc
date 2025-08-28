@@ -21,7 +21,7 @@ fn extract_character_set_from_word(generator: &mut Generator, word: &Word) -> St
     raw_pattern
 }
 
-pub fn generate_tr_command(generator: &mut Generator, cmd: &SimpleCommand, input_var: &str) -> String {
+pub fn generate_tr_command(generator: &mut Generator, cmd: &SimpleCommand, input_var: &str, command_index: usize) -> String {
     let mut output = String::new();
     
     // tr command syntax: tr [options] set1 set2
@@ -57,26 +57,26 @@ pub fn generate_tr_command(generator: &mut Generator, cmd: &SimpleCommand, input
             }
         }
         
-        output.push_str(&format!("my @lines = split(/\\n/, {});\n", input_var));
-        output.push_str("my @result;\n");
-        output.push_str("foreach my $line (@lines) {\n");
+        output.push_str(&format!("my @tr_lines_{} = split(/\\n/, {});\n", command_index, input_var));
+        output.push_str(&format!("my @tr_result_{};\n", command_index));
+        output.push_str(&format!("foreach my $line (@tr_lines_{}) {{\n", command_index));
         output.push_str("chomp($line);\n");
         
         if delete_mode {
             // Delete characters in char_set - use | as delimiter to avoid conflicts with /
             output.push_str(&format!("$line =~ tr|{}||d;\n", char_set));
-            output.push_str("push @result, $line;\n");
+            output.push_str(&format!("push @tr_result_{}, $line;\n", command_index));
         } else if squeeze_mode {
             // Squeeze repeated characters in char_set - use | as delimiter to avoid conflicts with /
             output.push_str(&format!("$line =~ tr|{}||s;\n", char_set));
-            output.push_str("push @result, $line;\n");
+            output.push_str(&format!("push @tr_result_{}, $line;\n", command_index));
         } else {
             // For now, just pass through if no options (would need two char sets)
-            output.push_str("push @result, $line;\n");
+            output.push_str(&format!("push @tr_result_{}, $line;\n", command_index));
         }
         
         output.push_str("}\n");
-        output.push_str(&format!("{} = join(\"\\n\", @result);\n", input_var));
+        output.push_str(&format!("{} = join(\"\\n\", @tr_result_{});\n", input_var, command_index));
     } else {
         // Fallback for insufficient arguments
         output.push_str(&format!("{} = `echo \"${}\" | tr`;\n", input_var, input_var));

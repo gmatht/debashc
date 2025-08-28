@@ -19,11 +19,9 @@ path = "test_lexer_debug.rs"
 
 
 
-
 [[bin]]
 name = "convert_examples"
 path = "src/bin/convert_examples.rs"
-
 
 
 [lib]

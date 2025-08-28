@@ -1,24 +1,22 @@
 use crate::ast::*;
 use crate::generator::Generator;
 
-pub fn generate_wc_command(_generator: &mut Generator, cmd: &SimpleCommand, input_var: &str) -> String {
+pub fn generate_wc_command(_generator: &mut Generator, cmd: &SimpleCommand, input_var: &str, command_index: usize) -> String {
     let mut output = String::new();
     
-    // wc command syntax: wc [options] [file]
+    // Parse wc options
     let mut count_lines = false;
     let mut count_words = false;
     let mut count_chars = false;
     let mut count_bytes = false;
     
-    // Parse wc options
     for arg in &cmd.args {
-        if let Word::Literal(arg_str) = arg {
-            match arg_str.as_str() {
-                "-l" => count_lines = true,
-                "-w" => count_words = true,
-                "-c" => count_chars = true,
-                "-m" => count_bytes = true,
-                _ => {}
+        if let Word::Literal(s) = arg {
+            if s.starts_with('-') {
+                if s.contains('l') { count_lines = true; }
+                if s.contains('w') { count_words = true; }
+                if s.contains('c') { count_chars = true; }
+                if s.contains('m') { count_chars = true; } // -m is equivalent to -c for character count
             }
         }
     }
@@ -28,47 +26,48 @@ pub fn generate_wc_command(_generator: &mut Generator, cmd: &SimpleCommand, inpu
         count_lines = true;
         count_words = true;
         count_chars = true;
+        count_bytes = true;
     }
     
-    output.push_str(&format!("my @lines = split(/\\n/, {});\n", input_var));
+    // Generate Perl code for wc
+    output.push_str(&format!("my @wc_lines_{} = split(/\\n/, {});\n", command_index, input_var));
     
     if count_lines {
-        output.push_str("my $line_count = scalar(@lines);\n");
+        output.push_str(&format!("my $wc_line_count_{} = scalar(@wc_lines_{});\n", command_index, command_index));
     }
     
     if count_words {
-        output.push_str("my $word_count = 0;\n");
-        output.push_str("foreach my $line (@lines) {\n");
-        output.push_str("my @words = split(/\\s+/, $line);\n");
-        output.push_str("$word_count += scalar(@words);\n");
+        output.push_str(&format!("my $wc_word_count_{} = 0;\n", command_index));
+        output.push_str(&format!("foreach my $line (@wc_lines_{}) {{\n", command_index));
+        output.push_str(&format!("    my @wc_words_{} = split(/\\s+/, $line);\n", command_index));
+        output.push_str(&format!("    $wc_word_count_{} += scalar(@wc_words_{});\n", command_index, command_index));
         output.push_str("}\n");
     }
     
     if count_chars {
-        output.push_str("my $char_count = length(join('', @lines));\n");
+        output.push_str(&format!("my $wc_char_count_{} = length(join('', @wc_lines_{}));\n", command_index, command_index));
     }
     
     if count_bytes {
-        output.push_str("my $byte_count = length(join('', @lines));\n");
+        output.push_str(&format!("my $wc_byte_count_{} = length(join('', @wc_lines_{}));\n", command_index, command_index));
     }
     
     // Format output
-    output.push_str("my $result = '';\n");
+    output.push_str(&format!("my $wc_result_{} = '';\n", command_index));
     if count_lines {
-        output.push_str("$result .= \"$line_count \";\n");
+        output.push_str(&format!("$wc_result_{} .= \"$wc_line_count_{} \";\n", command_index, command_index));
     }
     if count_words {
-        output.push_str("$result .= \"$word_count \";\n");
+        output.push_str(&format!("$wc_result_{} .= \"$wc_word_count_{} \";\n", command_index, command_index));
     }
     if count_chars {
-        output.push_str("$result .= \"$char_count \";\n");
+        output.push_str(&format!("$wc_result_{} .= \"$wc_char_count_{} \";\n", command_index, command_index));
     }
     if count_bytes {
-        output.push_str("$result .= \"$byte_count \";\n");
+        output.push_str(&format!("$wc_result_{} .= \"$wc_byte_count_{} \";\n", command_index, command_index));
     }
-    output.push_str("$result =~ s/\\s+$//;\n"); // Remove trailing space
-    output.push_str(&format!("{} = $result;\n", input_var));
-    output.push_str("\n");
+    output.push_str(&format!("$wc_result_{} =~ s/\\s+$//;\n", command_index)); // Remove trailing space
+    output.push_str(&format!("{} = $wc_result_{};\n", input_var, command_index));
     
     output
 }

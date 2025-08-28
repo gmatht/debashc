@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::generator::Generator;
 
-pub fn generate_cut_command(generator: &mut Generator, cmd: &SimpleCommand, input_var: &str) -> String {
+pub fn generate_cut_command(generator: &mut Generator, cmd: &SimpleCommand, input_var: &str, command_index: usize) -> String {
     let mut output = String::new();
     
     // cut command syntax: cut -d delimiter -f fields

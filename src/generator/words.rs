@@ -24,6 +24,37 @@ pub fn word_to_perl_impl(generator: &mut Generator, word: &Word) -> String {
         Word::StringInterpolation(interp) => generator.convert_string_interpolation_to_perl(interp),
         Word::Arithmetic(expr) => generator.convert_arithmetic_to_perl(&expr.expression),
         Word::BraceExpansion(expansion) => generator.handle_brace_expansion(expansion),
+        Word::CommandSubstitution(cmd) => {
+            // Execute the command and capture its output
+            // For command substitution, we need to generate Perl code that produces the same output
+            // as our custom command implementations
+            match cmd.as_ref() {
+                Command::Simple(simple_cmd) => {
+                    let cmd_name = generator.word_to_perl(&simple_cmd.name);
+                    let args: Vec<String> = simple_cmd.args.iter()
+                        .map(|arg| generator.word_to_perl(arg))
+                        .collect();
+                    
+                    // Use our custom command implementations for consistency
+                    if cmd_name == "ls" {
+                        // Use the custom ls implementation for command substitution
+                        use crate::generator::commands::ls::generate_ls_for_substitution;
+                        generate_ls_for_substitution(generator, simple_cmd)
+                    } else {
+                        // For other commands, fall back to system command for now
+                        if args.is_empty() {
+                            format!("`{}`", cmd_name)
+                        } else {
+                            format!("`{} {}`", cmd_name, args.join(" "))
+                        }
+                    }
+                },
+                _ => {
+                    // For other command types, fall back to generating the command
+                    format!("`{}`", generator.generate_command(cmd))
+                }
+            }
+        },
         Word::Variable(var) => {
             // Handle special shell variables
             match var.as_str() {
@@ -104,7 +135,7 @@ pub fn convert_string_interpolation_to_perl_impl(generator: &Generator, interp: 
             StringPart::Variable(var) => {
                 // Handle special shell variables
                 match var.as_str() {
-                    "#" => combined_string.push_str("${scalar(@ARGV)}"),  // Complex expression needs ${...}
+                    "#" => combined_string.push_str("scalar(@ARGV)"),  // $# -> scalar(@ARGV) for argument count
                     "@" => combined_string.push_str("@ARGV"),          // Arrays don't need $ in interpolation
                     "*" => combined_string.push_str("@ARGV"),          // Arrays don't need $ in interpolation
                     _ => {
