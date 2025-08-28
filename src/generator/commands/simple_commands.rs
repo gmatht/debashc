@@ -333,7 +333,17 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
                 if let Some(optimized_arg) = generator.optimize_string_with_newline(&args[0]) {
                     output.push_str(&format!("print {};\n", optimized_arg));
                 } else {
-                    output.push_str(&format!("print {}, \"\\n\";\n", args[0]));
+                    // Check if this argument contains command substitution
+                    let has_command_substitution = cmd.args.iter().any(|arg| {
+                        matches!(arg, Word::CommandSubstitution(_))
+                    });
+                    
+                    if has_command_substitution {
+                        // For command substitution, don't add newline as it's already handled
+                        output.push_str(&format!("print {};\n", args[0]));
+                    } else {
+                        output.push_str(&format!("print {}, \"\\n\";\n", args[0]));
+                    }
                 }
             } else {
                 // For multiple arguments, try to create a single interpolated string
@@ -423,8 +433,19 @@ pub fn generate_simple_command_impl(generator: &mut Generator, cmd: &SimpleComma
                 
                 if can_interpolate {
                     // Create a single interpolated string
-                    output.push_str(&generator.indent());
-                    output.push_str(&format!("print \"{}\\n\";\n", combined_string));
+                    // Check if any of the arguments contain command substitution
+                    let has_command_substitution = cmd.args.iter().any(|arg| {
+                        matches!(arg, Word::CommandSubstitution(_))
+                    });
+                    
+                    if has_command_substitution {
+                        // For command substitution, don't add newline as it's already handled
+                        output.push_str(&generator.indent());
+                        output.push_str(&format!("print \"{}\";\n", combined_string));
+                    } else {
+                        output.push_str(&generator.indent());
+                        output.push_str(&format!("print \"{}\\n\";\n", combined_string));
+                    }
                 } else {
                     // Fall back to the original comma-separated approach
                     let args_str = args.join(", ");

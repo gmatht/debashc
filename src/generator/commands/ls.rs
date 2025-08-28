@@ -33,7 +33,8 @@ fn generate_ls_helper(generator: &mut Generator, dir: &str, array_name: &str) ->
 pub fn generate_ls_command(generator: &mut Generator, cmd: &SimpleCommand, pipeline_context: bool) -> String {
     let mut output = String::new();
     
-    let dir = if cmd.args.is_empty() { "." } else { &generator.word_to_perl(&cmd.args[0]) };
+    // For ls command, always read from current directory, ignore flags like -1, -l, etc.
+    let dir = ".";
     
     output.push_str(&generate_ls_helper(generator, dir, "ls_files"));
     
@@ -53,7 +54,8 @@ pub fn generate_ls_command(generator: &mut Generator, cmd: &SimpleCommand, pipel
 }
 
 pub fn generate_ls_for_substitution(generator: &mut Generator, cmd: &SimpleCommand) -> String {
-    let dir = if cmd.args.is_empty() { "." } else { &generator.word_to_perl(&cmd.args[0]) };
+    // For ls command, always read from current directory, ignore flags like -1, -l, etc.
+    let dir = ".";
     
     let mut output = String::new();
     output.push_str("do {\n");

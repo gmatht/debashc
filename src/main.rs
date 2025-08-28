@@ -256,11 +256,11 @@ fn run_shell_script(filename: &str) -> Result<std::process::Output, String> {
         let wsl_working_dir = format!("/mnt/{}/examples", 
             current_dir.replace(":", "").replace("\\", "/"));
         // Change to the examples directory first, then run the script from parent directory
-        cmd.args(&["bash", "-c", &format!("cd {} && bash ../__temp_script.sh", wsl_working_dir)]);
+        cmd.args(&["bash", "-c", &format!("export LC_ALL=C && cd {} && bash ../__temp_script.sh", wsl_working_dir)]);
         cmd
     } else if shell_cmd == "git" {
         let mut cmd = Command::new("git");
-        cmd.args(&["bash", "-c", &format!("cd examples && bash ../__temp_script.sh")]);
+        cmd.args(&["bash", "-c", &format!("export LC_ALL=C && cd examples && bash ../__temp_script.sh")]);
         cmd
     } else {
         let mut cmd = Command::new(shell_cmd);
@@ -1246,6 +1246,11 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
         }
     }
     
+    // Check AST_MUST_NOT_CONTAIN constraints for AST string representation
+    if let Err(violation_msg) = check_ast_must_not_contain(&shell_content, &ast) {
+        return Err(format!("AST_MUST_NOT_CONTAIN constraint violation in {}:\n{}", filename, violation_msg));
+    }
+    
     // Save cache if we made any updates
     cache.save();
 
@@ -2147,5 +2152,60 @@ fn check_perl_must_not_contain(shell_content: &str, perl_code: &str) -> Result<(
         Ok(())
     } else {
         Err(format!("PERL_MUST_NOT_CONTAIN violations:\n{}", violations.join("\n")))
+    }
+}
+
+/// Check if the AST string representation contains forbidden patterns specified in AST_MUST_NOT_CONTAIN comments
+fn check_ast_must_not_contain(shell_content: &str, ast_string: &str) -> Result<(), String> {
+    let lines: Vec<&str> = shell_content.lines().collect();
+    let mut violations = Vec::new();
+    
+    for (line_num, line) in lines.iter().enumerate() {
+        if line.contains("#AST_MUST_NOT_CONTAIN:") {
+            // Extract the forbidden patterns after the comment
+            if let Some(pattern_start) = line.find("#AST_MUST_NOT_CONTAIN:") {
+                let pattern_text = line[pattern_start + "#AST_MUST_NOT_CONTAIN:".len()..].trim();
+                if !pattern_text.is_empty() {
+                    // Parse the pattern list like [Literal("-"), Literal("1")]
+                    if let Some(patterns) = parse_ast_pattern_list(pattern_text) {
+                        // Check if ALL forbidden patterns exist in the AST string
+                        let all_patterns_found = patterns.iter().all(|pattern| ast_string.contains(pattern));
+                        if all_patterns_found {
+                            violations.push(format!("Line {}: Found all forbidden AST patterns {:?} in AST string", line_num + 1, patterns));
+                        }
+                    } else {
+                        violations.push(format!("Line {}: Invalid AST_MUST_NOT_CONTAIN pattern format: {}", line_num + 1, pattern_text));
+                    }
+                }
+            }
+        }
+    }
+    
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("AST_MUST_NOT_CONTAIN violations:\n{}", violations.join("\n")))
+    }
+}
+
+/// Parse a pattern list like [Literal("-"), Literal("1")] into a vector of strings
+fn parse_ast_pattern_list(pattern_text: &str) -> Option<Vec<String>> {
+    // Remove outer brackets and split by comma
+    let trimmed = pattern_text.trim();
+    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+        return None;
+    }
+    
+    let content = &trimmed[1..trimmed.len()-1];
+    let patterns: Vec<String> = content
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    
+    if patterns.is_empty() {
+        None
+    } else {
+        Some(patterns)
     }
 }

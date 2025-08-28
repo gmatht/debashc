@@ -142,14 +142,17 @@ pub fn parse_word(lexer: &mut Lexer) -> Result<Word, ParserError> {
         }
         Some(Token::Minus) => {
             // Handle minus tokens like -l, -c, etc.
-            // Consume the minus and combine with following identifier if present
+            // Consume the minus and combine with following identifier or number if present
             lexer.next(); // consume the minus
             let mut combined = "-".to_string();
             
-            // Look ahead to see if there's an identifier following
+            // Look ahead to see if there's an identifier or number following
             if let Some(Token::Identifier) = lexer.peek() {
                 let identifier = lexer.get_identifier_text()?;
                 combined.push_str(&identifier);
+            } else if let Some(Token::Number) = lexer.peek() {
+                let number = lexer.get_number_text()?;
+                combined.push_str(&number);
             }
             
             Ok(Word::Literal(combined))
@@ -318,14 +321,17 @@ pub fn parse_word_no_newline_skip(lexer: &mut Lexer) -> Result<Word, ParserError
         }
         Some(Token::Minus) => {
             // Handle minus tokens like -l, -c, etc.
-            // Consume the minus and combine with following identifier if present
+            // Consume the minus and combine with following identifier or number if present
             lexer.next(); // consume the minus
             let mut combined = "-".to_string();
             
-            // Look ahead to see if there's an identifier following
+            // Look ahead to see if there's an identifier or number following
             if let Some(Token::Identifier) = lexer.peek() {
                 let identifier = lexer.get_identifier_text()?;
                 combined.push_str(&identifier);
+            } else if let Some(Token::Number) = lexer.peek() {
+                let number = lexer.get_number_text()?;
+                combined.push_str(&number);
             }
             
             Ok(Word::Literal(combined))
