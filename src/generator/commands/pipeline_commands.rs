@@ -32,6 +32,9 @@ pub fn generate_pipeline_with_print_option(generator: &mut Generator, pipeline: 
 
                     if cmd1_name == "ls" && cmd2_name == "grep" {
                         // Use streaming approach for ls | grep even when printing
+                        // First collect files that match the grep criteria
+                        output.push_str(&generator.indent());
+                        output.push_str("my @matching_files;\n");
                         output.push_str(&generator.indent());
                         output.push_str("if (opendir(my $dh, '.')) {\n");
                         generator.indent_level += 1;
@@ -71,7 +74,7 @@ pub fn generate_pipeline_with_print_option(generator: &mut Generator, pipeline: 
                                 output.push_str(&format!("if ($file !~ /{}/) {{\n", regex_pattern));
                                 generator.indent_level += 1;
                                 output.push_str(&generator.indent());
-                                output.push_str("print $file, \"\\n\";\n");
+                                output.push_str("push @matching_files, $file;\n");
                                 generator.indent_level -= 1;
                                 output.push_str(&generator.indent());
                                 output.push_str("}\n");
@@ -81,7 +84,7 @@ pub fn generate_pipeline_with_print_option(generator: &mut Generator, pipeline: 
                                 output.push_str(&format!("if ($file =~ /{}/) {{\n", regex_pattern));
                                 generator.indent_level += 1;
                                 output.push_str(&generator.indent());
-                                output.push_str("print $file, \"\\n\";\n");
+                                output.push_str("push @matching_files, $file;\n");
                                 generator.indent_level -= 1;
                                 output.push_str(&generator.indent());
                                 output.push_str("}\n");
@@ -94,6 +97,15 @@ pub fn generate_pipeline_with_print_option(generator: &mut Generator, pipeline: 
                         generator.indent_level -= 1;
                         output.push_str(&generator.indent());
                         output.push_str("closedir($dh);\n");
+                        output.push_str(&generator.indent());
+                        output.push_str("}\n");
+                        // Sort files alphabetically (case-sensitive) and print
+                        output.push_str(&generator.indent());
+                        output.push_str("foreach my $file (sort @matching_files) {\n");
+                        generator.indent_level += 1;
+                        output.push_str(&generator.indent());
+                        output.push_str("print $file, \"\\n\";\n");
+                        generator.indent_level -= 1;
                         output.push_str(&generator.indent());
                         output.push_str("}\n");
                     } else {
@@ -706,8 +718,9 @@ pub fn generate_pipeline_with_print_option(generator: &mut Generator, pipeline: 
 
                     if cmd1_name == "ls" && cmd2_name == "grep" {
                         // Stream ls directly to grep without arrays
+                        // First collect files that match the grep criteria
                         output.push_str(&generator.indent());
-                        output.push_str("my $result = '';\n");
+                        output.push_str("my @matching_files;\n");
                         output.push_str(&generator.indent());
                         output.push_str("if (opendir(my $dh, '.')) {\n");
                         generator.indent_level += 1;
@@ -747,7 +760,7 @@ pub fn generate_pipeline_with_print_option(generator: &mut Generator, pipeline: 
                                 output.push_str(&format!("if ($file !~ /{}/) {{\n", regex_pattern));
                                 generator.indent_level += 1;
                                 output.push_str(&generator.indent());
-                                output.push_str("$result .= $file . ' ';\n");
+                                output.push_str("push @matching_files, $file;\n");
                                 generator.indent_level -= 1;
                                 output.push_str(&generator.indent());
                                 output.push_str("}\n");
@@ -757,7 +770,7 @@ pub fn generate_pipeline_with_print_option(generator: &mut Generator, pipeline: 
                                 output.push_str(&format!("if ($file =~ /{}/) {{\n", regex_pattern));
                                 generator.indent_level += 1;
                                 output.push_str(&generator.indent());
-                                output.push_str("$result .= $file . ' ';\n");
+                                output.push_str("push @matching_files, $file;\n");
                                 generator.indent_level -= 1;
                                 output.push_str(&generator.indent());
                                 output.push_str("}\n");
@@ -770,6 +783,17 @@ pub fn generate_pipeline_with_print_option(generator: &mut Generator, pipeline: 
                         generator.indent_level -= 1;
                         output.push_str(&generator.indent());
                         output.push_str("closedir($dh);\n");
+                        output.push_str(&generator.indent());
+                        output.push_str("}\n");
+                        // Sort files alphabetically (case-sensitive) and build result
+                        output.push_str(&generator.indent());
+                        output.push_str("my $result = '';\n");
+                        output.push_str(&generator.indent());
+                        output.push_str("foreach my $file (sort @matching_files) {\n");
+                        generator.indent_level += 1;
+                        output.push_str(&generator.indent());
+                        output.push_str("$result .= $file . ' ';\n");
+                        generator.indent_level -= 1;
                         output.push_str(&generator.indent());
                         output.push_str("}\n");
                         output.push_str(&generator.indent());
