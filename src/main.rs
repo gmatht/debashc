@@ -628,6 +628,36 @@ fn main() {
                 println!("Command cache cleared successfully.");
             }
         }
+        "--diff" => {
+            if args.len() < 4 {
+                println!("Error: --diff requires two filenames");
+                println!("Usage: {} --diff <file1> <file2>", program_name);
+                return;
+            }
+            let file1 = &args[2];
+            let file2 = &args[3];
+            
+            // Read both files
+            let content1 = match fs::read_to_string(file1) {
+                Ok(c) => c,
+                Err(e) => {
+                    println!("Error reading {}: {}", file1, e);
+                    return;
+                }
+            };
+            
+            let content2 = match fs::read_to_string(file2) {
+                Ok(c) => c,
+                Err(e) => {
+                    println!("Error reading {}: {}", file2, e);
+                    return;
+                }
+            };
+            
+            // Generate and display the diff
+            println!("Diffing {} and {}:", file1, file2);
+            println!("{}", generate_unified_diff(&content1, &content2, file1, file2));
+        }
         "lex" => {
             if args.len() < 3 {
                 println!("Error: lex command requires input");
@@ -1251,6 +1281,11 @@ fn test_file_equivalence_detailed(lang: &str, filename: &str, ast_options: Optio
         return Err(format!("AST_MUST_NOT_CONTAIN constraint violation in {}:\n{}", filename, violation_msg));
     }
     
+    // Check AST_MUST_CONTAIN constraints for AST string representation
+    if let Err(violation_msg) = check_ast_must_contain(&shell_content, &ast) {
+        return Err(format!("AST_MUST_CONTAIN constraint violation in {}:\n{}", filename, violation_msg));
+    }
+    
     // Save cache if we made any updates
     cache.save();
 
@@ -1703,24 +1738,45 @@ fn generate_unified_diff(expected: &str, actual: &str, expected_label: &str, act
     diff.push_str(&format!("--- {}\n", expected_label));
     diff.push_str(&format!("+++ {}\n", actual_label));
     
-    // Simple unified diff implementation
-    // For now, just show the differences line by line
+    // Only show lines that differ, with minimal context
     let max_lines = expected_lines.len().max(actual_lines.len());
+    let mut i = 0;
     
-    for i in 0..max_lines {
+    while i < max_lines {
         let expected_line = expected_lines.get(i).unwrap_or(&"");
         let actual_line = actual_lines.get(i).unwrap_or(&"");
         
         if expected_line == actual_line {
-            diff.push_str(&format!(" {}\n", expected_line));
-        } else {
-            if !expected_line.is_empty() {
-                diff.push_str(&format!("-{}\n", expected_line));
-            }
-            if !actual_line.is_empty() {
-                diff.push_str(&format!("+{}\n", actual_line));
+            // Skip identical lines to reduce noise
+            i += 1;
+            continue;
+        }
+        
+        // Show context before the difference (up to 1 line)
+        if i > 0 {
+            let prev_line = expected_lines.get(i - 1).unwrap_or(&"");
+            if !prev_line.is_empty() {
+                diff.push_str(&format!(" {}\n", prev_line));
             }
         }
+        
+        // Show the differing lines
+        if !expected_line.is_empty() {
+            diff.push_str(&format!("-{}\n", expected_line));
+        }
+        if !actual_line.is_empty() {
+            diff.push_str(&format!("+{}\n", actual_line));
+        }
+        
+        // Show context after the difference (up to 1 line)
+        if i + 1 < max_lines {
+            let next_line = expected_lines.get(i + 1).unwrap_or(&"");
+            if !next_line.is_empty() {
+                diff.push_str(&format!(" {}\n", next_line));
+            }
+        }
+        
+        i += 1;
     }
     
     diff
@@ -2050,6 +2106,7 @@ fn show_help(program_name: &str) {
         println!("                                   - If NUM is provided, run only the NUMth test");
         println!("  fail [NUM] [gen1 gen2 ...]      - Shorthand for --next-fail");
                         println!("  --clear-cache                    - Clear the command cache");
+                        println!("  --diff <file1> <file2>          - Manually diff two files");
     println!();
     println!("AST FORMATTING OPTIONS (for --next-fail):");
     println!();
@@ -2074,6 +2131,7 @@ fn show_help(program_name: &str) {
         println!("  {} --next-fail perl", program_name);
         println!("  {} --next-fail 10 perl --ast-pretty", program_name);
     println!("  {} --clear-cache", program_name);
+    println!("  {} --diff file1.txt file2.txt", program_name);
     println!();
     println!("DIRECT EXECUTION EXAMPLES:");
     println!("  {} examples/simple.sh           - Run shell script directly", program_name);
@@ -2185,6 +2243,42 @@ fn check_ast_must_not_contain(shell_content: &str, ast_string: &str) -> Result<(
         Ok(())
     } else {
         Err(format!("AST_MUST_NOT_CONTAIN violations:\n{}", violations.join("\n")))
+    }
+}
+
+/// Check if the AST string representation contains required patterns specified in AST_MUST_CONTAIN comments
+fn check_ast_must_contain(shell_content: &str, ast_string: &str) -> Result<(), String> {
+    let lines: Vec<&str> = shell_content.lines().collect();
+    let mut violations = Vec::new();
+    
+    for (line_num, line) in lines.iter().enumerate() {
+        if line.contains("#AST_MUST_CONTAIN:") {
+            // Extract the required patterns after the comment
+            if let Some(pattern_start) = line.find("#AST_MUST_CONTAIN:") {
+                let pattern_text = line[pattern_start + "#AST_MUST_CONTAIN:".len()..].trim();
+                if !pattern_text.is_empty() {
+                    // Parse the pattern list like [Literal("-1")]
+                    if let Some(patterns) = parse_ast_pattern_list(pattern_text) {
+                        // Check if ALL required patterns exist in the AST string
+                        let all_patterns_found = patterns.iter().all(|pattern| ast_string.contains(pattern));
+                        if !all_patterns_found {
+                            let missing_patterns: Vec<_> = patterns.iter()
+                                .filter(|pattern| !ast_string.contains(pattern.as_str()))
+                                .collect();
+                            violations.push(format!("Line {}: Missing required AST patterns {:?} in AST string", line_num + 1, missing_patterns));
+                        }
+                    } else {
+                        violations.push(format!("Line {}: Invalid AST_MUST_CONTAIN pattern format: {}", line_num + 1, pattern_text));
+                    }
+                }
+            }
+        }
+    }
+    
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("AST_MUST_CONTAIN violations:\n{}", violations.join("\n")))
     }
 }
 
